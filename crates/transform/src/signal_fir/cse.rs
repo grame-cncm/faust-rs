@@ -4,7 +4,7 @@
 //! statement placement (Phase 1) and before FIR module assembly.
 //!
 //! For each execution-tier bucket (`constants_statements`, `control_statements`,
-//! `sample_statements`), this pass:
+//! and each per-slice sample-loop statement list), this pass:
 //! 1. counts how many times each `FirId` value node is referenced as a child,
 //! 2. wraps multi-referenced non-trivial expressions in `DeclareVar` + `LoadVar`,
 //! 3. operates on the `FirStore` so all backends (C++, WASM, Cranelift, FBC) benefit.

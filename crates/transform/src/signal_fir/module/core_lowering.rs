@@ -726,21 +726,19 @@ impl<'a> SignalToFirLower<'a> {
         Ok(b.cast(real_ty, raw))
     }
 
-    /// Lowers general `SIGDELAY` using a fixed-size circular delay line.
+    /// Lowers general `SIGDELAY` through a fixed-size delay line.
     ///
     /// Source provenance (C++):
     /// - `signalFIRCompiler.cpp::compileSigDelay(...)`
     /// - `signalFIRCompiler.hh::writeReadDelay(...)`
     ///
-    /// Active Rust parity slice:
-    /// - constant integer amount only,
-    /// - zero-delay fast path,
-    /// - one typed DSP-struct array per delayed carried signal,
-    /// - masked circular indexing driven by persistent `fIOTA`.
-    ///
-    /// For variable-rate amounts (e.g., UI sliders), the delay line is sized to
-    /// the interval upper bound from `sig_types`; the runtime index expression
-    /// is the lowered amount signal evaluated each sample.
+    /// A zero amount lowers the value directly. Otherwise the line is sized
+    /// by `delay_size_for_amount`: a constant integer amount, or, for
+    /// variable-rate amounts (e.g., UI sliders), the interval upper bound from
+    /// `sig_types`, with the runtime index expression being the lowered amount
+    /// evaluated each sample. The storage strategy is chosen and emitted by
+    /// `signal_fir/delay/` (see [`Self::lower_fixed_delay`]). An amount with
+    /// neither bound is rejected.
     pub(super) fn lower_delay(
         &mut self,
         node: SigId,
@@ -976,15 +974,6 @@ impl<'a> SignalToFirLower<'a> {
         Ok(out)
     }
 
-    /// Replays `Delay1(primal_output)` while lowering a reverse-time RAD loop.
-    ///
-    /// In split RAD bundles, forward primals are emitted before reverse
-    /// gradients. A feedback-coefficient contribution such as
-    /// `adjoint[n] * y[n-1]` must read the primal state at the matching forward
-    /// frame, not advance a recursion carrier while iterating backward. For
-    /// primals present in the public output bundle, the forward output buffer is
-    /// the block-local tape: frame `0` returns the delay initializer `0`, and
-    /// later frames read `output_primal[i0 - 1]`.
     /// Structural fallback of `forward_output_by_sig`: the lane of a forward
     /// output whose shared-structure dump equals `value`'s, for equivalent
     /// but non-identical `SigId`s. The keys are built on the first miss.
@@ -1004,6 +993,15 @@ impl<'a> SignalToFirLower<'a> {
             .copied()
     }
 
+    /// Replays `Delay1(primal_output)` while lowering a reverse-time RAD loop.
+    ///
+    /// In split RAD bundles, forward primals are emitted before reverse
+    /// gradients. A feedback-coefficient contribution such as
+    /// `adjoint[n] * y[n-1]` must read the primal state at the matching forward
+    /// frame, not advance a recursion carrier while iterating backward. For
+    /// primals present in the public output bundle, the forward output buffer is
+    /// the block-local tape: frame `0` returns the delay initializer `0`, and
+    /// later frames read `output_primal[i0 - 1]`.
     pub(super) fn lower_forward_output_delay1_for_reverse_loop(
         &mut self,
         node: SigId,

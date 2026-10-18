@@ -1,6 +1,6 @@
 //! Structural canonicalization rewrites applied during signal-forest preparation.
 //!
-//! This module contains the two pure tree-rewriting passes that normalize the
+//! This module contains the three pure tree-rewriting passes that normalize the
 //! staged signal forest before type inference and FIR lowering:
 //!
 //! # `canonicalize_unary_rec_projections`

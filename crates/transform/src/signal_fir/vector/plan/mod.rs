@@ -2,9 +2,10 @@
 //! transports, epochs, fused serial groups).
 //!
 //! # C++ provenance and adaptation
-//! Placement uses `DAGInstructionsCompiler::needSeparateLoop` from
-//! `compiler/generator/compile_vect.cpp` and
-//! `compiler/generator/dag_instructions_compiler.cpp`. Unlike the C++ pass,
+//! Placement uses `VectorCompiler::needSeparateLoop`
+//! (`compiler/generator/compile_vect.cpp`) and
+//! `DAGInstructionsCompiler::needSeparateLoop`
+//! (`compiler/generator/dag_instructions_compiler.cpp`). Unlike the C++ pass,
 //! this builder never rediscovers occurrence, delay, clock, recursion, type,
 //! or effect facts while lowering. It accepts only an independently checked
 //! [`VerifiedDecorationCertificate`](crate::signal_fir::decoration_verify::VerifiedDecorationCertificate), allocates stable loop/transport ids, and

@@ -1,7 +1,7 @@
-//! Typed errors for the experimental signal->FIR fast-lane.
+//! Typed errors for signal→FIR lowering.
 //!
 //! Error codes are stable and machine-friendly so `compiler` can map them to
-//! diagnostics consistently while this lane evolves.
+//! diagnostics consistently.
 
 use std::fmt::{Display, Formatter};
 

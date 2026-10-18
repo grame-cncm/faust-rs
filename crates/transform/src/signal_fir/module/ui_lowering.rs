@@ -6,9 +6,10 @@
 //! Manages the UI side of the Faust lifecycle:
 //! - zone variable declaration for buttons, checkboxes, sliders, bargraphs,
 //!   and soundfile controls;
-//! - `addMetaDeclare` emission for per-control metadata key/value pairs;
-//! - `emit_ui_program` — the recursive walk that emits the full
-//!   `buildUserInterface(ui)` body from the [`UiProgram`] tree.
+//! - `emit_ui_program` — declares the zone of every control shown in the
+//!   [`UiProgram`](ui::UiProgram) tree, then delegates the grouped
+//!   `buildUserInterface(ui)` walk, including `addMetaDeclare` emission, to
+//!   the builder shared with the vector path (`vector::ui::build_ui_statements`).
 //!
 //! All methods operate on the shared [`SignalToFirLower`] state and write
 //! directly into `self.ui.ui_statements` for final assembly by `build_module`.

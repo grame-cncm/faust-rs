@@ -1,31 +1,29 @@
-//! FIR module emission for the signal->FIR fast-lane.
+//! Scalar FIR module emission for the signal->FIR lowering.
 //!
-//! The scalar lowerer covers this executable fast-lane slice:
-//! - `SIGINPUT`, integer/real constants,
-//! - `SIGBINOP` (arithmetic/comparison/bitwise subset),
-//! - `SIGPOW`/`SIGMIN`/`SIGMAX`,
-//! - core unary math nodes (`sin/cos/tan/exp/log/log10/sqrt/abs`),
-//! - `SIGDELAY1`/fixed-size `SIGDELAY`/`SIGPREFIX`,
-//! - `SIGSELECT2`, `SIGINTCAST`/`SIGFLOATCAST`/`SIGBITCAST`,
-//! - `SIGPROJ`/`SYMREC`/`SYMREF` (real lowering for canonical recursion groups
-//!   after `de_bruijn_to_sym` conversion).
-//! - `SIGWAVEFORM`/`SIGRDTBL`/`SIGWRTBL` for direct waveform tables.
-//! - `SIGOUTPUT` passthrough nodes.
-//! - sectioned FIR module assembly (`metadata`, `instanceConstants`,
-//!   `instanceResetUserInterface`, `instanceClear`, `buildUserInterface`, `compute`).
+//! The scalar lowerer (`SignalToFirLower`, entry point `build_module`) lowers
+//! the prepared signal forest into a sectioned FIR module (`metadata`,
+//! optional `staticInit`, `instanceConstants`, `instanceResetUserInterface`,
+//! `instanceClear`, `buildUserInterface`, `compute`). Its submodules cover
+//! inputs/outputs and constants, arithmetic and math intrinsics, casts and
+//! selection (`arithmetic.rs`, `core_lowering.rs`), delays, prefixes and
+//! symbolic recursion groups (`state.rs`, with `signal_fir/delay/` and
+//! `signal_fir/recursion.rs`), waveform/read/write tables and table generators
+//! (`tables.rs`, `subcontainer*.rs`), UI controls and soundfiles
+//! (`ui_lowering.rs`), foreign functions/constants/variables, clocked wrappers
+//! (`clocked.rs`), and block reverse AD (`bra.rs`).
 //!
-//! Section placement policy (Step 3B):
+//! Section placement policy:
 //! - `instanceConstants`: table initialization and compile-time constants
-//!   (`iConst*` / `fConst*` variables — [`Variability::Konst`](sigtype::Variability::Konst)).
+//!   (`iConst*` / `fConst*` variables — [`Variability::Konst`]).
 //! - `instanceResetUserInterface`: UI zone reset values.
 //! - `instanceClear`: runtime signal state reset values (delay/rec state).
 //! - `compute` preamble (before sample loop): block-rate control expressions
-//!   (`iSlow*` / `fSlow*` variables — [`Variability::Block`](sigtype::Variability::Block)).
+//!   (`iSlow*` / `fSlow*` variables — [`Variability::Block`]).
 //! - `compute` sample loop: sample-rate expressions (inline, no hoisting).
 //!
 //! Integer policy:
 //! - `SIGINT`/`SIGINTCAST` and integer bitwise operations lower to FIR `Int32`
-//!   nodes/types for C++ parity in the active fast-lane.
+//!   nodes/types for C++ parity.
 //!
 //! Type duality policy (internal vs external):
 //! - **Internal real type** (`real_ty`, default `FirType::Float32`): used for
@@ -46,7 +44,8 @@
 //!   - UI zone read (for computation): `FaustFloat → real_ty`,
 //!   - bargraph zone write (from computation): `real_ty → FaustFloat`.
 //!
-//! Other signal families still return typed `FRS-SFIR-*` errors.
+//! Shapes the lowerer does not support return typed `FRS-SFIR-*` errors
+//! (`SignalFirErrorCode`).
 //!
 //! # BlockReverseAD / BRA scheduling model
 //!
@@ -80,7 +79,9 @@
 //!
 //! Do not confuse this inline schedule with the older LTI recursive transpose
 //! fast path.  The LTI path is a propagation-time choice that rewrites an
-//! eligible linear recursive frontier into a `ReverseTimeRec` carrier.  The BRA
+//! eligible linear recursive frontier into a `ReverseTimeRec` carrier; it is
+//! dormant since 2026-05-10 (public RAD always produces `BlockReverseAD`,
+//! see `propagate::reverse_ad`).  The BRA
 //! inline case is only a lowering-time placement choice for the general
 //! block-tape fallback: the derivative is still represented by
 //! `BlockReverseAD`, but the first gradient projection is requested while the
@@ -94,7 +95,8 @@
 //!   at `compute()` entry, because each host call is one independent TBPTT
 //!   block.
 //! - `Konst` values below a `BlockReverseAD` carrier are forced to persistent
-//!   struct storage by `PlacementInfo` (see `setup.rs`), since the synthesized
+//!   struct storage by the placement analysis (`signal_fir/placement.rs`,
+//!   recorded in `PlacementInfo::konst_escapes`), since the synthesized
 //!   sweep can create compute-time uses that are not visible as parent edges in
 //!   the original signal DAG.
 
@@ -365,6 +367,10 @@ fn collect_descendants(arena: &TreeArena, roots: &[SigId], output: &mut HashSet<
 /// | `placement` | [`setup::PlacementInfo`] | `setup.rs` |
 /// | `rad_reverse` | [`build::RadReverseState`] | `build.rs` |
 /// | `bra` | [`bra::BraState`] | `bra.rs` |
+/// | `regions` | [`region::RegionTree`] | `region.rs` |
+/// | `clocked` | `Option<`[`clocked::ClockedState`]`>` | `clocked.rs` |
+/// | `recursion` | [`RecursionState`] | `signal_fir/recursion.rs` |
+/// | `delay` | [`DelayManager`] | `signal_fir/delay/` |
 struct SignalToFirLower<'a> {
     /// Read-only signal tree arena shared with the caller.
     arena: &'a TreeArena,

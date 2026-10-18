@@ -11,8 +11,9 @@
 //! clock wrappers.
 //!
 //! The analysis ports the C++ `conditionAnnotation` DNF producer and adds
-//! conservative effect decoration without activating either scalar or
-//! vector scheduling.
+//! conservative effect decoration. Both schedulers consume it: the scalar
+//! Hgraph through `signal_dependencies` and `analyze_scalar_scheduling_effects`,
+//! the vector plan through the decoration certificate.
 //! Effects in this table describe compute-time behavior. `Gen` remains a
 //! lifecycle boundary, so table-initialization effects require a separate
 //! decoration before a certificate can establish full lifecycle coverage.

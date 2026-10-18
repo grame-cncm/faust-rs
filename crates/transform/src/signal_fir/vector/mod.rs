@@ -55,11 +55,17 @@
 //! - **R0–R9** — the 2026-07 cleanup/documentation refactor
 //!   (`porting/transform-cleanup-documentation-factorization-plan-2026-07-19-en.md`):
 //!   R5–R7 split each stage into `model`/`build`(`produce`,`materialize`)/
-//!   `check`/`tests`, R9 added the docs/layout quality gates.
+//!   `check`/`tests` (`lower` uses `program`/`signal`/`tables`/`check`;
+//!   `schedule` and `lockstep` stay single-file), R9 added the docs/layout
+//!   quality gates.
 //! - **§3.2 / §4.6 / §4.8** — sections of that cleanup plan: §3.2
 //!   producer/checker code must not be merged; §4.6 producer and checker
 //!   reachability stay disjoint; §4.8 the shared terminal verify keeps every
 //!   admission guard on both the producer and the standalone checker path.
+//!   Other `§` citations belong to the plan named or implied by their context
+//!   (e.g. the vector-mode plan for §5.x,
+//!   `porting/lean-rust-certified-porting-plan-2026-07-11-en.md` for the §8
+//!   negative-testing policy).
 //! - **`-ss` / `-vec` / `-vs` / `-lv`** — user-facing scheduling-strategy,
 //!   vector-mode, vector-size, and chunk-driver options (Faust C++
 //!   spellings).

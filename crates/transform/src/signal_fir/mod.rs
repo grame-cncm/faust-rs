@@ -28,7 +28,8 @@
 //!
 //! # Fallback semantics
 //! A vector fallback is observable, never silent: the stable reason codes are
-//! [`VectorFallbackReason::code`] (`FRS-VEC-FALLBACK-*`), the returned FIR is
+//! [`VectorFallbackReason::code`] (`FRS-VEC-FALLBACK-*`, or
+//! `FRS-VEC-RAD-SCALAR` for reverse AD), the returned FIR is
 //! scalar-shaped, and [`VectorEffectiveMode`] stays `Scalar` so retention
 //! gates never count a fallback as vector coverage. Scalar/vector selection
 //! never changes numeric results: vector-certified output is bit-exact
@@ -46,13 +47,19 @@
 //! - [`diagnostics`] — observation-only surfaces, never on the production
 //!   path (the frozen vector pre-slice prototype; schedule-conformance
 //!   shadow reports).
+//! - `leaf_emit` — stateless leaf FIR emission shared by the scalar and
+//!   vector lowerers.
+//! - `one_sample` — `-os` compatibility classifier (rejects block-sensitive
+//!   carriers).
+//! - `origins` — [`FirOrigins`]: Signal/Box provenance of the emitted FIR.
 //! - `loop_graph`, `placement`, `planner`, `cse`, `recursion`, `siggen`,
 //!   `error` — internal analysis/lowering support.
 //!
 //! # Known unsupported behavior
-//! Delays with unbounded runtime intervals, complex table-generator forms
-//! depending on runtime context, and foreign functions inside `SIGGEN`
-//! interpretation are rejected with typed `FRS-SFIR-*` errors. Reverse-AD
+//! Delays with unbounded runtime intervals are rejected with typed
+//! `FRS-SFIR-*` errors; so are, under [`TableInitMode::Const`] only,
+//! table generators depending on runtime context or calling foreign
+//! functions (the default [`TableInitMode::Runtime`] compiles them). Reverse-AD
 //! graphs under `-vec` fall back to scalar (`FRS-VEC-RAD-SCALAR`); a UI
 //! program falls back only when its vector UI lifecycle FIR cannot be built
 //! (`FRS-VEC-FALLBACK-UI`).
@@ -625,19 +632,21 @@ impl<'a> SignalFirRequest<'a> {
 
 /// Compiles propagated signals plus canonical grouped UI into a FIR module.
 ///
-/// This is the single fast-lane entry point of the crate; everything optional
+/// This is the single signal→FIR entry point of the crate; everything optional
 /// travels in [`SignalFirRequest`].
 ///
-/// # Current behavior
+/// # Behavior
 /// - validates options and top-level signal/arity contract,
-/// - builds a deterministic planning snapshot,
 /// - prepares and verifies the whole output forest in a private staging arena,
-/// - lowers one executable bootstrap signal slice to FIR using the prepared
-///   reduced type annotations for state/table/result type selection.
+/// - runs clock/dependency analysis on the prepared forest,
+/// - lowers the whole program: the checked vector pipeline first under
+///   [`ComputeMode::Vector`], scalar lowering otherwise or on fallback.
 ///
 /// # Errors
-/// Returns [`SignalFirError`] when options are invalid or the top-level
-/// signal/arity contract is inconsistent.
+/// Returns [`SignalFirError`] when options are invalid (including a
+/// `bra_tape_block_size` that is not a power of two), the top-level
+/// signal/arity contract is inconsistent, or preparation, clock analysis,
+/// or lowering fails (see [`SignalFirErrorCode`]).
 pub fn compile_signals_to_fir_fastlane(
     request: &SignalFirRequest<'_>,
 ) -> Result<SignalFirOutput, SignalFirError> {

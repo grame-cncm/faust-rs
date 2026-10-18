@@ -139,8 +139,9 @@ struct PureVectorLowerer<'a> {
 /// Lowers actual effect-free prepared signals into planned vector regions.
 ///
 /// CSE is run once per control/loop region with loop-id-derived temporary names.
-/// No stateful or effectful node is accepted, and this artifact is not yet
-/// connected to backend module assembly.
+/// No stateful or effectful node is accepted. This is the pure-lowering
+/// unit-test entry point (no state/clock artifacts, folded tables); production
+/// module assembly uses [`lower_vector_program`].
 pub fn lower_pure_vector_program(
     prepared: &VerifiedPreparedSignals,
     verified_plan: &VerifiedVectorPlan,

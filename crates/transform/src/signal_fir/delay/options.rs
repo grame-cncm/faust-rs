@@ -1,7 +1,8 @@
 //! Delay-line strategy selection options.
 //!
 //! [`DelayOptions`] mirrors the Faust `-mcd` / `-dlt` compiler options and
-//! drives the strategy selector inside [`super::DelayManager::ensure_delay_line`].
+//! drives the strategy selector called from
+//! `DelayManager::ensure_delay_line_in_context`.
 
 use signals::SigId;
 

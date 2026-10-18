@@ -39,6 +39,8 @@
 //! - `sizing.rs` — pure delay-amount → size resolution.
 //! - `options.rs` — [`DelayOptions`] + the strategy selector.
 //! - `arith.rs` — the shared `DelayArith` FIR-expression helper.
+//! - `domain_counters.rs` — per-clock-domain `IOTA` / `DSCounter` fields
+//!   (`DomainCounters`).
 //!
 //! # Strategy descriptions
 //!
@@ -91,7 +93,8 @@
 //!
 //! - [`plan_delays`] produces a [`DelayPlan`] with both per-carrier max delays
 //!   and recursion-output sizing metadata in one DAG walk.
-//! - `prepare_delay_lines` allocates each line through [`DelayManager::ensure_delay_line`].
+//! - `prepare_delay_lines` allocates each line through
+//!   `DelayManager::ensure_delay_line_in_context`.
 //! - `ensure_recursion_array_for_group` in `module/` consumes the recursion-output
 //!   analysis to size recursion carriers.
 //!

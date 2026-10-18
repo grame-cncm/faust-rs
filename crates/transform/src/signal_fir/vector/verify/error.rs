@@ -4,8 +4,8 @@ use super::model::*;
 use std::fmt;
 
 /// Why [`verify_vector_plan`](super::check::verify_vector_plan) rejected a
-/// plan. One variant per checked
-/// obligation, so each has a demonstrated rejecting mutation (plan provenance: §8).
+/// plan. One variant per checked obligation, so each has a demonstrated
+/// rejecting mutation (Lean/Rust certified-porting plan §8, negative testing).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorPlanError {
     /// The verifier accepts only the exact current schema

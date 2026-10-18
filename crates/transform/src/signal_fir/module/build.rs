@@ -6,9 +6,10 @@
 //! Owns the single crate-visible function [`build_module`] that accepts
 //! pre-validated planning data and a prepared signal forest and assembles a
 //! self-contained [`SignalFirOutput`] with all Faust lifecycle sections in
-//! deterministic order: `metadata`, `instanceConstants`,
-//! `instanceResetUserInterface`, `instanceClear`, `buildUserInterface`,
-//! and `compute`.
+//! deterministic order: `metadata`, optional `staticInit`,
+//! `instanceConstants`, `instanceResetUserInterface`, `instanceClear`,
+//! `buildUserInterface`, and `compute`, plus `frame` (one-sample mode) and
+//! `control` (external control) when requested.
 //!
 //! All other submodules in `module/` provide `impl SignalToFirLower` methods
 //! that are invoked from the orchestration logic here.

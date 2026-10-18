@@ -3,8 +3,10 @@
 //! Handles the three table signal families:
 //! - `SIGWAVEFORM` — constant ROM tables defined inline in the DSP source;
 //! - `SIGRDTBL` — indexed read access into a table;
-//! - `SIGWRTBL` / `SIGGEN` — write-driven tables (e.g. delay lines with an
-//!   external write index).
+//! - `SIGWRTBL` — table definitions with an optional write port (`rwtable`);
+//!   their `SIGGEN` content generator is folded at compile time
+//!   (`siggen::interpret_generator`) or compiled into a filling sub-module
+//!   (`subcontainer.rs`).
 //!
 //! Also owns table sizing (`table_size_from_sig`) and the `-ct` debug
 //! assertion on table indexes (`debug_assert_index_checked`); index clamping

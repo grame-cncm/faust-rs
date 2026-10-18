@@ -19,8 +19,9 @@
 //! as a multiplier or divisor in a backward rule (e.g. `Delay1(x)` inside a
 //! `Mul`), [`collect_tape_needed_values`] identifies which signal values must
 //! be recorded during the forward loop.  `module/` then:
-//! 1. Declares a `fBraTapeN: Array(real_ty, MAX_BRA_TAPE_BLOCK_SIZE)` struct
-//!    field for each tape-needed signal.
+//! 1. Declares a `fBraTapeN: Array(real_ty, bra_tape_block_size)` struct
+//!    field for each tape-needed signal (`-bra-tape N`, default
+//!    `DEFAULT_BRA_TAPE_BLOCK_SIZE` = 8192).
 //! 2. Stores each value into the tape in the `immediate` sample phase (before
 //!    delay-register updates in `post_output`) so the pre-step delay state is
 //!    captured correctly.

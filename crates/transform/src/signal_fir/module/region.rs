@@ -15,11 +15,10 @@
 //! **The visibility rule** (single rule for CSE / occurrences / placement):
 //! *a value computed in region `R` is reusable only in `R` and its
 //! descendants; cross-region reuse goes through named storage* (stack locals,
-//! struct fields, chunk buffers). While the tree holds exactly one region per
-//! sample loop (the current state), per-bucket CSE (`cse.rs`) and
-//! variability-driven placement (`placement.rs`) already respect the rule
-//! trivially — bucket and region coincide. Guarded child regions extend
-//! the rule by *narrowing* reuse, never widening it.
+//! struct fields, chunk buffers). At the top level of a sample loop, per-bucket
+//! CSE (`cse.rs`) and variability-driven placement (`placement.rs`) respect
+//! the rule trivially — bucket and region coincide. Guarded child regions
+//! extend the rule by *narrowing* reuse, never widening it ([`RegionCache`]).
 //!
 //! **FIR-vocabulary decision**: guarded blocks reuse the
 //! existing generic `If` / `SimpleForLoop` / `Block` FIR statements (the
@@ -29,10 +28,13 @@
 //!
 //! # Current state
 //!
-//! [`RegionTree`] is instantiated with exactly one [`RegionKind::SampleLoop`]
-//! region, plus the reverse-time loop as a sibling region opened by
-//! `reset_sample_loop_state`. The tree API is the **only** way lowering code
-//! appends compute statements: the former flat
+//! [`RegionTree`] holds one top-level region per sample loop: the
+//! [`RegionKind::SampleLoop`] region, plus the reverse-time loop as a sibling
+//! region opened by `reset_sample_loop_state`. Clocked lowering
+//! (`clocked.rs`) opens nested guarded-block frames under it
+//! ([`RegionTree::open_child`]), with appends redirected to an ancestor frame
+//! when needed ([`RegionTree::set_redirect`]). The tree API is the **only**
+//! way lowering code appends compute statements: the former flat
 //! `SamplePhases` accumulator lives on as [`RegionPhases`], owned by the
 //! current region.
 

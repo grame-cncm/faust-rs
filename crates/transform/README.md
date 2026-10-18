@@ -7,9 +7,12 @@ scalar path and the independently checked vector (`-vec`) path.
 
 ## Position in the pipeline
 
-```
-propagate → [signal_prepare] → [clk_env / hgraph / schedule] → [signal_fir] → fir → codegen
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
+
+The normalize and type/interval stages run inside this crate:
+`signal_prepare` calls `normalize` and `sigtype` (interleaved re-typing) on
+the propagated forest, then `clk_env` / `hgraph` / `schedule` analyze it and
+`signal_fir` lowers it to `fir`, which every backend consumes.
 
 ## Public modules
 
@@ -53,7 +56,8 @@ every stage produces an artifact that an **independent checker** must accept
 (see `signal_fir/vector/mod.rs` for the authoritative stage map). Any named
 unsupported shape fails **closed** to scalar lowering, reported through
 `VectorPipelineStatus::Fallback(reason)` with a stable `FRS-VEC-FALLBACK-*`
-code and `VectorEffectiveMode::Scalar`. A fallback is never silently counted
+(or, for reverse AD, `FRS-VEC-RAD-SCALAR`) code and
+`VectorEffectiveMode::Scalar`. A fallback is never silently counted
 as vector coverage.
 
 Since the 2026-07 cleanup (plan R5–R7), each vector stage is a directory
@@ -65,7 +69,7 @@ stage's `check.rs`, reachable from **both** the producer's last step and
 the standalone checker entry (plan §4.8); the producer/checker
 re-derivation pairs (`producer_*` vs `independently_*`/`checker_*`) are
 intentional duplication — they are the assurance boundary and must not be
-merged (plan §3.2; module headers repeat the prohibition in place).
+merged (plan §3.2, §4.6; module headers repeat the prohibition in place).
 
 Lifecycle ownership follows the C++ Faust contract: persistent fields belong
 to the DSP struct, compiled constants to `instanceConstants`, resettable
@@ -98,9 +102,9 @@ same sub-module, through `module::subcontainer_compile`. See
 |---|---|
 | `compile_signals_to_fir_fastlane(&SignalFirRequest)` | Single entry point |
 | `SignalFirRequest::new(arena, sigs, n_in, n_out, ui, opts)` | Required inputs; optional ones attach with `.with_clock_domains(..)` (`ondemand`/`upsampling`/`downsampling`), `.with_timing_sink(..)`, `.with_signal_origins(..)`, `.with_forced_shadow_report()` |
-| `SignalFirOptions` | `module_name`, `real_type`, delay thresholds (`-mcd`/`-dlt`), `compute_mode` (`-vec -vs -lv`), `scheduling_strategy` (`-ss`) |
+| `SignalFirOptions` | `module_name`, `real_type`, delay thresholds `max_copy_delay`/`delay_line_threshold` (`-mcd`/`-dlt`), `bra_tape_block_size` (`-bra-tape`), `compute_mode` (`-vec -vs -lv`), `scheduling_strategy` (`-ss`), `control_rate_mode` (`-ec`), `processing_api` (`-os`), `table_init_mode` (`--table-init`), `table_init_sample_rate`, `check_table` (`-ct`) |
 | `SignalFirOutput` | `FirStore` + module root + vector status/effective mode + diagnostics |
-| `SignalFirError` / `SignalFirErrorCode` | Typed errors with stable `FRS-SFIR-*` codes |
+| `SignalFirError` / `SignalFirErrorCode` | Typed errors with stable codes (`FRS-SFIR-0001`..`0010`, plus `FRS-UI-0001` for duplicate UI paths) |
 
 ### `signal_prepare` key items
 
@@ -137,3 +141,11 @@ cargo rustdoc -p transform --lib -- -D missing-docs            # documentation c
 | `compiler/generator/dag_instructions_compiler.cpp`, `compile_vect.cpp` | Vector loop DAG, delay-line words, placement rules |
 | `compiler/generator/compile_scal.cpp` | Scalar lowering and `ondemand` guard generation |
 | `compiler/Dependencies/*`, `compiler/generator/occurrences.cpp` | Dependency and occurrence rules |
+| `compiler/DirectedGraph/Schedule.hh`, `DirectedGraphAlgorythm.hh` | Generic `-ss` scheduler (`schedule`) |
+| `compiler/signals/clkEnvInference.cpp` | Clock-environment inference (`clk_env`) |
+| `compiler/transform/signalFIRCompiler.hh/.cpp` | Delay-line allocation and lowering (`signal_fir/delay`) |
+| `compiler/parallelize/graphSorting.cpp` (`sortGraph`) | Loop-DAG ordering (`signal_fir/loop_graph.rs`) |
+
+The plan's §2 table assigns `compiler/DirectedGraph/` to the `graph` crate;
+the generic scheduler lives here in `schedule` instead, and `transform` does
+not depend on `graph`.

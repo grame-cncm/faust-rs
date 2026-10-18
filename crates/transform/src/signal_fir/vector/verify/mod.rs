@@ -5,12 +5,13 @@
 //! `L-*` obligations, typed transports, region visibility, and a `VecSafe`
 //! witness per vectorizable loop. This is the vector-plan analogue of the
 //! schedule certificate (`crate::schedule::certificate`): a canonical DTO
-//! mirroring the
-//! `vectorPlan` shape of
-//! `porting/schemas/vector-verification-certificate-v2.schema.json`, plus a
+//! mirroring the `vectorPlan` shape of
+//! `porting/schemas/vector-verification-certificate-v4.schema.json`, plus a
 //! checker that re-derives every invariant from the plan's own fields. Schema
-//! v2 adds lockstep bundles and explicit transport layouts; v1 plans are not
-//! silently accepted by the v2 verifier.
+//! v2 added lockstep bundles and explicit transport layouts, v3 delayed-state
+//! carrier sets for fused serial groups, and v4 the effects each signal
+//! performs itself; the verifier accepts only the current version
+//! (`VECTOR_PLAN_SCHEMA_VERSION`).
 //!
 //! The checks mechanize the Lean `VectorPlanCertificate` obligations
 //! (`porting/vector-mode-scheduling-formal-spec.lean`): unique ids, exact

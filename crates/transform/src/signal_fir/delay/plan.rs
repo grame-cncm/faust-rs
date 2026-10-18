@@ -84,7 +84,7 @@ pub(crate) struct DelayPlan {
 /// records the per-occurrence carrier maximum into `lines`, under these guards:
 ///
 /// - zero-delay nodes are skipped,
-/// - `!is_recursion_delay_chain` guard for both `Delay` and `Delay1`,
+/// - `!is_recursion_delay_chain_static` guard for both `Delay` and `Delay1`,
 /// - `max_copy_delay >= 1` gate for `Delay1`.
 ///
 /// This is correct because per-occurrence max-delay recording does not depend
@@ -100,8 +100,8 @@ pub(crate) fn plan_delays(
     DelayPlanner::new(arena, sig_types, options, clock_domains).run(signals)
 }
 
-/// Pure-function equivalent of `DelayManager::is_recursion_delay_chain` that
-/// does not need `&self`.
+/// Returns whether `value` is a `Delay1` / `Clocked` chain over a projection
+/// of a symbolic recursion group (`SYMREF` or `SYMREC`).
 fn is_recursion_delay_chain_static(arena: &TreeArena, value: SigId) -> bool {
     let mut current = value;
     while let SigMatch::Delay1(inner) | SigMatch::Clocked(_, inner) = match_sig(arena, current) {
@@ -159,9 +159,8 @@ impl<'a> DelayPlanner<'a> {
 
     /// Core recursive visitor.
     ///
-    /// Combines the accumulating logic of `analyze_node` (tracking
-    /// `accumulated_delay` along paths through `Delay` / `Delay1` / `Prefix`)
-    /// with the first-visit scan-recording logic of `scan_node`.
+    /// Tracks `accumulated_delay` along paths through `Delay` / `Delay1` /
+    /// `Prefix` and records first-visit carrier maxima (`scan_once`).
     fn node(
         &mut self,
         sig: SigId,
@@ -291,8 +290,7 @@ impl<'a> DelayPlanner<'a> {
         Ok(())
     }
 
-    /// Walks a child node, handling list children the same way as `analyze_child`
-    /// and `scan_child`.
+    /// Walks a child node, expanding list children element by element.
     fn child(&mut self, child: SigId, clock_context: Option<u32>) -> Result<(), SignalFirError> {
         if self.arena.is_list(child) {
             let mut list = child;
@@ -318,10 +316,7 @@ impl<'a> DelayPlanner<'a> {
     }
 
     /// Records per-occurrence carrier scan information on the first contextual
-    /// visit to `sig`.
-    ///
-    /// Mirrors the body of `scan_node`, but operates on `plan.lines` instead of
-    /// a local `max_delays` map.
+    /// visit to `sig`, into `plan.lines`.
     fn scan_once(&mut self, sig: SigId, clock_context: Option<u32>) -> Result<(), SignalFirError> {
         if let SigMatch::Delay(value, amount) = match_sig(self.arena, sig) {
             match delay_size_for_amount(self.arena, self.sig_types, amount)? {
@@ -354,8 +349,8 @@ impl<'a> DelayPlanner<'a> {
         Ok(())
     }
 
-    /// Records recursion-output delay analysis for `sig` at `accumulated_delay`,
-    /// mirroring `DelayManager::record_rec_output_delay_analysis`.
+    /// Records recursion-output delay analysis for `sig` at `accumulated_delay`
+    /// into `plan.rec_outputs`.
     fn record_rec_output(
         &mut self,
         sig: SigId,

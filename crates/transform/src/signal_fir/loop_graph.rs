@@ -12,7 +12,7 @@
 //! - **Scalar lowering:** `module::build_module` routes every per-sample
 //!   slice through this graph — one node per non-empty slice, emitted as one
 //!   plain sample loop each, in insertion order via `topological_order`.
-//! - **Loop-separation criterion (diagnostic):** [`needs_separate_loop`]
+//! - **Loop-separation criterion:** [`needs_separate_loop`]
 //!   (the C++ `needSeparateLoop` port) is consumed by the checked vector
 //!   planner (`vector/plan/build.rs`), the `pv_slice` diagnostic surface,
 //!   and its exhaustive in-file tests.

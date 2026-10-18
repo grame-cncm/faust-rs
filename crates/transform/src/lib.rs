@@ -11,8 +11,14 @@
 //!   (dependency/occurrence rules)
 //!
 //! # Role in pipeline
-//! `propagate → [signal_prepare] → [clk_env / hgraph / schedule] →
-//! [signal_fir] → fir → codegen`
+//! Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate →
+//! normalize → type/interval → transform → fir → backend.
+//!
+//! The normalize and type/interval stages run inside this crate:
+//! [`signal_prepare`] calls `normalize` and `sigtype` (interleaved
+//! re-typing) on the propagated forest, then [`clk_env`] / [`hgraph`] /
+//! [`schedule`] analyze it and [`signal_fir`] lowers it to `fir`, which
+//! every backend consumes.
 //!
 //! The crate owns two production paths behind one facade:
 //! - the **scalar** path: prepared forest → clock/dependency analysis →
@@ -48,7 +54,9 @@
 //! 5. `signal_fir/module/` — the scalar lowerer, starting from
 //!    `SignalToFirLower`'s field table in `module/mod.rs`;
 //! 6. `signal_fir/vector/mod.rs` — the checked pipeline's stage map, then
-//!    any one stage in its `model.rs` → `build.rs` → `check.rs` order.
+//!    any one stage, vocabulary first (`model.rs` where it exists), then
+//!    producer (`build.rs` / `produce.rs` / `materialize.rs`, …), then
+//!    checker (`check.rs`).
 //!
 //! Anything under `signal_fir/diagnostics/` is observation-only and can be
 //! skipped on a first read. Historical plan codenames (`P4.3b`, `R1`, …)

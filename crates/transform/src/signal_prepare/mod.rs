@@ -12,6 +12,7 @@
 //!
 //! ```text
 //! 2.1  clone forest into a fresh private TreeArena
+//! 2.1b drop_clock_annotations  (Clocked(env, x) → x; table generators only)
 //! 2.2  de_bruijn_to_sym        (de Bruijn → SYMREC / SYMREF)
 //! 2.3  canon_unary_rec         (canonicalize unary projection indices)
 //!      └─ assert_sym           (W4: no de Bruijn remains)
@@ -64,8 +65,9 @@
 //! - [`prepare_signals_for_fir_verified`] returns a wrapper that certifies the
 //!   prepared forest passed the boundary checks before reaching FIR lowering.
 //!
-//! The two structural canonicalization rewrites (`canonicalize_unary_rec_projections`
-//! and `canonicalize_one_sample_delays`) are implemented in the `rewrites` submodule
+//! The structural rewrites (`canonicalize_unary_rec_projections`,
+//! `canonicalize_one_sample_delays`, and, for table generators,
+//! `drop_clock_annotations`) are implemented in the `rewrites` submodule
 //! (`signal_prepare/rewrites.rs`). See that module for their specifications and
 //! explicit C++ parity limitations.
 //!
@@ -96,8 +98,9 @@ use ui::UiProgram;
 
 mod rewrites;
 mod verify;
-// Re-export the promotion-invariant checker so `tests.rs` can call it as
-// `super::verify_promotion_invariant(...)` without knowing it lives in `verify`.
+// Re-export the promotion-invariant checker so the `tests/` suite can call it as
+// `crate::signal_prepare::verify_promotion_invariant(...)` without knowing it
+// lives in `verify`.
 #[cfg(test)]
 use verify::verify_promotion_invariant;
 

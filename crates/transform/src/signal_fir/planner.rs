@@ -1,17 +1,17 @@
-//! Resource-planning front slice for the signal->FIR fast-lane.
+//! Contract gate at the signal→FIR entry point.
 //!
-//! Step 1A intentionally keeps this planner minimal and deterministic:
-//! it only validates static contract inputs and records basic shape metadata.
+//! The planner is minimal and deterministic: it only validates static
+//! contract inputs and records basic shape metadata. Resource planning
+//! (delay lines, tables, UI) lives in the lowering stages.
 
 use super::SignalFirOptions;
 use super::error::{SignalFirError, SignalFirErrorCode};
 use signals::SigId;
 
-/// Minimal deterministic planning output for Step 1A.
+/// Minimal deterministic planning output.
 ///
 /// Records only top-level facts that are cheap to validate and stable across
-/// lowering strategies.  Later planning slices can extend this struct without
-/// changing the basic contract consumed by `module/`.
+/// lowering strategies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SignalFirPlan {
     /// Number of output signals requested for compilation.
@@ -22,17 +22,14 @@ pub(super) struct SignalFirPlan {
     pub num_outputs: usize,
 }
 
-/// Validates fast-lane inputs and produces a minimal planning snapshot.
-///
-/// This is intentionally conservative in Step 1A: semantics/resource details
-/// (delay lines/tables/UI) are added in Step 2+.
+/// Validates the lowering inputs and produces a minimal planning snapshot.
 ///
 /// Invariants guaranteed on success:
 /// - `signal_count == signals.len()`
 /// - `num_outputs == signals.len()` (strict top-level output contract)
 /// - `options.module_name` is non-empty after trim
 ///
-/// In other words, this planner is the contract gate for the fast-lane, not an
+/// In other words, this planner is the contract gate for lowering, not an
 /// optimizer: it rejects malformed entry conditions early and leaves all
 /// lowering choices to subsequent stages.
 pub(super) fn plan_signals(

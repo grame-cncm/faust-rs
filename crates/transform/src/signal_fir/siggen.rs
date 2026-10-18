@@ -1,16 +1,20 @@
 //! Compile-time interpreter for computed table generators (`SIGGEN`).
 //!
-//! Mirrors the C++ `signal2Container()`-style behavior used for deterministic
-//! 0-input table generators: evaluate the generator at compile time instead of
-//! emitting runtime init code.
+//! Rust-only path behind `TableInitMode::Const`: it folds a deterministic
+//! 0-input table generator to literal values at compile time. C++
+//! `signal2Container()`, like the default `TableInitMode::Runtime`
+//! (`module::subcontainer_compile`), instead compiles the generator into a
+//! sub-module run at initialization.
 //!
 //! # Scope
 //!
 //! This interpreter is used only for table generators that are known to be
-//! compile-time evaluable in the fast-lane:
+//! compile-time evaluable:
 //!
 //! - no audio inputs,
-//! - no UI/runtime context dependency,
+//! - no UI, soundfile, or foreign constant/variable/function dependency;
+//!   the sampling rate (`ma.SR`) only with an explicit
+//!   `table_init_sample_rate`,
 //! - deterministic signal graph,
 //! - bounded expansion requested by the caller (`size` samples).
 //!
@@ -89,8 +93,9 @@ pub(super) fn interpret_generator(
     Ok(results)
 }
 
-/// Test-only forwarding hook so `tests.rs` can validate generator semantics
-/// without exposing the interpreter outside the `signal_fir` module boundary.
+/// Test-only forwarding hook so the `tests/` suite can validate generator
+/// semantics without exposing the interpreter outside the `signal_fir` module
+/// boundary.
 #[cfg(test)]
 pub(super) fn interpret_generator_for_test(
     arena: &TreeArena,

@@ -14,16 +14,16 @@
 //! and DS (`signal_fir/module/clocked.rs`). Unlike the C++ compiler's mutable
 //! `CodeLoop` tree, Rust assembles an immutable, checked artifact from the
 //! accepted plan/route/state/clock artifacts, keeps recursion-step
-//! declarations in the enclosing sample scope, and
-//! places held clock outputs after the island guard, so a non-firing sample
-//! observes the previous held value. Final lifecycle placement is checked by
-//! `vector_module`. Clocked composition adds one checked shared state cursor
-//! per clock domain;
-//! it advances at the end of each guarded fire. Section 8 lockstep bundles are
-//! adapted as one physical `i0` loop whose body contains the unchanged scalar
-//! iteration of every lane in canonical order. This preserves each lane's IEEE
-//! operation and contraction policy while exposing cross-instance SLP to FIR
-//! backends without changing the planar `compute` ABI.
+//! declarations in the enclosing sample scope, and places held clock outputs
+//! after the island guard, so a non-firing sample observes the previous held
+//! value. Final lifecycle placement is checked by `vector::module`
+//! (`check::verify_final_module`). Clocked composition adds one checked shared
+//! state cursor per clock domain; it advances at the end of each guarded fire.
+//! Section 8 lockstep bundles are adapted as one physical `i0` loop whose body
+//! contains the unchanged scalar iteration of every lane in canonical order.
+//! This preserves each lane's IEEE operation and contraction policy while
+//! exposing cross-instance SLP to FIR backends without changing the planar
+//! `compute` ABI.
 //!
 //! General fused serial groups use the same physical sample envelope. A
 //! top-rate group owns one `i0` body; a nonzero-clock group owns one contiguous
