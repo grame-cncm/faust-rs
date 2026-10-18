@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded; `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1481,22 +1481,6 @@ must run unchanged with Faust C++ should not pass them.
 - Evidence: the comparison above (reference `8eebea429`); the headers'
   syntax check and the `box-overloads.cpp` client in
   `cargo run -p xtask -- libfaust-export-check`.
-
-### DIFF-API-010 — `libfaust-c.h` does not declare `freeCMemory`
-
-- Status: `parity-gap`.
-- The reference `architecture/faust/dsp/libfaust-c.h` declares
-  `void freeCMemory(void* ptr)`, which releases the strings its functions
-  return. [`crates/libfaust-ffi/include/libfaust-c.h`](../crates/libfaust-ffi/include/libfaust-c.h)
-  does not: its comment points to the declaration in the backend headers of the
-  same distribution (`libfaust-box-c.h`, `interpreter-dsp-c.h`, ...), and the
-  C++ `libfaust.h` declares it itself. The symbol is exported by
-  `libfaust-rs` either way.
-- Compatibility impact: a C client that includes only `libfaust-c.h` and calls
-  `freeCMemory` gets an implicit-declaration error (C99 and later) until it
-  includes another header of the distribution or declares the function.
-- Evidence: `crates/libfaust-ffi/include/libfaust-c.h` (line 18 comment);
-  reference `libfaust-c.h:145`.
 
 ## 8. Internal architectural adaptations
 

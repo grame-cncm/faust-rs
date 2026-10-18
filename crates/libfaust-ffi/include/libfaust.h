@@ -23,16 +23,6 @@
 #include <string>
 
 /*
- * freeCMemory() is exported once for the whole distribution by the backend
- * FFI layer. Declaring it here keeps this header self-sufficient for callers
- * that include no backend header.
- */
-#ifndef LIBFAUST_FREE_C_MEMORY_DECLARED
-#define LIBFAUST_FREE_C_MEMORY_DECLARED
-extern "C" void freeCMemory(void* ptr);
-#endif
-
-/*
  * Buffer sizes fixed by the C API contract. They are wrapper-local because a
  * C++ caller of this header never sees the raw buffers.
  */

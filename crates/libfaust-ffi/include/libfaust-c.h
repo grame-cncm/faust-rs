@@ -15,7 +15,7 @@
  * Both may be null, in which case the corresponding output is discarded.
  *
  * Every returned `const char*` is heap-allocated and must be released with
- * freeCMemory(), declared in the backend headers of this same distribution.
+ * freeCMemory(), declared below as in the reference header.
  */
 
 #include <stdbool.h>
@@ -23,6 +23,16 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*
+ * Delete a C string or array allocated and returned by the library.
+ *
+ * The same symbol is declared by the Box, Signal, Interpreter and Cranelift C
+ * headers of this distribution; it is exported once by `libfaust-rs`.
+ *
+ * @param ptr - the pointer to be deleted (NULL is accepted).
+ */
+void freeCMemory(void* ptr);
 
 /*
  * Compute a SHA-1 key from a string.

@@ -558,6 +558,8 @@ int main(void) {
     char sha_key[64] = {0};
     char error_msg[4096] = {0};
     const char* expanded = expandCDSPFromString("probe", "process = 0;", 0, NULL, sha_key, error_msg);
+    /* Declared by libfaust-c.h itself, as in the reference header. */
+    freeCMemory((void*)expanded);
     return expanded == NULL ? 1 : 0;
 }
 "#,
