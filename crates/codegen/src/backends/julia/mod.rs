@@ -1073,12 +1073,16 @@ fn emit_stmt(
             ref cases,
             default,
         } => {
+            // Evaluated once, as C's `switch` evaluates it: the cases are an
+            // `if`/`elseif` chain, which would otherwise re-evaluate it per case.
             let cond = emit_value(store, cond)?;
+            let switch = format!("switch{}", stmt.as_u32());
+            let _ = writeln!(out, "{tab}{switch} = {cond}");
             for (i, (value, block)) in cases.iter().enumerate() {
                 if i == 0 {
-                    let _ = writeln!(out, "{tab}if {cond} == {value}");
+                    let _ = writeln!(out, "{tab}if {switch} == {value}");
                 } else {
-                    let _ = writeln!(out, "{tab}elseif {cond} == {value}");
+                    let _ = writeln!(out, "{tab}elseif {switch} == {value}");
                 }
                 emit_block_with_mode(store, out, *block, indent + 1, mode)?;
             }

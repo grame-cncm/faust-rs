@@ -637,6 +637,51 @@ fn wasm_imports_a_math_call_found_only_inside_a_while_loop() {
     assert_eq!(imports, vec!["_sinf"]);
 }
 
+/// A `Switch` condition is evaluated once into a local, not re-lowered per
+/// case: the imported call in it runs once whatever the number of cases.
+#[test]
+fn wasm_switch_evaluates_its_condition_once() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let x = b.float32(0.5);
+    let call = b.fun_call("sin", &[x], FirType::Float32);
+    let cond = b.cast(FirType::Int32, call);
+    let first = b.block(&[]);
+    let second = b.block(&[]);
+    let switch = b.switch(cond, &[(1, first), (2, second)], None);
+    let body = b.block(&[switch]);
+    let compute = b.declare_fun(
+        "compute",
+        crate::fixtures::compute_fun_type(),
+        &crate::fixtures::compute_fun_args(),
+        Some(body),
+        false,
+    );
+    let dsp_struct = b.block(&[]);
+    let globals = b.block(&[]);
+    let functions = b.block(&[compute]);
+    let static_decls = b.block(&[]);
+    let module = b.module(
+        0,
+        1,
+        "switch_once",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+
+    let out = generate_wasm_module(&store, module, &WasmOptions::default())
+        .expect("a switch on a call compiles");
+    let ops = decode_ops(code_body_at(&out.wasm_binary, 1));
+    let calls = ops
+        .iter()
+        .filter(|op| matches!(op, Operator::Call { function_index: 0 }))
+        .count();
+    assert_eq!(calls, 1);
+}
+
 #[test]
 fn wasm_compute_calls_imported_math_functions() {
     let (store, module) = build_math_intrinsics_test_module();

@@ -48,11 +48,8 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         Ok(())
     }
 
-    /// Compiles `Switch(cond, cases, default)` as a nested `If` chain.
-    ///
-    /// This backend lowering currently assumes integer-like switch conditions
-    /// and case labels, which matches the active FIR fixtures and the most
-    /// common control dispatch patterns.
+    /// Lowers a FIR `Switch`: the condition is evaluated once into its own
+    /// int slot, as C's `switch` evaluates it once, then tested case by case.
     pub(super) fn compile_switch(
         &mut self,
         store: &FirStore,
@@ -60,20 +57,40 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         cases: &[(i64, FirId)],
         default: Option<FirId>,
     ) -> Result<(), CompileError> {
-        self.compile_switch_cases(store, cond, cases, default)
+        let slot = format!("switch{}", self.field_table.len());
+        self.alloc_storage_desc(&slot, &FirType::Int32, 1);
+        let offset = self.field_table[&slot].offset;
+        self.compile_node(store, cond)?;
+        self.current_block
+            .push(FbcInstruction::with_values_and_offsets(
+                FbcOpcode::StoreInt,
+                0,
+                R::default(),
+                offset,
+                0,
+            ));
+        self.compile_switch_cases(store, offset, cases, default)
     }
 
-    /// Lowers one `switch` case list recursively as a right-nested `if` chain.
+    /// Lowers one `switch` case list recursively as a right-nested `if` chain
+    /// on the condition stored at `cond_offset`.
     pub(super) fn compile_switch_cases(
         &mut self,
         store: &FirStore,
-        cond: FirId,
+        cond_offset: i32,
         cases: &[(i64, FirId)],
         default: Option<FirId>,
     ) -> Result<(), CompileError> {
         if let Some((&(case_value, case_block), rest)) = cases.split_first() {
             // Evaluate `cond == case_value` then branch.
-            self.compile_node(store, cond)?;
+            self.current_block
+                .push(FbcInstruction::with_values_and_offsets(
+                    FbcOpcode::LoadInt,
+                    0,
+                    R::default(),
+                    cond_offset,
+                    0,
+                ));
             self.compile_int32(i32::try_from(case_value).map_err(|_| {
                 CompileError::UnsupportedNode {
                     description: format!("switch case value out of i32 range: {case_value}"),
@@ -89,9 +106,8 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
 
             // Else branch: recurse on remaining cases or compile default.
             self.begin_sub_block();
-            self.compile_switch_cases(store, cond, rest, default)?;
+            self.compile_switch_cases(store, cond_offset, rest, default)?;
             let else_block_id = self.end_sub_block();
-
             self.current_block.push(FbcInstruction::full(
                 FbcOpcode::If,
                 "",

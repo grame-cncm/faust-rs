@@ -349,3 +349,22 @@ fn module_with_prototype(entry: &str, name: &str) -> (FirStore, FirId) {
     );
     (store, module)
 }
+
+/// A `Switch` condition is evaluated once, as C's `switch` evaluates it:
+/// julia and cmajor rendered the cases as an `if`/`elseif` chain that
+/// re-evaluated a call in the condition once per case.
+#[test]
+fn a_switch_condition_is_evaluated_once() {
+    for (backend, entry, generate) in backends() {
+        let (store, module) = module_with(entry, |b| {
+            let cond = b.fun_call("my_cond", &[], FirType::Int32);
+            let first = effect_block(b);
+            let second = effect_block(b);
+            vec![b.switch(cond, &[(1, first), (2, second)], None)]
+        });
+        // A backend that refuses `Switch` (codebox) has nothing to evaluate.
+        if let Ok(text) = generate(&store, module) {
+            assert_eq!(text.matches("my_cond").count(), 1, "{backend}:\n{text}");
+        }
+    }
+}

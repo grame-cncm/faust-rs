@@ -1140,6 +1140,11 @@ impl LocalSpecs {
     }
 }
 
+/// The local a `Switch` node evaluates its condition into.
+fn switch_local_name(switch: FirId) -> String {
+    format!("switch{}", switch.as_u32())
+}
+
 /// Collects stack/loop locals that need explicit WASM local slots.
 ///
 /// The traversal is intentionally conservative and only accepts FIR nodes that
@@ -1202,7 +1207,15 @@ fn collect_compute_locals(
         }
         FirMatch::Control { stmt, .. } => collect_compute_locals(store, stmt, out),
         FirMatch::WhileLoop { body, .. } => collect_compute_locals(store, body, out),
-        FirMatch::Switch { cases, default, .. } => {
+        FirMatch::Switch {
+            cond,
+            cases,
+            default,
+        } => {
+            // The condition is evaluated once, into its own local.
+            if let Some(cond_ty) = store.value_type(cond) {
+                out.declare(switch_local_name(id), cond_ty);
+            }
             for (_, case_stmt) in cases {
                 collect_compute_locals(store, case_stmt, out)?;
             }
@@ -1341,7 +1354,7 @@ impl ComputeSubsetLowerer<'_> {
                 cond,
                 cases,
                 default,
-            } => self.lower_switch_stmt(cond, &cases, default, function),
+            } => self.lower_switch_stmt(id, cond, &cases, default, function),
             FirMatch::Drop(value) => {
                 self.lower_expr(value, function)?;
                 function.instruction(&Instruction::Drop);
@@ -1667,9 +1680,11 @@ impl ComputeSubsetLowerer<'_> {
         Ok(())
     }
 
-    /// Dispatches FIR `Switch` lowering after resolving the condition type.
+    /// Lowers a FIR `Switch`: the condition is evaluated once into its own
+    /// local, as C's `switch` evaluates it once, then tested case by case.
     fn lower_switch_stmt(
         &mut self,
+        id: FirId,
         cond: FirId,
         cases: &[(i64, FirId)],
         default: Option<FirId>,
@@ -1681,17 +1696,23 @@ impl ComputeSubsetLowerer<'_> {
                 "missing value type for WASM switch condition",
             )
         })?;
-        self.lower_switch_cases(cond, &cond_ty, cases, default, function)
+        let WasmLocalStorage::Local(local) = self.local(&switch_local_name(id))?.storage else {
+            return Err(WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                "WASM switch condition local is not a scalar local",
+            ));
+        };
+        self.lower_expr(cond, function)?;
+        function.instruction(&Instruction::LocalSet(local));
+        self.lower_switch_cases(local, &cond_ty, cases, default, function)
     }
 
-    /// Emits `Switch` as a recursive `if/else` chain of equality tests.
-    ///
-    /// Each recursive call re-lowers `cond` and re-emits one case comparison,
-    /// nesting the remaining cases (and the optional `default`) inside the
-    /// `else` branch, until no cases remain.
+    /// Emits `Switch` as a recursive `if/else` chain of equality tests on the
+    /// condition's local, nesting the remaining cases (and the optional
+    /// `default`) inside the `else` branch, until no cases remain.
     fn lower_switch_cases(
         &mut self,
-        cond: FirId,
+        cond_local: u32,
         cond_ty: &FirType,
         cases: &[(i64, FirId)],
         default: Option<FirId>,
@@ -1703,14 +1724,14 @@ impl ComputeSubsetLowerer<'_> {
             }
             return Ok(());
         };
-        self.lower_expr(cond, function)?;
+        function.instruction(&Instruction::LocalGet(cond_local));
         emit_switch_case_const(*case_value, cond_ty, function)?;
         function.instruction(&switch_eq_instruction(cond_ty)?);
         function.instruction(&Instruction::If(BlockType::Empty));
         self.lower_stmt(*case_stmt, function)?;
         if !rest.is_empty() || default.is_some() {
             function.instruction(&Instruction::Else);
-            self.lower_switch_cases(cond, cond_ty, rest, default, function)?;
+            self.lower_switch_cases(cond_local, cond_ty, rest, default, function)?;
         }
         function.instruction(&Instruction::End);
         Ok(())

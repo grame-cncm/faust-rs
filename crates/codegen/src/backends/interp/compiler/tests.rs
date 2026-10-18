@@ -798,3 +798,37 @@ fn a_returned_value_is_refused_not_discarded() {
         Err(CompileError::UnsupportedNode { .. })
     ));
 }
+
+/// A `Switch` condition is evaluated once into an int slot, not recompiled
+/// per case: the math call in it appears once whatever the number of cases.
+#[test]
+fn a_switch_condition_is_compiled_once() {
+    fn count_sinf<R: FbcReal>(result: &FbcCompileResult<R>, block: BlockId) -> usize {
+        result
+            .arena
+            .get(block)
+            .instructions
+            .iter()
+            .map(|instr| {
+                usize::from(instr.opcode == FbcOpcode::Sinf)
+                    + instr
+                        .get_branch1()
+                        .map_or(0, |branch| count_sinf(result, branch))
+                    + instr
+                        .get_branch2()
+                        .map_or(0, |branch| count_sinf(result, branch))
+            })
+            .sum()
+    }
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let x = b.float32(0.5);
+    let call = b.fun_call("sinf", &[x], FirType::Float32);
+    let cond = b.cast(FirType::Int32, call);
+    let first = b.block(&[]);
+    let second = b.block(&[]);
+    let switch = b.switch(cond, &[(1, first), (2, second)], None);
+
+    let result = compile_one::<f32>(&store, switch);
+    assert_eq!(count_sinf(&result, result.entry_block), 1);
+}

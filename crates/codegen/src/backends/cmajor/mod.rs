@@ -1203,10 +1203,14 @@ fn emit_stmt(
             cases,
             default,
         } => {
+            // Evaluated once, as C's `switch` evaluates it: the cases are an
+            // `if`/`else if` chain, which would otherwise re-evaluate it per case.
             let cond = emit_value(store, options, cond)?;
+            let switch = format!("switch{}", stmt.as_u32());
+            let _ = writeln!(out, "{tab}let {switch} = {cond};");
             for (position, (value, block)) in cases.into_iter().enumerate() {
                 let keyword = if position == 0 { "if" } else { "else if" };
-                let _ = writeln!(out, "{tab}{keyword} (bool({cond} == {value})) {{");
+                let _ = writeln!(out, "{tab}{keyword} (bool({switch} == {value})) {{");
                 emit_block_items(store, out, options, block, indent + 1, context)?;
                 let _ = writeln!(out, "{tab}}}");
             }
