@@ -71,7 +71,7 @@ what each adapter returns from its `getCComplete*Error` entry point. One
 
 | Item | Description |
 |---|---|
-| `FfiCompileArgs` | Parsed CLI-like options: `-I`, `-cn`, `-double`, `-vec`, `-vs`, `-lv`, and `-ss` |
+| `FfiCompileArgs` | FFI host options: `-I`, `-cn`, `-mem0` and its aliases, and `--warn` (program options such as `-double` or `-vec` are read by `compiler::CompileOptionArgs::from_argv`) |
 | `parse_ffi_compile_args(argv)` | Parse a string slice into `FfiCompileArgs` |
 
 ### Factory caching

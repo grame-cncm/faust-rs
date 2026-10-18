@@ -1,6 +1,6 @@
 //! A closed definition holding a clocked wrapper, referenced outside and inside
 //! the body of a recursion written with an unapplied function, compiles to one
-//! block (2026-09-21, `propagate::flat::mentions_slot`).
+//! block (2026-09-21, `propagate::flat::free_slots`).
 //!
 //! Self-contained: the counter, the noise and the clock are written inline, so
 //! the test needs no Faust standard library.

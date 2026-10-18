@@ -22,8 +22,9 @@ source generation, backed by Rust `signals::SigBuilder` and `signals::match_sig`
 ## Context model
 
 Signal handles share the same process-global context
-(`createLibContext` / `destroyLibContext`) as `box-ffi`, exported from
-`tree-ffi`. This lets `Box` and `Signal` handles be printed and freed through
+(`createLibContext` / `destroyLibContext`) as `box-ffi`: its state lives in
+`tree-ffi`, and these entry points are exported by `box-ffi`, a dependency of
+this crate. This lets `Box` and `Signal` handles be printed and freed through
 the common libfaust helpers (`CprintSignal`, `freeCMemory`) without a separate
 context lifecycle.
 

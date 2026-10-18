@@ -1,9 +1,10 @@
 //! Backend-specific lower-error to `CompilerError` converters.
 //!
-//! Each `lower_*_error_to_compiler` function maps the three-variant
-//! `LowerError<E>` type (Transform / Verify / Codegen) for a specific backend
-//! (C++, C, Julia, interpreter, FIR) into the unified `CompilerError` enum
-//! consumed by all public `Compiler` methods.
+//! Each `lower_*_error_to_compiler` function maps the staged lowering error
+//! of one backend (ExecutionOptions / Transform / Verify / Codegen; C++, C,
+//! Julia, Rust, AssemblyScript, Codebox, Cmajor, Cranelift, interpreter, FIR)
+//! into the unified `CompilerError` enum consumed by all public `Compiler`
+//! methods.
 //!
 //! Also contains `enrich_diagnostic_with_node` — attaches source-span context
 //! to a diagnostic when the error carries an offending box or signal node —

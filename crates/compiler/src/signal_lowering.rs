@@ -4,10 +4,10 @@
 //! ([`SignalCompileOutput`]) and the backend emitter:
 //!
 //! - [`LowerError<E>`] / [`LowerToInterpError`] / [`LowerToFirError`] —
-//!   three-stage error envelopes (Transform → Verify → Codegen);
+//!   staged error envelopes (ExecutionOptions → Transform → Verify → Codegen);
 //! - [`SignalLoweringContext`] — lane selection, FIR verify options, real type,
 //!   delay parameters, and optional timing sink bundled as one value;
-//! - `lower_signals_to_*` — public dispatch entry points (C++, C, Julia, interp, FIR);
+//! - `lower_signals_to_*` — per-backend dispatch entry points;
 //! - `lower_signals_to_*_transform_fastlane` — the actual lowering implementations
 //!   shared by all backends;
 //! - `maybe_verify_fir_module` / `serialize_factory` / `resolve_module_name` —
@@ -20,10 +20,10 @@ use crate::execution::{ExecutionOptionsError, validate_execution_options};
 // ─── Signal-to-FIR lower errors ───────────────────────────────────────────────
 
 /// Generic lower-to-backend error for backends that follow the
-/// Transform → Verify → Codegen pattern.
+/// ExecutionOptions → Transform → Verify → Codegen pattern.
 ///
 /// `E` is the backend-specific codegen error type.
-/// Specialised as [`LowerToCppError`] and [`LowerToCError`].
+/// Specialised per backend, e.g. [`LowerToCppError`] and [`LowerToCError`].
 #[derive(Debug)]
 pub(crate) enum LowerError<E> {
     /// Execution-option request rejected by the capability model before
