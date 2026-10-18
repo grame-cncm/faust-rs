@@ -243,3 +243,45 @@ fn every_textual_backend_refuses_an_iterator_for_loop() {
         .collect();
     assert_eq!(accepted, Vec::<&str>::new());
 }
+
+/// A foreign variable (`fvariable`, `DeclareVar` with `AccessType::Global`)
+/// is a host symbol the code reads; c and cpp never declared it, while rust,
+/// julia and asc made it a struct field initialized to zero.
+#[test]
+fn a_foreign_variable_is_read_never_declared_as_state() {
+    for (backend, _, generate) in backends()
+        .into_iter()
+        .filter(|(name, _, _)| ["c", "cpp", "rust", "julia", "asc"].contains(name))
+    {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let f_state = b.declare_var("fState", FirType::Float32, AccessType::Struct, None);
+        let foreign = b.declare_var("gBar", FirType::Float32, AccessType::Global, None);
+        let read = b.load_var("gBar", AccessType::Global, FirType::Float32);
+        let assign = b.store_var("fState", AccessType::Struct, read);
+        let body = b.block(&[assign]);
+        let compute = b.declare_fun(
+            "compute",
+            fixtures_compute_type(),
+            &fixtures_compute_args(),
+            Some(body),
+            false,
+        );
+        let dsp_struct = b.block(&[f_state]);
+        let globals = b.block(&[foreign]);
+        let functions = b.block(&[compute]);
+        let static_decls = b.block(&[]);
+        let module = b.module(
+            0,
+            1,
+            "foreign",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
+        let text = generate(&store, module).unwrap_or_else(|e| panic!("{backend}: {e}"));
+        assert_eq!(text.matches("gBar").count(), 1, "{backend}:\n{text}");
+    }
+}

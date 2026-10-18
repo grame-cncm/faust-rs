@@ -493,6 +493,11 @@ fn emit_struct_fields(
     let items = section_items("struct", block_id, store)?;
     for item in items {
         match match_fir(store, item) {
+            // A foreign variable (`fvariable`) is a host symbol, not state.
+            FirMatch::DeclareVar {
+                access: AccessType::Global,
+                ..
+            } => {}
             FirMatch::DeclareVar { name, typ, .. } => {
                 let _ = writeln!(out, "    {name}: {},", emit_type(&typ));
             }
@@ -777,6 +782,10 @@ fn emit_constructor(
         };
         for item in items {
             match match_fir(store, item) {
+                FirMatch::DeclareVar {
+                    access: AccessType::Global,
+                    ..
+                } => {}
                 FirMatch::DeclareVar {
                     name, typ, init, ..
                 } => {

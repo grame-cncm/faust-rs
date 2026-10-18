@@ -548,6 +548,11 @@ fn emit_section_fields(
     let items = section_items("fields", section_id, store)?;
     for item in items {
         match match_fir(store, item) {
+            // A foreign variable (`fvariable`) is a host symbol, not a field.
+            FirMatch::DeclareVar {
+                access: AccessType::Global,
+                ..
+            } => {}
             FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {
                 emit_stmt(store, out, options, class_name, item, indent, Phase::Fields)?;
             }
