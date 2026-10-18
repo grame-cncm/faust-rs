@@ -31,7 +31,7 @@ use std::fmt::Write as _;
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
     ModuleView, SkeletonCodes, SubModuleView, block_declares_var, block_stores_var,
-    collect_declared_function_names, decode_module, find_function_body, invalid_section,
+    collect_defined_functions, decode_module, find_function_body, invalid_section,
     is_receiver_lifecycle_method, section_items, sub_module_views, unsupported_node,
 };
 use fir::{AccessType, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
@@ -159,7 +159,12 @@ fn generate_asc_module_step(
         .as_deref()
         .unwrap_or(module.name.as_str())
         .to_owned();
-    let declared_functions = collect_declared_function_names(store, module.functions)?;
+    // Definitions only: a prototype of a lifecycle function does not displace
+    // the stub synthesized for it (c, rust and julia already did so).
+    let declared_functions: Vec<String> = collect_defined_functions(store, module.functions)?
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
 
     let mut out = String::new();
     let _ = writeln!(
@@ -512,7 +517,7 @@ fn emit_declared_method(
             name,
             typ,
             args,
-            body,
+            body: body @ Some(_),
             ..
         } = match_fir(store, item)
             && name == method

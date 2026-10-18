@@ -285,3 +285,67 @@ fn a_foreign_variable_is_read_never_declared_as_state() {
         assert_eq!(text.matches("gBar").count(), 1, "{backend}:\n{text}");
     }
 }
+
+/// A body-less declaration of a lifecycle function (a prototype) changes
+/// nothing: the backend synthesizes the same stub it synthesizes when the
+/// function is absent. cpp let the prototype suppress the stub and emitted a
+/// declaration with no definition; asc emitted nothing while `instanceInit`
+/// still called the method.
+#[test]
+fn a_lifecycle_prototype_does_not_suppress_its_stub() {
+    for (backend, entry, generate) in backends() {
+        let (store, plain) = module_with(entry, |_| Vec::new());
+        let expected = generate(&store, plain).unwrap_or_else(|e| panic!("{backend}: {e}"));
+        let (store, with_prototype) = module_with_prototype(entry, "instanceClear");
+        let text = generate(&store, with_prototype).unwrap_or_else(|e| panic!("{backend}: {e}"));
+        assert_eq!(text, expected, "{backend}");
+    }
+}
+
+/// [`module_with`] an empty body, plus a body-less declaration of `name`.
+fn module_with_prototype(entry: &str, name: &str) -> (FirStore, FirId) {
+    let (mut store, module) = module_with(entry, |_| Vec::new());
+    let fir::FirMatch::Module {
+        num_inputs,
+        num_outputs,
+        name: module_name,
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        ..
+    } = fir::match_fir(&store, module)
+    else {
+        unreachable!()
+    };
+    let fir::FirMatch::Block(mut items) = fir::match_fir(&store, functions) else {
+        unreachable!()
+    };
+    let mut b = FirBuilder::new(&mut store);
+    let prototype = b.declare_fun(
+        name,
+        FirType::Fun {
+            args: vec![FirType::Ptr(Box::new(FirType::Obj))],
+            ret: Box::new(FirType::Void),
+        },
+        &[fir::NamedType {
+            name: "dsp".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        }],
+        None,
+        false,
+    );
+    items.insert(0, prototype);
+    let functions = b.block(&items);
+    let module = b.module(
+        num_inputs,
+        num_outputs,
+        module_name,
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+    (store, module)
+}

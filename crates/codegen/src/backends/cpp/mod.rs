@@ -27,10 +27,10 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    SkeletonCodes, SubModuleView, block_declares_var, block_stores_var,
-    collect_declared_function_names, decode_module, find_function_body, invalid_section,
-    is_empty_block, is_receiver_lifecycle_method, is_sub_module_method, section_items,
-    sub_module_views, unsupported_node,
+    SkeletonCodes, SubModuleView, block_declares_var, block_stores_var, collect_defined_functions,
+    decode_module, find_function_body, invalid_section, is_empty_block,
+    is_receiver_lifecycle_method, is_sub_module_method, section_items, sub_module_views,
+    unsupported_node,
 };
 use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
@@ -220,7 +220,12 @@ fn generate_cpp_module_step(
     let module_name = module.name.clone();
     let effective_options = options.clone();
     let metadata_name = options.metadata_name.as_deref().unwrap_or(&module_name);
-    let declared_functions = collect_declared_function_names(store, module.functions)?;
+    // Definitions only: a prototype of a lifecycle function does not displace
+    // the stub synthesized for it (c, rust and julia already did so).
+    let declared_functions: Vec<String> = collect_defined_functions(store, module.functions)?
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
     let has_sample_rate_field = block_declares_var(store, module.dsp_struct, "fSampleRate")
         || block_declares_var(store, module.globals, "fSampleRate");
     let class_name = options
@@ -1556,8 +1561,12 @@ fn emit_declare_fun(
         ""
     };
     let inline = if decl.is_inline { "inline " } else { "" };
-    // Prototype-only (no body): emit a forward declaration / pure-virtual signature.
+    // Prototype-only (no body): emit a forward declaration, except for a
+    // lifecycle method, whose stub is synthesized and would be declared twice.
     let Some(body) = decl.body else {
+        if is_dsp_api {
+            return Ok(());
+        }
         let _ = writeln!(
             out,
             "{tab}{inline}{method_prefix}{ret} {}({params});",

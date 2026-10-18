@@ -343,22 +343,6 @@ pub(crate) fn collect_defined_functions<C: SkeletonCodes>(
         .collect())
 }
 
-/// The names of every function a `functions` section declares, prototypes
-/// included, in declaration order.
-pub(crate) fn collect_declared_function_names<C: SkeletonCodes>(
-    store: &FirStore,
-    functions: FirId,
-) -> Result<Vec<String>, BackendError<C>> {
-    let items = section_items("functions", functions, store)?;
-    Ok(items
-        .into_iter()
-        .filter_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun { name, .. } => Some(name),
-            _ => None,
-        })
-        .collect())
-}
-
 /// The methods of the Faust `dsp` class API (`faust/dsp/dsp.h`).
 const DSP_API_METHODS: [&str; 14] = [
     "metadata",
