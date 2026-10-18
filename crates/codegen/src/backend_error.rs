@@ -20,6 +20,8 @@
 /// generic mapper serve every backend instead of one hand-written mapper each.
 use fir::FirId;
 
+use crate::backends::codegen_error::{BackendError, CodegenErrorCode};
+
 /// Backend-independent classification of an emission failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackendFailureKind {
@@ -59,21 +61,6 @@ pub trait BackendCodegenError {
     }
 }
 
-/// Implements [`BackendCodegenError`] for a backend error exposing `code()` and
-/// `message()` as methods.
-macro_rules! impl_backend_error_via_methods {
-    ($error:ty) => {
-        impl $crate::backend_error::BackendCodegenError for $error {
-            fn code_str(&self) -> &'static str {
-                self.code().as_str()
-            }
-            fn message_str(&self) -> &str {
-                self.message()
-            }
-        }
-    };
-}
-
 /// Implements [`BackendCodegenError`] for a backend error exposing `code` and
 /// `message` as public fields.
 macro_rules! impl_backend_error_via_fields {
@@ -89,7 +76,11 @@ macro_rules! impl_backend_error_via_fields {
     };
 }
 
-impl BackendCodegenError for crate::backends::cpp::CodegenError {
+/// Every carrier built on [`BackendError`] — the seven textual backends and
+/// wasm — reports its FIR provenance. One impl instead of one per backend: the
+/// per-backend bridges forwarded `fir_node` for `cpp` only, so a node attached
+/// by any other backend was dropped on the way to the diagnostic.
+impl<C: CodegenErrorCode> BackendCodegenError for BackendError<C> {
     fn code_str(&self) -> &'static str {
         self.code().as_str()
     }
@@ -99,16 +90,9 @@ impl BackendCodegenError for crate::backends::cpp::CodegenError {
     }
 
     fn fir_node(&self) -> Option<FirId> {
-        self.fir_node()
+        BackendError::fir_node(self)
     }
 }
-impl_backend_error_via_methods!(crate::backends::c::CodegenError);
-impl_backend_error_via_methods!(crate::backends::julia::CodegenError);
-impl_backend_error_via_methods!(crate::backends::asc::CodegenError);
-impl_backend_error_via_methods!(crate::backends::rust::CodegenError);
-impl_backend_error_via_methods!(crate::backends::wasm::WasmBackendError);
-impl_backend_error_via_methods!(crate::backends::codebox::CodegenError);
-impl_backend_error_via_methods!(crate::backends::cmajor::CodegenError);
 impl_backend_error_via_fields!(crate::backends::interp::CodegenError);
 #[cfg(not(target_arch = "wasm32"))]
 impl_backend_error_via_fields!(crate::backends::cranelift::CraneliftBackendError);
@@ -155,5 +139,46 @@ mod tests {
             "not a module",
         );
         assert_eq!(invariant.kind(), BackendFailureKind::CompilerInvariant);
+    }
+
+    /// The bridge forwarded `fir_node` for `cpp` only; every carrier built on
+    /// `BackendError` must report the node it was given.
+    #[test]
+    fn every_shared_carrier_forwards_its_fir_node() {
+        let mut store = FirStore::new();
+        let node = FirBuilder::new(&mut store).int32(1);
+        fn forwarded(error: &dyn BackendCodegenError) -> Option<fir::FirId> {
+            error.fir_node()
+        }
+        use crate::backends::{asc, c, cmajor, codebox, julia, rust, wasm};
+        let nodes = [
+            forwarded(
+                &c::CodegenError::new(c::CodegenErrorCode::UnsupportedNode, "x").at_node(node),
+            ),
+            forwarded(
+                &julia::CodegenError::new(julia::CodegenErrorCode::UnsupportedNode, "x")
+                    .at_node(node),
+            ),
+            forwarded(
+                &asc::CodegenError::new(asc::CodegenErrorCode::UnsupportedNode, "x").at_node(node),
+            ),
+            forwarded(
+                &rust::CodegenError::new(rust::CodegenErrorCode::UnsupportedNode, "x")
+                    .at_node(node),
+            ),
+            forwarded(
+                &codebox::CodegenError::new(codebox::CodegenErrorCode::Unsupported, "x")
+                    .at_node(node),
+            ),
+            forwarded(
+                &cmajor::CodegenError::new(cmajor::CodegenErrorCode::Unsupported, "x")
+                    .at_node(node),
+            ),
+            forwarded(
+                &wasm::WasmBackendError::new(wasm::WasmBackendErrorCode::UnsupportedFirNode, "x")
+                    .at_node(node),
+            ),
+        ];
+        assert!(nodes.iter().all(|n| *n == Some(node)), "{nodes:?}");
     }
 }

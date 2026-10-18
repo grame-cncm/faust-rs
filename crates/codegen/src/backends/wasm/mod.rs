@@ -169,41 +169,17 @@ impl WasmBackendErrorCode {
     }
 }
 
-/// Typed backend error returned by the WASM emitter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WasmBackendError {
-    code: WasmBackendErrorCode,
-    message: String,
-}
-
-impl WasmBackendError {
-    #[must_use]
-    pub fn new(code: WasmBackendErrorCode, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn code(&self) -> WasmBackendErrorCode {
-        self.code
-    }
-
-    /// Returns the backend-specific message without the bracketed code.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
+impl crate::backends::codegen_error::CodegenErrorCode for WasmBackendErrorCode {
+    fn as_str(&self) -> &'static str {
+        Self::as_str(*self)
     }
 }
 
-impl std::fmt::Display for WasmBackendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] {}", self.code.as_str(), self.message)
-    }
-}
-
-impl std::error::Error for WasmBackendError {}
+/// Typed backend error returned by the WASM emitter: the shared carrier
+/// ([`crate::backends::codegen_error::BackendError`]) over the wasm codes, so
+/// it renders `[code] message` and carries FIR provenance like the textual
+/// backends.
+pub type WasmBackendError = crate::backends::codegen_error::BackendError<WasmBackendErrorCode>;
 
 /// Canonical exported/runtime helper functions emitted by the backend.
 ///

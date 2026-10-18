@@ -335,9 +335,6 @@ fn StructLayoutPlan::field
 fn StructLayoutPlan::fields
 fn StructLayoutPlan::size_bytes
 fn TargetAbi::native
-fn WasmBackendError::code
-fn WasmBackendError::message
-fn WasmBackendError::new
 fn WasmBackendErrorCode::as_str
 fn WasmMemoryLayout::from_module
 fn WasmMemoryLayout::scaffold
@@ -487,7 +484,6 @@ struct StructFieldLayout
 struct StructLayoutPlan
 struct TargetAbi
 struct TypeLayout
-struct WasmBackendError
 struct WasmJsonContext
 struct WasmMemoryLayout
 struct WasmModule
@@ -498,6 +494,7 @@ trait FbcReal
 type CodegenError
 type CompilerParts
 type FirFixtureBuilder
+type WasmBackendError
 use api
 use bytecode
 use compiler
