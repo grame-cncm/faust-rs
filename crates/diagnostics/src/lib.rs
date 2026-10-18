@@ -7,7 +7,9 @@
 //! - parser/eval/propagate diagnostics conventions in pass-specific code
 //!
 //! # Role in pipeline
-//! - Define a shared, typed diagnostic envelope used by all compiler stages.
+//! - Define a shared, typed diagnostic envelope for the stages that emit
+//!   structured diagnostics (parser, eval, propagate, and the `compiler`
+//!   facade, which maps the typed errors of the other crates onto it).
 //! - Keep stable diagnostic codes (`codes::*`) suitable for tests, CI gates and
 //!   tooling integrations.
 //! - Offer stage/severity/source-span metadata independent from output format.

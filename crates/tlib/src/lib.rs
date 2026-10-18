@@ -31,10 +31,11 @@
 //!   [`RecursionError`] returns instead of process-global assertions.
 //!
 //! Pipeline contract note:
-//! - the fast-lane now clones the whole signal forest into a private staging arena
-//!   and applies [`de_bruijn_to_sym`] before FIR lowering.
-//! - normalization-level symbolic conversion remains opt-in at other call-site
-//!   boundaries that expose signal trees directly.
+//! - `transform::signal_prepare` clones the propagated signal forest into a
+//!   private staging arena and applies [`de_bruijn_to_sym`] before typing and
+//!   FIR lowering.
+//! - `normalize::normalform::prepare_signals` applies the same conversion for
+//!   callers that hand signal trees to it directly.
 
 mod arena;
 mod property;

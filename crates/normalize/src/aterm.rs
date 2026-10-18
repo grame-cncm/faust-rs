@@ -1,7 +1,7 @@
 //! Additive term: a sum of [`Mterm`]s — `m₁ + m₂ + m₃ + …`
 //!
 //! Ported from C++ `compiler/normalize/aterm.cpp`.
-// Internal module — wired into the simplify/normalform pipeline in Phase 2.
+// Internal module, used by `normalize`.
 #![allow(dead_code)]
 //!
 //! An [`Aterm`] decomposes an additive signal expression into its canonical

@@ -1,8 +1,8 @@
 //! Signal-level table access protection (`-ct` / check-table).
 //!
 //! Port of the C++ `SignalTablePromotion` pass
-//! (`compiler/transform/sigPromotion.cpp:577-640`), invoked from
-//! `simplifyToNormalForm` (`compiler/normalize/normalform.cpp:115`) when
+//! (`compiler/transform/sigPromotion.cpp:702-782`), invoked from
+//! `simplifyToNormalForm` (`compiler/normalize/normalform.cpp:118`) when
 //! `gGlobal->gCheckTable` is set (`-ct`, default 1).
 //!
 //! The pass rewrites every `SIGRDTBL` / `SIGWRTBL` access whose index the
@@ -112,7 +112,7 @@ impl std::fmt::Display for TableRangeWarning {
 /// `safeSigRDTbl`).
 ///
 /// C++: `signalTablePromote(sig)` / class `SignalTablePromotion`
-/// (`transform/sigPromotion.cpp:577-640`, `transform/sigPromotion.hh`).
+/// (`transform/sigPromotion.cpp:702-782`, `transform/sigPromotion.hh`).
 pub fn promote_table_signals(
     arena: &mut TreeArena,
     types: &HashMap<SigId, SigType>,

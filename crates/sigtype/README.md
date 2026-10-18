@@ -16,6 +16,11 @@ vectorability, resolution, and interval bounds. Provides factory functions,
 lattice merge/union/product operations, cast helpers, and a bottom-up type
 annotator (`TypeAnnotator`) for full signal-graph inference.
 
+The split with the neighbouring crates: the signal IR itself is defined in
+`signals`, and the interval arithmetic used for interval bounds lives in
+`interval`; this crate owns the lattice and the inference rules, including
+interval inference over signals.
+
 ## Public API
 
 ### Core types
@@ -59,10 +64,19 @@ annotator (`TypeAnnotator`) for full signal-graph inference.
 
 | Item | Description |
 |---|---|
-| `TypeAnnotator<'a>` | Bottom-up signal type inference with memoization |
+| `TypeAnnotator<'a>` | Bottom-up signal type inference with memoization: `TypeAnnotator::new(arena, ui_program)`, then `annotate(outputs)` returns the `SigId → SigType` map |
+| `InferenceError` / `InferenceRule` | Typed inference failure and its stable rule identifier |
+| `InferenceWarning` | Possible out-of-domain math operation, reported when the caller audits for it |
+
+### Accessors (`api`)
+
+Uniform `SigType` accessors (`nature()`, `variability()`, …) and `promote*`
+methods, ported from the `AudioType` virtual methods of `sigtype.hh`.
 
 ## Position in the pipeline
 
-```
-signals  →  normalize  →  [sigtype inference]  →  transform
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
+
+`sigtype` is a library, not a standalone pass: `transform::signal_prepare`
+re-types the forest with `TypeAnnotator` between its normalization passes,
+and `normalize` itself depends on it.

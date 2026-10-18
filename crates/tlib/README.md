@@ -15,6 +15,7 @@ deduplication.
 | `compiler/tlib/list.hh` / `list.cpp` | Linked-list primitives on trees |
 | `compiler/tlib/property.hh` | Node-keyed property store |
 | `compiler/tlib/node.hh` / `symbol.hh` | Node payload kinds and symbol table |
+| `compiler/tlib/recursive-tree.cpp` | De Bruijn / symbolic recursive trees (`deBruijn2Sym`, `liftn`) |
 
 ## Public API
 
@@ -24,6 +25,8 @@ deduplication.
 | `TreeId` | Lightweight copyable node handle |
 | `NodeKind` | Node payload: `Nil`, `Cons`, `Symbol`, `StringLiteral`, `Int(i64)`, `FloatBits(u64)`, or interned `Tag(u32)` |
 | `PropertyStore` | Node-keyed side-channel storage (parser `def`/`use` props, …) |
+| `vec_to_list` / `list_to_vec` | Convert between a `Vec<TreeId>` and a canonical `cons`/`nil` list |
+| `tree_to_str` / `tree_to_int` / `tree_to_double` | Read a leaf payload (C++ `tree2str`, …) |
 | `de_bruijn_rec` / `de_bruijn_ref` | De Bruijn recursive-tree builders |
 | `sym_rec` / `sym_ref` | Symbolic recursive-tree builders |
 | `de_bruijn_to_sym` | Convert de Bruijn form to symbolic form |
@@ -31,6 +34,7 @@ deduplication.
 | `validate_faust_list` | Check canonical `cons`/`nil` list shape |
 | `validate_closed_de_bruijn_tree` | Check de Bruijn trees are closed and convertible |
 | `validate_symbolic_recursion_tree` | Check symbolic recursion binders/refs are well formed |
+| `stack::on_compile_stack` / `stack::on_deep_stack` | Run a pipeline stage, or an unbounded recursion, on a stack large enough for it (`stacker`) |
 
 ## Parity invariants
 

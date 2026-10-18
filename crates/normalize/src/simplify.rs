@@ -1,7 +1,7 @@
 //! Signal simplification: memoized rewrite engine + local algebraic rules.
 //!
 //! Ported from C++ `compiler/normalize/simplify.cpp`.
-// Internal module — wired into the Phase 1 normalform pipeline.
+// Internal module, used by `normalform` and by the `simplify_const` family.
 #![allow(dead_code)]
 //!
 //! # Architecture

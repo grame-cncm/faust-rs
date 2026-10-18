@@ -1,17 +1,17 @@
 # doc
 
-Documentation and report-integration crate — scaffold placeholder.
+Mathematical documentation crate — scaffold placeholder.
 
 ## Intended role
 
-- Host programmatic documentation builders shared by developer tooling
-  (`xtask`, phase reports, parity dashboards).
-- Provide typed renderers/formatters for markdown or machine-readable
-  project status outputs.
+The porting plan maps the C++ automatic mathematical documentation generator,
+`compiler/documentator/` (the `-mdoc` option: `doc.cpp`, `doc_compile.cpp`,
+`lateq.cpp`, …), to this crate.
 
 ## Current status
 
-Scaffold only. No runtime or reporting APIs are stabilized yet.
+Not ported: the crate is an empty scaffold, no workspace crate depends on it,
+and the `faust-rs` CLI has no `-mdoc` option.
 
 ## Public API
 

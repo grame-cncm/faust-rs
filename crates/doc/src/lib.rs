@@ -1,15 +1,14 @@
 #![forbid(unsafe_code)]
 
-//! Documentation and report-integration crate placeholder.
+//! Mathematical documentation crate placeholder.
 //!
 //! # Intended role
-//! - Host programmatic documentation builders shared by developer tooling
-//!   (`xtask`, phase reports, parity dashboards).
-//! - Provide typed renderers/formatters for markdown or machine-readable
-//!   project status outputs.
+//! - Port of the C++ automatic mathematical documentation generator,
+//!   `compiler/documentator/` (the `-mdoc` option), as mapped by the porting
+//!   plan.
 //!
 //! # Current status
-//! - Scaffold only. No runtime/reporting APIs are stabilized yet.
+//! - Not ported: empty scaffold, with no dependents and no `-mdoc` CLI option.
 //!
 //! # API mapping status
 //! - `crate_id()` is `adapted` utility metadata (no direct C++ counterpart).

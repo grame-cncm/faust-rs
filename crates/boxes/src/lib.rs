@@ -10,7 +10,8 @@
 //! - Public construction API is `BoxBuilder`, which keeps 1:1 semantic mapping with
 //!   the C++ box families (`box*` constructors in `compiler/boxes/boxes.hh/.cpp`).
 //! - Public inspection API is `match_box` + `BoxMatch`.
-//! - Legacy `node_*` / `is_node_*` helpers are kept internal to this crate.
+//! - Low-level `node_*` constructors are `pub(crate)`; there are no public
+//!   `box_*` / `is_box_*` helpers.
 //!
 //! # Parity invariants
 //! - Box nodes are represented as tagged trees with deterministic child order.

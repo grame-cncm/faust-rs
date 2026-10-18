@@ -8,7 +8,9 @@
 //! - Isolate graph-specific logic from IR crates to keep crate boundaries clear.
 //!
 //! # Current status
-//! - Scaffold only. No graph API is stabilized yet.
+//! - Scaffold only: no graph API, and no workspace crate depends on it.
+//! - The port of C++ `compiler/DirectedGraph/` (`Schedule.hh`,
+//!   `DirectedGraphAlgorythm.hh`) lives in `transform::schedule` instead.
 //!
 //! # API mapping status
 //! - `crate_id()` is `adapted` utility metadata (no direct C++ counterpart).

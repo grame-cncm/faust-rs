@@ -1,6 +1,6 @@
 # graph
 
-Shared graph algorithms crate for compiler passes.
+Shared graph algorithms crate — scaffold placeholder.
 
 ## Intended role
 
@@ -11,11 +11,14 @@ Shared graph algorithms crate for compiler passes.
 
 ## Current status
 
-Scaffold only. No graph API is stabilized yet.
+Scaffold only: no graph API, and no workspace crate depends on `graph`.
+
+The port of `compiler/DirectedGraph/` (`Schedule.hh`,
+`DirectedGraphAlgorythm.hh`), which the porting plan maps to this crate, lives
+in `transform::schedule` instead.
 
 ## Public API
 
 | Item | Description |
 |---|---|
 | `crate_id()` | Returns the stable crate identifier |
-

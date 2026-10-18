@@ -3,19 +3,19 @@
 //! Algebra support crate for Faust compiler passes.
 //!
 //! # Source provenance (C++)
-//! - Algebraic simplification and canonicalization logic is historically spread
-//!   across `evaluate`, `normalize`, and typing/interval passes.
+//! - The porting plan maps `compiler/FaustAlgebra/FaustAlgebra.hh` here: an
+//!   abstract per-primitive algebra that the C++ interval algebra derives from.
+//!   It is not ported as such; the Rust interval operators are free functions
+//!   in `interval::ops`, called by the typing rules of `sigtype`, and algebraic
+//!   simplification lives in `normalize`.
 //!
-//! # Intended role in pipeline
-//! - Host reusable algebraic identities and normalization helpers shared by
-//!   higher-level crates.
-//! - Provide deterministic rewrite utilities that can be reused by
-//!   `eval`/`normalize`/`interval` without duplicating rule tables.
+//! # Intended role
+//! - Host reusable algebraic identities and canonicalization helpers shared by
+//!   compiler passes.
 //!
 //! # Current status
-//! - Phase scaffold only: no public rewrite API is stabilized yet.
-//! - The crate currently exposes only a stable crate identifier so upper crates
-//!   can declare dependencies without circular wiring.
+//! - Scaffold only: the crate exposes only a stable crate identifier, and no
+//!   workspace crate depends on it.
 //!
 //! # API mapping status
 //! - `crate_id()` is `adapted` (workspace/tooling utility), not a direct C++

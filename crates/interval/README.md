@@ -56,6 +56,8 @@ implementation remain explicit zero-interval placeholders in `ops::missing`.
 
 ## Position in the pipeline
 
-```
-signals  →  normalize  →  [interval inference]  →  transform
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
+
+`interval` is pure arithmetic with no workspace dependencies. Interval
+inference over signals lives in `sigtype::rules` (`TypeAnnotator`), which
+calls these operators and stores the result in each `SimpleType`.

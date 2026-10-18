@@ -1,7 +1,7 @@
 //! Multiplicative term: `k · x₁^n₁ · x₂^n₂ · ... / (y₁^m₁ · y₂^m₂ · ...)`
 //!
 //! Ported from C++ `compiler/normalize/mterm.cpp`.
-// Internal module — functions will be wired into the simplify/normalform pipeline in Phase 2.
+// Internal module, used by `aterm`, `normalize` and `simplify`.
 #![allow(dead_code)]
 //!
 //! # Invariant

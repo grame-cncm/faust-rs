@@ -19,7 +19,10 @@ Structured diagnostics model shared by every stage of the `faust-rs` compiler pi
 | `Severity` | `Error` / `Warning` / `Remark` |
 | `Stage` | Pipeline stage attribution (`Parser`, `Eval`, `Propagate`, …) |
 | `SourceSpan` / `Label` | Source location and annotation |
-| `codes::*` | All stable diagnostic codes as constants |
+| `codes::*` / `all_codes()` | All stable diagnostic codes as constants, and the full registry |
+| `SourceMap` / `SourceFile` / `SourceRange` | Immutable source snapshots (SHA-256 `ContentHash`) and half-open byte ranges, with conversion to `HumanPosition` (1-based display cells) and `LspPosition` (0-based UTF-16) |
+| `SuggestedFix` / `TextEdit` / `Applicability` | Machine-applicable repairs and their confidence level |
+| `DiagnosticTrace` / `TraceFrame` / `IrReference` | Ordered causal trace, optionally referencing IR values |
 
 ## Design invariants
 

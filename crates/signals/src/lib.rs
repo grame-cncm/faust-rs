@@ -39,8 +39,9 @@
 //!   LTI algebra port documented in
 //!   `porting/lti-filter-intermediate-form-plan-2026-05-06-en.md`. They mirror
 //!   C++ `sigFIR` / `sigIIR` storage exactly as vector-valued signal nodes; the
-//!   algebraic helpers that reveal and transform those nodes live above this
-//!   representation layer.
+//!   algebraic helpers over those nodes (`add_sig_fir`, `extract_iir_filter`,
+//!   ...) live in the private `filter_algebra` module and are re-exported at
+//!   the crate root.
 //!
 //! # Integer convention
 //! - Public signal integer surface (`SigBuilder::int`, `SigMatch::Int`, and
