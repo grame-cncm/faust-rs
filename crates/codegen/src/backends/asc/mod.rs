@@ -1261,23 +1261,8 @@ fn math_namespace(options: &AscOptions) -> &'static str {
 /// Maps one FIR binary operator to its AssemblyScript token spelling.
 fn emit_binop(op: FirBinOp) -> &'static str {
     match op {
-        FirBinOp::Add => "+",
-        FirBinOp::Sub => "-",
-        FirBinOp::Mul => "*",
-        FirBinOp::Div => "/",
-        FirBinOp::Rem => "%",
-        FirBinOp::And => "&",
-        FirBinOp::Or => "|",
-        FirBinOp::Xor => "^",
-        FirBinOp::Lsh => "<<",
-        FirBinOp::ARsh => ">>",
         FirBinOp::LRsh => ">>>",
-        FirBinOp::Eq => "==",
-        FirBinOp::Ne => "!=",
-        FirBinOp::Lt => "<",
-        FirBinOp::Le => "<=",
-        FirBinOp::Gt => ">",
-        FirBinOp::Ge => ">=",
+        other => crate::backends::textual::c_like_token(other),
     }
 }
 

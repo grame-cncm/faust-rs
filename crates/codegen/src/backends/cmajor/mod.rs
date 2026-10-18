@@ -51,6 +51,7 @@
 //! sizes, plus repeated generation to guard request-local determinism.
 
 use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, quoted_string};
+use crate::backends::textual::c_like_token as emit_binop;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -1423,7 +1424,7 @@ fn emit_value(
             // result type, whereas Cmajor comparisons produce `bool`. Preserve
             // the FIR contract explicitly; Cmajor rejects an implicit bool to
             // int32 store even though C/C++ accept it.
-            if is_comparison(op) && typ == FirType::Int32 {
+            if op.is_comparison() && typ == FirType::Int32 {
                 Ok(format!("int32({expression})"))
             } else {
                 Ok(expression)
@@ -1503,7 +1504,7 @@ fn emit_infix_operand(
     else {
         return Ok(rendered);
     };
-    if is_comparison(child_op) && typ == FirType::Int32 {
+    if child_op.is_comparison() && typ == FirType::Int32 {
         return Ok(rendered);
     }
     let needs_parentheses = infix_operand_needs_parentheses(
@@ -1612,36 +1613,6 @@ fn emit_struct_type(
     }
     let _ = writeln!(out, "{tab}}}");
     Ok(())
-}
-
-/// Maps FIR operators to Cmajor infix spelling.
-const fn emit_binop(op: FirBinOp) -> &'static str {
-    match op {
-        FirBinOp::Add => "+",
-        FirBinOp::Sub => "-",
-        FirBinOp::Mul => "*",
-        FirBinOp::Div => "/",
-        FirBinOp::Rem => "%",
-        FirBinOp::And => "&",
-        FirBinOp::Or => "|",
-        FirBinOp::Xor => "^",
-        FirBinOp::Lsh => "<<",
-        FirBinOp::ARsh | FirBinOp::LRsh => ">>",
-        FirBinOp::Eq => "==",
-        FirBinOp::Ne => "!=",
-        FirBinOp::Lt => "<",
-        FirBinOp::Le => "<=",
-        FirBinOp::Gt => ">",
-        FirBinOp::Ge => ">=",
-    }
-}
-
-/// Whether a FIR binary operator produces Cmajor's native `bool` type.
-const fn is_comparison(op: FirBinOp) -> bool {
-    matches!(
-        op,
-        FirBinOp::Eq | FirBinOp::Ne | FirBinOp::Lt | FirBinOp::Le | FirBinOp::Gt | FirBinOp::Ge
-    )
 }
 
 /// Maps C/C++ precision-specific math names to Cmajor built-ins.

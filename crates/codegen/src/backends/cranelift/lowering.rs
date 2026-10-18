@@ -1403,10 +1403,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         // FIR result type.  A `BinOp { op: Lt, lhs: f32, rhs: f32, typ: Int32 }`
         // (float comparison yielding an integer-boolean result) must use
         // `float_cmp_to_i8`, not `int_cmp_to_i8` on truncated operands.
-        let is_cmp_op = matches!(
-            op,
-            FirBinOp::Eq | FirBinOp::Ne | FirBinOp::Lt | FirBinOp::Le | FirBinOp::Gt | FirBinOp::Ge
-        );
+        let is_cmp_op = op.is_comparison();
         if matches!(typ, FirType::Bool) || (is_cmp_op && lty.is_float()) {
             let out = if lty.is_int() {
                 match op {

@@ -1813,7 +1813,7 @@ fn emit_cond(
     cond: FirId,
 ) -> Result<String, CodegenError> {
     if let FirMatch::BinOp { op, lhs, rhs, .. } = match_fir(store, cond)
-        && is_comparison(op)
+        && op.is_comparison()
     {
         return emit_comparison(store, options, locked, op, lhs, rhs);
     }
@@ -1825,14 +1825,6 @@ fn emit_cond(
         }
         _ => Ok(format!("(({rendered}) != 0)")),
     }
-}
-
-/// Returns whether one FIR binary operator is a comparison.
-fn is_comparison(op: FirBinOp) -> bool {
-    matches!(
-        op,
-        FirBinOp::Eq | FirBinOp::Ne | FirBinOp::Lt | FirBinOp::Le | FirBinOp::Gt | FirBinOp::Ge
-    )
 }
 
 /// Emits one FIR comparison as a native Rust boolean expression.
@@ -1885,7 +1877,7 @@ fn emit_binop_expr(
     let lhs_rendered = emit_value(store, options, locked, lhs)?;
     let rhs_rendered = emit_value(store, options, locked, rhs)?;
 
-    if is_comparison(op) {
+    if op.is_comparison() {
         // FIR comparisons carry their C result type (`Int32` from the fast
         // lane, `Bool` in hand-written fixtures). The rendered Rust expression
         // must match that type so arithmetic/coercion callers stay sound.

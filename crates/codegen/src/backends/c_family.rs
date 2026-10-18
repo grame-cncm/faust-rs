@@ -378,25 +378,7 @@ pub(crate) struct CFamilyValueCtx<'a, E> {
 /// [`emit_binop_expr`]).
 #[must_use]
 pub(crate) fn emit_binop(op: FirBinOp) -> &'static str {
-    match op {
-        FirBinOp::Add => "+",
-        FirBinOp::Sub => "-",
-        FirBinOp::Mul => "*",
-        FirBinOp::Div => "/",
-        FirBinOp::Rem => "%",
-        FirBinOp::And => "&",
-        FirBinOp::Or => "|",
-        FirBinOp::Xor => "^",
-        FirBinOp::Lsh => "<<",
-        FirBinOp::ARsh => ">>",
-        FirBinOp::LRsh => ">>",
-        FirBinOp::Eq => "==",
-        FirBinOp::Ne => "!=",
-        FirBinOp::Lt => "<",
-        FirBinOp::Le => "<=",
-        FirBinOp::Gt => ">",
-        FirBinOp::Ge => ">=",
-    }
+    super::textual::c_like_token(op)
 }
 
 /// Renders one FIR binary operator expression as a parenthesized C-family

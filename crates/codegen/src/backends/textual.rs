@@ -89,6 +89,33 @@ pub(crate) const fn infix_operand_needs_parentheses(
 /// compiler. Addition and multiplication are the only operators marked
 /// associative there. Comparisons, shifts, bitwise AND, and bitwise OR retain
 /// the C++ emitter's conservative-parenthesis behavior.
+/// The C spelling of a FIR binary operator, shared by every C-like target.
+///
+/// `LRsh` is spelled `>>`: in C a logical shift is an arithmetic shift on an
+/// unsigned operand, so the caller adds the cast (`c_family` does) or spells
+/// the operator its own way (`>>>` in AssemblyScript).
+#[must_use]
+pub(crate) const fn c_like_token(op: FirBinOp) -> &'static str {
+    match op {
+        FirBinOp::Add => "+",
+        FirBinOp::Sub => "-",
+        FirBinOp::Mul => "*",
+        FirBinOp::Div => "/",
+        FirBinOp::Rem => "%",
+        FirBinOp::And => "&",
+        FirBinOp::Or => "|",
+        FirBinOp::Xor => "^",
+        FirBinOp::Lsh => "<<",
+        FirBinOp::ARsh | FirBinOp::LRsh => ">>",
+        FirBinOp::Eq => "==",
+        FirBinOp::Ne => "!=",
+        FirBinOp::Lt => "<",
+        FirBinOp::Le => "<=",
+        FirBinOp::Gt => ">",
+        FirBinOp::Ge => ">=",
+    }
+}
+
 #[must_use]
 pub(crate) const fn c_like_fir_operator(op: FirBinOp) -> InfixOperator {
     match op {

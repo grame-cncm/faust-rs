@@ -35,6 +35,7 @@
 pub mod eval;
 
 use crate::backends::literals::{Digits, NegativeZero, RealSpelling};
+use crate::backends::textual::c_like_token as emit_binop;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -1100,31 +1101,6 @@ fn map_math_name(name: &str) -> &str {
         "tanhf" | "tanh" => "tanh",
         "isnanf" | "isnan" => "isnan",
         other => other,
-    }
-}
-
-/// Maps a FIR binary operator to its infix codebox spelling.
-///
-/// Integer `+`, `*` and `%` never reach here: [`integer_helper`] intercepts
-/// them, because codebox's infix operators work on `number` and would not wrap.
-fn emit_binop(op: FirBinOp) -> &'static str {
-    match op {
-        FirBinOp::Add => "+",
-        FirBinOp::Sub => "-",
-        FirBinOp::Mul => "*",
-        FirBinOp::Div => "/",
-        FirBinOp::Rem => "%",
-        FirBinOp::Lsh => "<<",
-        FirBinOp::ARsh | FirBinOp::LRsh => ">>",
-        FirBinOp::Gt => ">",
-        FirBinOp::Lt => "<",
-        FirBinOp::Ge => ">=",
-        FirBinOp::Le => "<=",
-        FirBinOp::Eq => "==",
-        FirBinOp::Ne => "!=",
-        FirBinOp::And => "&",
-        FirBinOp::Or => "|",
-        FirBinOp::Xor => "^",
     }
 }
 

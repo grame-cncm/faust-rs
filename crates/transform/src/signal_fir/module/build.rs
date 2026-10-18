@@ -653,15 +653,7 @@ fn collect_prototype_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId
         {
             continue;
         }
-        let arity = match op {
-            FirMathOp::Pow
-            | FirMathOp::Min
-            | FirMathOp::Max
-            | FirMathOp::Atan2
-            | FirMathOp::Fmod
-            | FirMathOp::Remainder => 2,
-            _ => 1,
-        };
+        let arity = op.arity();
         let proto_args: Vec<NamedType> = (0..arity)
             .map(|i| NamedType {
                 name: format!("arg{i}"),

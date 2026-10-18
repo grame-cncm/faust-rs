@@ -1437,23 +1437,8 @@ fn emit_binop_expr(op: FirBinOp, lhs: &str, rhs: &str) -> String {
 /// use [`emit_binop_expr`] so XOR is rendered as `xor(lhs, rhs)`.
 fn emit_binop(op: FirBinOp) -> &'static str {
     match op {
-        FirBinOp::Add => "+",
-        FirBinOp::Sub => "-",
-        FirBinOp::Mul => "*",
-        FirBinOp::Div => "/",
-        FirBinOp::Rem => "%",
-        FirBinOp::And => "&",
-        FirBinOp::Or => "|",
         FirBinOp::Xor => "xor",
-        FirBinOp::Lsh => "<<",
-        FirBinOp::ARsh => ">>",
-        FirBinOp::LRsh => ">>",
-        FirBinOp::Eq => "==",
-        FirBinOp::Ne => "!=",
-        FirBinOp::Lt => "<",
-        FirBinOp::Le => "<=",
-        FirBinOp::Gt => ">",
-        FirBinOp::Ge => ">=",
+        other => crate::backends::textual::c_like_token(other),
     }
 }
 

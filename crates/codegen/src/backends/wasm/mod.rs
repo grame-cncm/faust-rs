@@ -2012,7 +2012,7 @@ impl ComputeSubsetLowerer<'_> {
             FirMatch::BinOp { op, lhs, rhs, typ } => {
                 self.lower_expr(lhs, function)?;
                 self.lower_expr(rhs, function)?;
-                let op_typ = if is_comparison_binop(op) {
+                let op_typ = if op.is_comparison() {
                     // C++ parity: FIR comparison binops produce an integer/bool-like
                     // result, so the node result type describes the output on the
                     // WASM stack, not the operand lane used by the comparison opcode.
@@ -3179,19 +3179,6 @@ fn binop_instruction(
             format!("unsupported WASM binop in compute subset: {op:?} / {val_ty:?}"),
         )),
     }
-}
-
-/// Returns `true` when the FIR binop is a comparison producing a condition.
-fn is_comparison_binop(op: fir::FirBinOp) -> bool {
-    matches!(
-        op,
-        fir::FirBinOp::Eq
-            | fir::FirBinOp::Ne
-            | fir::FirBinOp::Lt
-            | fir::FirBinOp::Le
-            | fir::FirBinOp::Gt
-            | fir::FirBinOp::Ge
-    )
 }
 
 /// Returns the equality opcode used by switch-case comparisons.

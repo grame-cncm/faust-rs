@@ -103,6 +103,18 @@ pub enum FirBinOp {
     Ge,
 }
 
+impl FirBinOp {
+    /// Returns `true` for the six comparisons, whose result is a boolean
+    /// (an `Int32` 0/1 in FIR) rather than a value of the operand type.
+    #[must_use]
+    pub const fn is_comparison(self) -> bool {
+        matches!(
+            self,
+            Self::Eq | Self::Ne | Self::Lt | Self::Le | Self::Gt | Self::Ge
+        )
+    }
+}
+
 /// Canonical FIR math operation identifiers used by backend-agnostic lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FirMathOp {
@@ -131,6 +143,16 @@ pub enum FirMathOp {
 }
 
 impl FirMathOp {
+    /// Number of real arguments the operation takes: 2 for `pow`, `fmin`,
+    /// `fmax`, `atan2`, `fmod` and `remainder`, 1 otherwise.
+    #[must_use]
+    pub const fn arity(self) -> usize {
+        match self {
+            Self::Pow | Self::Min | Self::Max | Self::Atan2 | Self::Fmod | Self::Remainder => 2,
+            _ => 1,
+        }
+    }
+
     /// Returns the backend-agnostic FIR symbol used for this operation.
     #[must_use]
     pub const fn symbol(self) -> &'static str {
@@ -243,4 +265,43 @@ pub struct NamedType {
     pub name: String,
     /// Declared FIR type for the named item.
     pub typ: FirType,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FirBinOp, FirMathOp};
+
+    #[test]
+    fn comparisons_are_the_six_relational_operators() {
+        let comparisons = [
+            FirBinOp::Eq,
+            FirBinOp::Ne,
+            FirBinOp::Lt,
+            FirBinOp::Le,
+            FirBinOp::Gt,
+            FirBinOp::Ge,
+        ];
+        for op in comparisons {
+            assert!(op.is_comparison(), "{op:?}");
+        }
+        for op in [FirBinOp::Add, FirBinOp::Xor, FirBinOp::LRsh, FirBinOp::And] {
+            assert!(!op.is_comparison(), "{op:?}");
+        }
+    }
+
+    #[test]
+    fn binary_math_ops_have_arity_two() {
+        for op in [
+            FirMathOp::Pow,
+            FirMathOp::Min,
+            FirMathOp::Max,
+            FirMathOp::Atan2,
+            FirMathOp::Fmod,
+            FirMathOp::Remainder,
+        ] {
+            assert_eq!(op.arity(), 2, "{op:?}");
+        }
+        assert_eq!(FirMathOp::Sin.arity(), 1);
+        assert_eq!(FirMathOp::Round.arity(), 1);
+    }
 }

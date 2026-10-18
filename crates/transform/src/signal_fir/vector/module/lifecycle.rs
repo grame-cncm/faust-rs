@@ -326,15 +326,7 @@ pub(super) fn build_prototypes(
         {
             continue;
         }
-        let arity = match op {
-            fir::FirMathOp::Pow
-            | fir::FirMathOp::Min
-            | fir::FirMathOp::Max
-            | fir::FirMathOp::Atan2
-            | fir::FirMathOp::Fmod
-            | fir::FirMathOp::Remainder => 2,
-            _ => 1,
-        };
+        let arity = op.arity();
         let args = (0..arity)
             .map(|index| NamedType {
                 name: format!("arg{index}"),
