@@ -45,12 +45,15 @@ use crate::error::{DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalE
 /// # Evaluation-phase caches
 ///
 /// `LoopDetector` is threaded through every recursive evaluator call, making it the
-/// natural carrier for caches that must survive across the whole evaluation phase.
-/// Currently it holds:
-/// - `automaton_cache`: memoises the compiled `pattern_matcher::Automaton` for each
-///   **evaluated** `Case` rule-list, keyed by the resulting rule-list `TreeId`.
-///   This is important for parity: the same raw `case` syntax can yield different
-///   effective patterns under different lexical environments.
+/// natural carrier for caches that must survive across the whole evaluation phase:
+/// `automaton_cache`, `eval_cache`, `apply_memo`, `symbolic_box_cache`,
+/// `closure_intern`, `normal_form_cache`, `evaluated_boxes`, `box_arity_cache`,
+/// `control_widgets_cache` and the constant-folding `fold` caches (see
+/// `porting/MEMOIZATION.md` §2.2-§2.5b). For example, `automaton_cache` memoises
+/// the compiled `pattern_matcher::Automaton` for each **evaluated** `Case`
+/// rule-list, keyed by the resulting rule-list `TreeId`: the same raw `case`
+/// syntax can yield different effective patterns under different lexical
+/// environments.
 #[derive(Clone, Debug)]
 pub struct LoopDetector {
     pub(crate) call_stack: Vec<LoopFrame>,

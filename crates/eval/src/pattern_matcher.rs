@@ -26,12 +26,14 @@
 //!    a `Constant` transition.
 //! 2. Merge that trie into the shared automaton via `merge_state` (deterministic union
 //!    of states/transitions, preserving the variable-first invariant).
-//! 3. After all rules, `build_automaton_metadata` propagates `match_num` flags (whether a
-//!    state has a numeric-constant transition) for potential future optimisations.
+//! 3. After all rules, `build_automaton_metadata` sets the `match_num` flag of every state
+//!    that has a numeric-constant transition; the argument dispatched at such a state is
+//!    folded to a literal first (C++ parity).
 //!
 //! ## Matching — [`apply_pattern_matcher`]
 //!
-//! **Called once per consumed argument** in a loop from the evaluator's `apply_case_rules`.
+//! **Called once per consumed argument** from the evaluator's `apply_pattern_matcher_value`
+//! (`apply.rs`).
 //! Each call:
 //! 1. `apply_pattern_matcher_internal` descends the argument tree, following state-machine
 //!    transitions and recording variable-to-path associations (`Assoc`) in a per-rule
@@ -173,7 +175,8 @@ pub struct State {
     /// State index (equals position in [`Automaton::states`]).
     pub s: usize,
     /// `true` when at least one outgoing constant transition targets a numeric literal.
-    /// Reserved for future numeric-fast-path optimisation; mirrors the C++ `match_num` flag.
+    /// The argument dispatched at such a state is folded to a numeric literal first
+    /// (`simplify_dispatch_argument`); mirrors the C++ `match_num` flag.
     pub match_num: bool,
     /// Rules still active in this state (subset that have not yet failed to match).
     pub rules: Vec<Rule>,
@@ -228,7 +231,7 @@ impl Automaton {
 /// Cache keyed by the `TreeId` of an evaluated `Case` rule-list.
 ///
 /// Raw parser rule-lists are not sufficient keys because pattern evaluation can
-/// depend on the surrounding lexical environment. `apply_case_rules` therefore
+/// depend on the surrounding lexical environment. `eval_case_value` therefore
 /// evaluates/simplifies patterns first and only then memoises the compiled
 /// automaton under the resulting hash-consed rule-list `TreeId`. The automaton
 /// is immutable once built and shared by `Rc` with every matcher made from it:
@@ -972,8 +975,8 @@ pub(crate) fn unreachable_numeric_patterns(
 
 /// Applies the automaton to a single argument, advancing the state machine.
 ///
-/// This function is called **once per consumed argument** inside a loop in
-/// `apply_case_rules`. The `env_out` vector accumulates per-rule variable bindings
+/// This function is called **once per consumed argument** by
+/// `apply_pattern_matcher_value` (`apply.rs`). The `env_out` vector accumulates per-rule variable bindings
 /// across calls (each call replaces the slots of the rules it binds variables for,
 /// never the layers they pointed to; `env_out[r]` is set to `None` when rule `r`
 /// fails a nonlinearity check).

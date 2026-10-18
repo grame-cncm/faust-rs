@@ -24,33 +24,39 @@ errors.
 
 | Function | Description |
 |---|---|
-| `parse_program(arena, ctx, src)` | Parse in-memory source text |
-| `parse_program_with_metadata(arena, ctx, src)` | Parse + return metadata snapshot |
-| `parse_file_with_imports(path, search_paths)` | Parse a file, recursively expanding imports |
-| `parse_file_with_imports_and_metadata(path, search_paths)` | File parse + metadata |
-| `parse_program_with_remote_imports_and_precision_and_metadata(...)` | Parse an in-memory root with an injected HTTP(S) source capability; an URL-named root is the base for relative imports |
-| `parse_minimal(arena, ctx, src)` | Minimal parse for testing/tooling |
-| `lex_tokens(src)` | Lex source text and return named tokens |
-| `lexerdef()` | Returns the compiled `lrlex` lexer definition |
-| `with_state(arena, ctx, f)` | Run a closure with a fresh `ParseState` |
-| `set_use_prop_from_token(arena, token_id)` | Mark a symbol as used |
+| `parse_program(input, source_file) -> ParseOutput` | Parse in-memory text, no import expansion (infallible) |
+| `parse_program_with_options(input, source_file, &options) -> ParseOutput` | Same, with precision and shared metadata store from `ParseOptions` |
+| `parse_program_with_imports(input, source_file, &options) -> Result<ParseOutput, SourceReaderError>` | Parse in-memory text and expand its imports (search paths, virtual sources, optional remote capability) |
+| `parse_file(path, &options) -> Result<ParseOutput, SourceReaderError>` | Read a file and expand its imports |
+| `parse_url(url, &options) -> Result<ParseOutput, SourceReaderError>` | Fetch an HTTP(S) entry through `ParseOptions::remote` and expand its imports |
+| `parse_minimal(input) -> bool` | Whether `input` parses, for tests/tooling |
+| `lex_tokens(input) -> Result<Vec<LexedToken>, String>` | Lex source text and return named tokens |
+| `lex_stream(input, LexerImpl) -> LexOutcome` | Raw lexeme stream from either lexer implementation (corpus differential) |
+| `lexerdef()` | A fresh compiled `lrlex` lexer definition |
+| `import_candidates(name, search_paths, local_dir)` | Files an import may resolve to, in C++ `fopenSearch` order |
+
+`ParseOptions::default()` is single precision with a fresh metadata store, no
+search paths, no virtual sources and no networking; `with_float_size`,
+`with_metadata_store`, `with_search_paths`, `with_virtual_sources` and
+`with_remote` set each field.
 
 ### Types
 
 | Item | Description |
 |---|---|
-| `ParseOutput` | Full result of one parse: root + errors + diagnostics + metadata + state |
-| `ParseState` | Mutable parser state (arena, context, cursor, metadata store) |
+| `ParseOptions` | Optional inputs shared by the entry points |
+| `ParseOutput` | Root, raw errors, diagnostics bundle, metadata snapshot, used files/sources, parser state |
+| `ParseState` | Parser state threaded through grammar actions (arena, `ParserCtx`, metadata store) |
 | `ParserCtx` | Per-parse context replacing the C++ `gGlobal` parser subset |
 | `LexedToken` | One lexed token: name, text, span, start line/col |
+| `LexerImpl`, `LexOutcome`, `RawLexeme` | Lexer selection and raw lexeme stream of `lex_stream` |
 | `PrimitiveOp` | Primitive operator family recognized by the parser |
+| `SourceLocation` | Source position (file, line/col range) |
+| `BoxProvenance`, `BoxOrigin`, `BoxOriginId`, `BoxOriginRole`, `LocatedBox` | Source origins recorded for parsed boxes |
+| `WidgetDeclaration` | Widget declaration recorded by the parser |
 
-### Context and diagnostics
-
-| Item | Description |
-|---|---|
-| parser diagnostics | Private pending records with canonical `Severity` and required `DiagnosticCode`; exported parse results use `DiagnosticBundle` |
-| `SourceLocation` | Source cursor position (file, line, col) |
+Parser diagnostics are private pending records with a canonical `Severity` and
+required `DiagnosticCode`; parse results expose them as a `DiagnosticBundle`.
 
 ### Metadata
 
@@ -68,13 +74,17 @@ errors.
 | `ExpandedSource` | Expanded source text with line-origin tracking |
 | `SourceLineOrigin` | Maps an expanded line back to its original file and line number |
 | `SourceLocator` | Canonical file, virtual-path, or HTTP(S) source identity |
+| `VirtualSourceMap` | In-memory source bundle consulted before the filesystem |
+| `ImportSite`, `ImportCycleEdge` | Import locations and the edges of a reported import cycle |
 | `RemoteSourceFetcher` | Host-injected synchronous remote-source capability |
-| `RemoteSourceCapability` | Fetcher plus immutable per-parse resource policy |
-| `PrefetchedRemoteSourceBundle` | Immutable URL-keyed, I/O-free fetcher for browser/embedded hosts |
+| `RemoteSourceCapability`, `RemoteFetchPolicy` | Fetcher plus immutable per-parse resource policy |
+| `RemoteFetchRequest`, `FetchedSource`, `SourceFetchError`, `SourceFetchErrorKind` | Fetch request, result and error |
+| `PrefetchedRemoteSourceBundle`, `PrefetchedRemoteSourceBundleError` | Immutable URL-keyed, I/O-free fetcher for browser/embedded hosts |
 | `SourceReaderError` | Errors from local/remote loading, resolution, and import cycles |
 
 ## Position in the pipeline
 
-```
-source files  →  [parser]  →  boxes  →  eval  →  propagate
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
+
+The parser builds box trees with `boxes::BoxBuilder` and expands imports
+structurally before `eval` runs.

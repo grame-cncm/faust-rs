@@ -139,7 +139,8 @@ pub(crate) fn apply_value_list_value(
 ///
 /// Source provenance (C++):
 /// - `compiler/evaluate/eval.cpp`
-/// - `applyList` (memo `gApplyMemo`) / `realApplyList` (closure branch)
+/// - `applyList` (memo `gApplyMemo`) / `realApplyList` (closure branch), upstream
+///   Faust (`6789c5da8`); the pinned reference `8eebea429` has `applyList` only
 ///
 /// Mapping status: `adapted`. C++ memoizes `applyList(fun, larg)` whole; Rust
 /// memoizes each beta-reduction, keyed by the abstraction, the identity of the

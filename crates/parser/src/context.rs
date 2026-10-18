@@ -1,4 +1,4 @@
-//! Parser context for the `lrpar/lrlex` migration prototype.
+//! Parser context of the production `lrpar`/`lrlex` parser.
 //!
 //! # Source provenance (C++)
 //! - `compiler/parser/faustparser.y`:

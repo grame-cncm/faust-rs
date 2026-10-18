@@ -1941,7 +1941,7 @@ fn bind_definitions_allows_shadowing_from_outer_scope() {
 
 // ── EvalStats tests ───────────────────────────────────────────────────────────
 
-/// `eval_process_with_stats` should return the same result as `eval_process` plus stats with
+/// `eval` should return the same result as `eval_process` plus stats with
 /// at least one env_lookup (the `process` lookup itself) and at least one layer pushed.
 #[test]
 fn eval_process_with_stats_returns_consistent_result_and_stats() {

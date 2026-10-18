@@ -130,7 +130,8 @@ pub(crate) struct EvalCacheKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-/// Memoization key for one function application, parity with C++ `gApplyMemo`.
+/// Memoization key for one function application, parity with C++ `gApplyMemo`
+/// (upstream `6789c5da8`, absent from the pinned reference `8eebea429`).
 ///
 /// `fun` is the applied expression and `env_key` the environment it closes
 /// over: the `abstr` of a closure and its captured environment, or the `case`
@@ -171,11 +172,12 @@ pub(crate) struct EnvStore {
     pub(crate) layers: Vec<EnvLayer>,
 }
 
-/// Lexical evaluation environment mapping symbol names to box-IR tree nodes.
+/// Lexical evaluation environment mapping symbol names to evaluator values.
 ///
 /// # Architecture
 ///
-/// Implemented as a **linked list of scopes**, where each scope is a `Vec<(SymId, TreeId)>`:
+/// Implemented as a **linked list of scopes** in a shared arena, where each scope is a
+/// `Vec<(SymId, EvalValue)>` plus a `binding_index` from symbol to latest binding:
 ///
 /// ```text
 /// Environment { bindings: [("f", 42)], parent: Some(→) }
@@ -195,8 +197,8 @@ pub(crate) struct EnvStore {
 ///
 /// | Aspect | C++ (`environment.cpp`) | Rust (`Environment`) |
 /// |---|---|---|
-/// | Storage | Hash-consed tree nodes with property tables | `Vec<(u32, TreeId)>` — interned `SymId` |
-/// | Values stored | **Closures**: `closure(expr, genv, visited, lenv)` capturing the scope at definition time | `EvalValue::{Box, Closure}` in the current adapted model |
+/// | Storage | Hash-consed tree nodes with property tables | arena layers of `Vec<(SymId, EvalValue)>` + `binding_index` — interned `SymId` |
+/// | Values stored | **Closures**: `closure(expr, genv, visited, lenv)` capturing the scope at definition time | `EvalValue::{Box, Closure, PatternMatcher}` |
 /// | Lookup | `searchIdDef`: walks layers calling `getProperty` (hash probe per layer) | `lookup`: per-layer symbol index lookup, then recurse to `parent` |
 /// | Scope push | `pushNewLayer(lenv)` — allocates a unique tree node | `push_scope()` — allocate one arena layer and return its `EnvId` handle |
 /// | Redefinition | `addLayerDef` throws `faustexception` on conflicting rebind | `bind_definitions` returns `EvalError::RedefinedSymbol` |
@@ -210,14 +212,12 @@ pub(crate) struct EnvStore {
 /// - **Lookup**: O(d) hash probes where d = scope depth. Bindings remain stored
 ///   in insertion order for diagnostics/snapshots, while `binding_index` tracks
 ///   the latest binding for each symbol in one layer.
-/// - **Bind**: `Vec::push` — amortized O(1), no hashing, no pointer chasing.
+/// - **Bind**: `Vec::push` plus one `binding_index` insert — amortized O(1), no pointer chasing.
 /// - **Push scope**: O(1) one-layer allocation in the shared environment arena.
 /// - **Memory per binding**: one inline `(SymId, EvalValue)` pair in the current layer vector.
 ///   The frequently-hit plain-box case stores only one symbol id plus one small tagged payload and
 ///   avoids per-binding heap allocation; every binding is sized for the closure variant (an
-///   expression and an `Environment` handle), a pattern matcher's state being boxed. The earlier
-///   `8 bytes` rule of thumb applies only to the narrow `SymId + TreeId` box payload shape and
-///   should not be read as the size of every binding variant.
+///   expression and an `Environment` handle), a pattern matcher's state being boxed.
 #[derive(Clone, Debug)]
 pub struct Environment {
     pub(crate) store: Rc<RefCell<EnvStore>>,

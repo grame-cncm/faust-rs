@@ -6,21 +6,17 @@
 //! "19. Feasibility analysis for stateful RAD".
 //!
 //! # Scope
-//! This module does not enable reverse-mode differentiation through
-//! recursive or delayed signals. It classifies one recursive signal group so
-//! future RAD phases can decide whether an exact stateful adjoint is
-//! structurally plausible and which implementation family it would need.
+//! This module does not differentiate anything. It classifies one recursive
+//! signal group by how its state enters the update: an exact stateful adjoint
+//! can transpose a [`RadRecLinearity::LinearLti`] group, must replay
+//! primal-block coefficients for a [`RadRecLinearity::LinearTimeVarying`] one,
+//! and needs back-propagation through time for a
+//! [`RadRecLinearity::Nonlinear`] one.
 //!
-//! Current phase-1 `rad(...)` lowering still rejects temporal and recursive
-//! signal families in `reverse_ad`. The functions here are used only as a
-//! gate for diagnostics and as a preparatory predicate for later phases:
-//!
-//! - phase E1 can attempt a block-local transpose for groups classified as
-//!   [`RadRecLinearity::LinearLti`];
-//! - phase E2 can replay primal-block coefficients for groups classified as
-//!   [`RadRecLinearity::LinearTimeVarying`];
-//! - phase F must use finite-horizon back-propagation through time (BPTT) for
-//!   groups classified as [`RadRecLinearity::Nonlinear`].
+//! `rad(...)` itself routes temporal and recursive bodies to the
+//! `BlockReverseAD` fallback (`reverse_ad`). The classification only refines
+//! the diagnostics of that path and gates the dormant LTI transpose helpers
+//! (`transpose_ad`).
 //!
 //! # Input representation
 //! The analysis runs on the De Bruijn recursion form produced during

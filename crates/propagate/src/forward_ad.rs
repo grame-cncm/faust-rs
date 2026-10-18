@@ -101,9 +101,10 @@
 //!   they are selected as explicit seeds; otherwise they are treated as
 //!   independent of the active differentiation variables;
 //! - `button` / `checkbox` are discrete state/control sources, so the current
-//!   FAD pass models them as piecewise-constant and returns zero tangents;
-//! - `vbargraph` / `hbargraph` are metering sinks, not differentiated signal
-//!   paths.
+//!   FAD pass models them as piecewise-constant and returns zero tangents.
+//!
+//! Bargraphs are not controls in this sense: they are identities on their
+//! signal and pass the tangent through (see below).
 //!
 //! ## Arithmetic binary operators (`BinOp`)
 //!

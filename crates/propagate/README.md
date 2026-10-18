@@ -1,6 +1,6 @@
 # propagate
 
-Box-to-signal propagation — Phase 4, section 2.4 of the Faust compiler pipeline.
+Box-to-signal propagation — Phase 4, stage 4.3 of the porting plan.
 
 Takes the evaluated box tree from `eval` and produces a flat signal list by
 recursively applying the Faust composition algebra.
@@ -28,63 +28,47 @@ recursively applying the Faust composition algebra.
 
 ## Public API
 
-### Entry points — typed (post-`eval/a2sb`)
-
-Preferred for callers that already hold a validated `FlatBoxId`.
+### Entry points (post-`eval/a2sb`, on a validated `FlatBoxId`)
 
 | Function | Description |
 |---|---|
-| `box_arity_typed(arena, flat, cache)` | Infer `(inputs, outputs)` for a validated flat box (memoized) |
-| `propagate_typed_with_ui(arena, flat, inputs, cache)` | Lower flat box to `PropagateOutput` (signals + grouped UI) |
-| `propagate_typed_with_ui_options(arena, flat, inputs, cache, opts)` | Same with explicit `PropagateUiOptions` |
-| `propagate_typed(arena, flat, inputs, cache)` | DSP-only variant; drops grouped UI |
-
-### Entry points — compatibility wrappers (raw `BoxId`)
-
-| Function | Description |
-|---|---|
-| `box_arity(arena, box_id, cache)` | Arity inference from a raw `BoxId` |
-| `propagate_with_ui(arena, box_id, inputs, cache)` | Propagation + grouped UI from a raw `BoxId` |
-| `propagate(arena, box_id, inputs, cache)` | DSP-only propagation from a raw `BoxId` |
-
-### Flat-box boundary
-
-| Item | Description |
-|---|---|
-| `FlatBoxId` | Validated `TreeId` wrapper for the post-`eval/a2sb` flat box subset |
-| `try_build_flat_box(arena, box_id)` | Validate and convert a raw `BoxId` into a `FlatBoxId` |
-| `FlatBoxBuildError` | Error returned when a box family is rejected at the flat boundary |
+| `try_build_flat_box(arena, box_id) -> Result<FlatBoxId, FlatBoxBuildError>` | Validate a raw `BoxId` against the flat box subset |
+| `box_arity_typed(arena, flat, &mut cache) -> Result<BoxArity, PropagateError>` | Infer `(inputs, outputs)` (memoized in `ArityCache`) |
+| `propagate_typed_with_ui(arena, flat, inputs, &mut cache, &ui_options) -> Result<PropagateOutput, PropagateError>` | Lower to signals, signal origins, grouped UI and clock domains |
+| `propagate_typed(arena, flat, inputs, &mut cache) -> Result<Vec<SigId>, PropagateError>` | DSP signals only (no UI, no provenance) |
+| `propagate_fold(arena, box_id, &mut session) -> Result<Vec<SigId>, PropagateError>` | Constant-folding propagation for `eval`, caches kept in a `FoldSession` |
+| `control_widgets(arena, flat) -> ControlWidgets` | Control inputs and bargraphs of a box, in interface order (for `cinputs`/`coutputs` and `"*"` modulation) |
+| `make_sig_input_list(arena, n)` | Ordered input signal list (`sigInput(0)` … `sigInput(n-1)`) |
 
 ### Types
 
 | Item | Description |
 |---|---|
+| `FlatBoxId`, `FlatBoxBuildError` | Validated flat-box handle and its rejection error |
 | `BoxArity` | `{ inputs: usize, outputs: usize }` pair |
-| `PropagateOutput` | Propagation products: `signals: Vec<SigId>` + `ui: UiProgram` |
+| `ArityCache` | Arity memo tables: typed, wiring, and the two forward-AD reachability walks |
+| `PropagateOutput` | `signals`, `signal_origins: SignalOrigins`, `ui: UiProgram`, `clock_domains: ClockDomainTable` |
 | `PropagateUiOptions` | Grouped-UI construction policy (synthesized root label) |
-| `PropagateError` | Typed error covering arity mismatches and unsupported nodes |
-| `ArityCache` | Memoization cache (`AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>`) |
+| `FoldSession` | Caches of constant folding, kept for one evaluation pass |
+| `ControlWidget`, `ControlWidgets`, `UiGroupContext` | Control list returned by `control_widgets` |
+| `PropagateError`, `DependentSeed` | Typed errors (arity, unsupported nodes, AD coherence, dependent seeds) |
+| `ClockDomain`, `ClockDomainId`, `ClockDomainKind`, `ClockDomainTable` | Clock-domain side table (`clock_domain` module) |
 
-### AD internals
+### Modules
 
-| Module | Description |
-|---|---|
-| `forward_ad` | FAD transform over Signal IR, including multi-seed and recursive layouts |
-| `reverse_ad` | RAD symbolic sweep plus `BlockReverseAD` fallback construction |
-| `stateful_rad` | Recursive-body classifier for future specialized RAD strategies |
-| `transpose_ad` | Dormant LTI transpose scaffold; not user-visible RAD lowering yet |
+| Module | Visibility | Description |
+|---|---|---|
+| `clock_domain` | public | Clock-domain side table for `ondemand` / `upsampling` / `downsampling` |
+| `stateful_rad` | public | Linearity classifier for recursive groups (RAD diagnostics, LTI gate) |
+| `transpose_ad` | public | LTI transpose of a recursive group; used only by dormant helpers, not by `rad` lowering |
+| `forward_ad` | internal | FAD transform over Signal IR, including multi-seed and recursive layouts |
+| `reverse_ad` | internal | RAD symbolic sweep plus `BlockReverseAD` fallback construction |
 
 RAD local math rule classification and formulas are shared with FIR/BRA
-lowering through `signals::ad_rules`; this crate still owns the symbolic
+lowering through `signals::ad_rules`; this crate owns the symbolic
 Signal-IR traversal and adjoint accumulation.
 
-### Utilities
-
-| Item | Description |
-|---|---|
-| `make_sig_input_list(arena, n)` | Build ordered input signal list (`sigInput(0)` … `sigInput(n-1)`) |
-| `CRATE_NAME` | Crate identity string constant |
-| `crate_id()` | Returns `CRATE_NAME` (used in diagnostics) |
+`CRATE_NAME` / `crate_id()` give the crate identity string.
 
 ## Integer convention
 
@@ -94,6 +78,7 @@ on overflow.
 
 ## Position in the pipeline
 
-```
-eval  →  [propagate]  →  signals  →  transform  →  codegen
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
+
+`propagate` is also called by `eval` for constant folding (`propagate_fold`),
+and builds the grouped `UiProgram` (`ui_build.rs`) used from here onward.

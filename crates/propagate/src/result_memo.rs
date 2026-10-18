@@ -2,7 +2,7 @@
 //!
 //! C++ source provenance:
 //! - `compiler/propagate/propagate.cpp`, where `propagate(...)` memoizes the
-//!   exact tuple `(slotenv, path, box, inputs)` and returns the cached signal
+//!   exact tuple `(clockenv, slotenv, path, box, inputs)` and returns the cached signal
 //!   list before entering `realPropagate(...)`.
 //! - `compiler/tlib/tree.cpp`, whose hash-consed `Tree*` values make slot and
 //!   path context identity pointer-sized.
@@ -47,7 +47,7 @@
 //! Provenance remains safe for eligible calls: the first miss
 //! records every descendant `(signal, box)` derivation, and a later exact-key
 //! hit can only replay the same canonical signals for the same Box nodes.
-//! A 1,024-entry warm-up keeps small DSPs on the allocation-free uncached path;
+//! A 1,024-call warm-up keeps small DSPs on the allocation-free uncached path;
 //! large traversals activate the table only after they have demonstrated enough
 //! work to amortize its hashing and retained buses.
 //!
@@ -57,7 +57,7 @@
 //! bar the memo from the case it matters most for: a program written as
 //! top-level definitions evaluates to a DAG of shared, slot-free subtrees, and
 //! each reference re-propagated the whole subtree. On
-//! `examples/SAM/virtualAnalog/virtualAnalog.dsp` the gate meant 7.5 M
+//! `examples/SAM/virtualAnalog/virtualAnalog.dsp` (Faust C++ repository) the gate meant 7.5 M
 //! propagation calls against ~8 600 for the C++ reference; removing it
 //! (2026-08-30) cut the volume to 0.97 M and the propagation stage from
 //! 1.49 s to 0.89 s, byte-identical output, with the budget basket flat to

@@ -13,7 +13,7 @@
 //! | `eval_box` | `compiler/evaluate/eval.cpp` — `eval()` recursive dispatch |
 //! | `bind_definitions` | `pushMultiClosureDefs()` in `environment.cpp` |
 //! | `apply_list` | `applyList()` in `eval.cpp` |
-//! | `apply_case_rules` | `evalCase()` in `eval.cpp` |
+//! | `eval_case_value` | `evalCase()` in `eval.cpp` |
 //!
 //! # Environment architecture — C++ vs Rust
 //!
@@ -38,9 +38,10 @@
 //!       nil
 //! ```
 //!
-//! When the evaluator encounters a closure during `evalClosure()`, it evaluates `expr` in the
-//! **captured environment** `lenv`, not the current one. This is the classical demand-driven
-//! denotational semantics with explicit environment threading.
+//! When the evaluator meets a `closure(...)` node (`isClosure` in `realeval`, `real_a2sb` and
+//! `applyList`), it evaluates `expr` in the **captured environment** `lenv`, not the current one.
+//! This is the classical demand-driven denotational semantics with explicit environment
+//! threading.
 //!
 //! Special features:
 //! - **`BARRIER` nodes** (`pushEnvBarrier`) stop pattern-matcher scope search at a sentinel,
@@ -112,26 +113,21 @@
 //! | Operation | C++ implementation | C++ cost | Rust implementation | Rust cost |
 //! |---|---|---|---|---|
 //! | **Scope push** | `tree(unique("ENV_LAYER"), lenv)` — alloc in hash-cons pool | O(1) amortized + hash | arena layer allocation + `EnvId` handle clone | O(1) |
-//! | **Bind one symbol** | `setProperty(node, id, def)` — hash map insert on tree node | O(1) amortized | `Vec::push((sym, value))` | O(1) amortized |
-//! | **Lookup (found at depth d)** | Walk d layers, `getProperty` hash probe per layer | O(d) hash probes | Reverse `u32` scan per layer O(n_local), recurse O(d) | O(d × n_local) — O(1) per compare |
+//! | **Bind one symbol** | `setProperty(node, id, def)` — hash map insert on tree node | O(1) amortized | `Vec::push((sym, value))` + per-layer `binding_index` insert | O(1) amortized |
+//! | **Lookup (found at depth d)** | Walk d layers, `getProperty` hash probe per layer | O(d) hash probes | Per-layer `binding_index` hash probe, recurse to the parent | O(d) hash probes |
 //! | **Value size per binding** | `Tree*` pointer to closure node (~64 bytes closure) | Large | `SymId + EvalValue` in one arena layer | Moderate, but explicit and cache-friendly |
 //! | **Cache locality** | Pointer-chased linked list through hash-cons pool | Poor (pointer indirection) | Contiguous `Vec<(SymId, EvalValue)>` per layer | Good |
 //! | **Concurrency** | Global `gGlobal` state, not thread-safe | N/A | No global state; evaluator values use `Rc`/`RefCell` and are not `Send` | One evaluation per thread |
 //!
-//! **In practice**: for typical Faust programs (< 200 top-level definitions, scope depth ≤ 5,
-//! ≤ 30 bindings per scope), the Rust reverse scan over one compact per-layer vector is expected
-//! to be competitive with, and often faster than, the C++ hash-probe walk because the working set
-//! stays tiny and contiguous. The important point is not the asymptotic notation alone, but that
-//! the common Rust case pays a handful of integer comparisons inside one hot cache line instead of
-//! multiple pointer-chased table probes.
+//! **In practice**: both sides walk the scope chain with one hash probe per layer. The Rust
+//! layers are dense arena entries keyed by integer `SymId`s, so a probe hashes one `u32` instead
+//! of chasing tree-node property tables.
 //!
 //! This remains a workload claim, not a semantic guarantee. It is representative for the current
 //! evaluator design and local release micro-benchmarks, but it is not enforced by a CI benchmark
 //! gate and should be re-validated if environment representation changes materially.
 //!
-//! The current Rust representation already uses stable `EnvId` layer identities in a shared
-//! environment arena. This matches the next closure-porting requirement while keeping the public
-//! evaluator API unchanged.
+//! The Rust representation uses stable `EnvId` layer identities in a shared environment arena.
 //!
 //! # Scope of this crate
 //! - Name resolution against definition environments with redefinition detection.
@@ -213,10 +209,8 @@ pub const CRATE_NAME: &str = "eval";
 /// use [`TreeArena::get_symbol`] (which takes `&self`) to retrieve the id in O(1), then compare
 /// it as a plain integer. This achieves:
 ///
-/// - **O(1)** symbol comparison (was O(len) with `Box<str>`)
-/// - **8 bytes** per binding in `Vec<(SymId, TreeId)>` (was ~24 bytes with `Box<str>` + padding)
-/// - **SIMD-friendly** scan: the `Vec<(u32, u32)>` layout lets the CPU compare 4 bindings per
-///   16-byte vector register in a typical environment of < 32 bindings.
+/// - **O(1)** symbol comparison and hashing (was O(len) with `Box<str>`)
+/// - a 4-byte key per binding in each layer's `Vec<(SymId, EvalValue)>` and `binding_index`.
 ///
 /// **C++ parallel**: C++ uses hash-consed `Tree` pointers as symbol keys, achieving O(1)
 /// comparison by pointer equality. This `u32` id pool achieves the same O(1) cost without
@@ -231,16 +225,15 @@ pub const CRATE_NAME: &str = "eval";
 /// | Operation | Method | Borrow | Use case |
 /// |---|---|---|---|
 /// | Bind (new name) | [`intern_symbol(&mut self)`](TreeArena::intern_symbol) | `&mut` | `bind_definitions`, `apply_list`, Abstr |
-/// | Lookup (known name) | [`get_symbol(&self)`](TreeArena::get_symbol) | `&` | `eval_box` Ident, `match_pattern` |
+/// | Lookup (known name) | [`get_symbol(&self)`](TreeArena::get_symbol) | `&` | `eval_box` Ident |
 /// | Name resolution | [`symbol_name(&self)`](TreeArena::symbol_name) | `&` | Diagnostics only |
 pub type SymId = u32;
 
 /// Stable identifier of one evaluator environment layer.
 ///
 /// The C++ evaluator uses the `Tree` pointer identity of each `ENV_LAYER` node as the semantic
-/// environment identity. The Rust port uses a dense arena index instead. This is the first step
-/// toward the full captured-closure port because recursion tracking and closure forcing need a
-/// stable `(symbol, environment)` key, not just a raw expression id.
+/// environment identity. The Rust port uses a dense arena index instead: recursion tracking and
+/// closure forcing key on `(symbol, environment)`, not just on a raw expression id.
 pub type EnvId = usize;
 
 /// Evaluates one Faust program root list and returns the resolved `process` expression.
@@ -376,7 +369,7 @@ pub fn eval(
     )
 }
 
-/// Shared implementation behind every `eval_entrypoint_*` entry point.
+/// Implementation of [`eval`].
 ///
 /// Binds the top-level definitions into a fresh root environment, checks that
 /// `entrypoint` (typically `"process"`) is actually defined, evaluates it, then

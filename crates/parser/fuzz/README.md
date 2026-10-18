@@ -1,8 +1,9 @@
 # Parser fuzzing
 
 Fuzzes `parser::parse_program` with libFuzzer via [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz):
-any input, valid or not, must return a `ParseOutput` (possibly with errors)
-without panicking or hanging.
+any UTF-8 input, valid Faust or not, must return a `ParseOutput` (possibly
+with errors) without panicking or hanging. Inputs that are not valid UTF-8 are
+skipped.
 
 Requirements: `cargo install cargo-fuzz` and a nightly toolchain.
 

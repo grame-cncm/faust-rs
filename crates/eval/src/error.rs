@@ -492,7 +492,8 @@ pub enum EvalError {
     },
     /// Slider or numentry init value is outside the declared [min, max] range.
     ///
-    /// C++ equivalent: the `checkRange` diagnostic in `eval.cpp`:
+    /// C++ equivalent (upstream Faust; absent from the pinned reference
+    /// `8eebea429`): the `checkRange` diagnostic in `eval.cpp`:
     /// `"init = ... outside of [min max] range in '...'"`.
     ///
     /// Values are stored as `u64` bit-patterns (via `f64::to_bits`) to keep the

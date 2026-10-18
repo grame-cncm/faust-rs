@@ -34,10 +34,9 @@
 //!    lane, the accumulated `adjoints[seed]` (or `0.0` when the seed is not
 //!    reached from any primal output, e.g. `rad(sin(x), y)`).
 //!
-//! # Phase B scope
+//! # Symbolic sweep scope
 //!
-//! Phase B targets the feed-forward subset that overlaps the existing
-//! forward-AD differentiable set:
+//! The symbolic sweep handles a feed-forward subset:
 //!
 //! - constants, audio inputs, UI controls (zero contribution unless seed),
 //! - arithmetic `BinOp` (Add/Sub/Mul/Div/Rem and discrete bitwise/comparison),
@@ -46,9 +45,11 @@
 //! - `Min`/`Max` via primal comparison,
 //! - `Select2` routes adjoint to the chosen branch,
 //! - `IntCast` (zero) and `FloatCast` (forward),
-//! - bargraphs (zero contribution).
+//! - bargraphs: no adjoint passes through them (zero contribution). This
+//!   differs from FAD, where a bargraph is the identity on its signal and
+//!   passes the tangent through.
 //!
-//! Phase C extension (this revision):
+//! It also handles:
 //!
 //! - read-only `RdTbl(T, idx)` propagates adjoint through the read index
 //!   only, using the same symmetric finite-difference slope as the FAD pass
@@ -61,8 +62,7 @@
 //!   forward adjoint through the signal-carrying operand only, matching
 //!   FAD's transparency contract.
 //!
-//! The 2026-05-10 dispatcher change keeps this symbolic pass feed-forward
-//! only. Temporal, recursive, and `SigIIR` nodes raise
+//! This symbolic pass is feed-forward only. Temporal, recursive, and `SigIIR` nodes raise
 //! [`PropagateError::RadUnsupportedNode`] and are routed by
 //! [`generate_rad_signals`] to the `SigBlockReverseAD` fallback. The legacy
 //! `ReverseTimeRec` LTI/IIR path remains as dormant helper infrastructure but
@@ -76,8 +76,6 @@
 //! - non-unary or unrecognized foreign functions,
 //! - soundfile accessors,
 //! - representation casts and other opaque families.
-//!
-//! Phase D refines the strict diagnostics around temporal nodes.
 //!
 //! # Why temporal nodes refuse adjoint
 //!
