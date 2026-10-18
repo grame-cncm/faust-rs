@@ -11,7 +11,8 @@ use codegen::backends::cpp::CppOptions;
 use compiler::Compiler;
 
 /// `rdtable` read whose slider index interval `[0, 100]` exceeds the table
-/// size 16 — the motivating program (`tests/lean/table_unclamped.dsp`).
+/// size 16 — the motivating program of
+/// `porting/table-clamp-signal-promotion-plan-2026-08-28-en.md`.
 const TABLE_UNCLAMPED: &str = r#"process = rdtable(16, 1.0, int(hslider("i",0,0,100,1)));"#;
 
 /// `rwtable` with unprovable write *and* read indexes.

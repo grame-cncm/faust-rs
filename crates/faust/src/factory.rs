@@ -42,7 +42,7 @@ impl Factory {
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::Compile`](crate::ErrorKind::Compile) when the program
+    /// [`ErrorKind::Compile`] when the program
     /// does not compile, with the compiler's message, or when the path is
     /// not UTF-8 or an argument holds a NUL byte.
     pub fn from_file(path: impl AsRef<Path>, options: &CompileOptions) -> Result<Self, Error> {
@@ -64,7 +64,7 @@ impl Factory {
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::Compile`](crate::ErrorKind::Compile) when the program
+    /// [`ErrorKind::Compile`] when the program
     /// does not compile, with the compiler's message, or when the source or
     /// an argument holds a NUL byte.
     pub fn from_source(name: &str, source: &str, options: &CompileOptions) -> Result<Self, Error> {
@@ -118,7 +118,7 @@ impl Factory {
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::Instantiate`](crate::ErrorKind::Instantiate) when the
+    /// [`ErrorKind::Instantiate`] when the
     /// backend refuses the instance, or when the Cranelift backend compiled
     /// the program to an empty `compute` (a construct outside its lowering
     /// subset), which would be a silent instance.

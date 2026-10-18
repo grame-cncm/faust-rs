@@ -67,6 +67,10 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `compile_*_to_json_with_*_compile_options_and_memory` | JSON string + explicit C/C++/Cranelift `MemoryLayoutFlavor` for `mem0` |
 | `compile_file_default_to_c[_with_lane]` / `compile_file_default_to_cpp[_with_lane]` | File-backed convenience wrappers without explicit search paths |
 | `get_faustwasm_info` / `expand_dsp` / `generate_aux_files` | Faustwasm-compatible helper services |
+| `compile_file_to_boxes` | `BoxCompileOutput` (parse + eval, before propagation) |
+| `compile_parsed_to_signals` / `compile_source_to_signals_with_search_paths` | `SignalCompileOutput` from a parse result / with explicit search paths |
+| `compile_source_to_fir_with_lane_and_search_paths` / `compile_source_to_interp_with_lane_and_search_paths` | `FirCompileOutput` / `.fbc` string with explicit search paths |
+| `compile_file_to_json_with_compile_options_memory_and_class_name` | JSON string + compile options, optional `MemoryLayoutFlavor` and class name |
 
 ### Mode-zero custom memory manager
 

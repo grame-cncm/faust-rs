@@ -1,7 +1,7 @@
 //! Regression: a stateful `waveform` generator inside an `ondemand` block must
 //! advance its read index **in fire time**, not every sample.
 //!
-//! From `examples/ondemand/gamme.dsp`: a pulse clock drives a scale player
+//! From a local example (`gamme.dsp`, not in the repository): a pulse clock drives a scale player
 //! `ondemand(waveform{60,62,64,65,67,69,71,72}:!,_) : ba.midikey2hz`. The
 //! waveform's `iWave*` index counter is fire-gated state (like the per-domain
 //! delay/IOTA counters); emitting its advance at the top rate makes the index

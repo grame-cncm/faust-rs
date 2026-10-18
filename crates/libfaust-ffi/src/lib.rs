@@ -16,7 +16,7 @@
 //! actually documents.
 //!
 //! An rlib rather than code inside `faust-ffi` because `faust-ffi` is a
-//! cdylib/staticlib aggregator with no Rust of its own, and a separate library
+//! cdylib/staticlib aggregator with no API of its own, and a separate library
 //! keeps this surface testable in isolation.
 //!
 //! # Memory contract

@@ -83,5 +83,5 @@ The exported C symbol names and signatures mirror the C++ reference header
 - `signal-ffi` — sibling C ABI crate sharing the same context.
 - `compiler`, `propagate`, `codegen`, `transform` — drive the conversion
   helpers (`CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes`).
-- `faust-ffi` — re-exports these symbols (`box_api`) in the unified `libfaust`
-  distribution artifact.
+- `faust-ffi` — re-exports these symbols (`box_api`) in the unified
+  `libfaust-rs` distribution artifact.

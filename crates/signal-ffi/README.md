@@ -66,4 +66,4 @@ The exported symbol names and signatures mirror the C++ reference header
 - `tree-ffi` — shared handle model, global context, and enum definitions.
 - `box-ffi` — sibling C ABI crate sharing the same context.
 - `faust-ffi` — re-exports these symbols (`signal_api`) in the unified
-  `libfaust` distribution artifact.
+  `libfaust-rs` distribution artifact.

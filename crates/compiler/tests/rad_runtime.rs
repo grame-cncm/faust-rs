@@ -1270,7 +1270,7 @@ fn corpus_err_rad_zero_seed_surfaces_rad_seed_arity_diagnostic() {
 // either order. The tests here pin two contracts:
 //
 // 1. The output bundle layouts compose multiplicatively (FAD) or
-//    additively (RAD) as documented in `docs/fad-...md` and
+//    additively (RAD) as documented in `docs/fad-note-en.md` and
 //    `docs/rad-note-en.md`.
 // 2. Second-order derivatives computed two different ways agree
 //    numerically. Specifically:
