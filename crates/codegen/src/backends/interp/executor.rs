@@ -36,6 +36,7 @@ use super::foreign::{ForeignScalarType, ForeignSignature, lookup_foreign_functio
 use super::opcode::FbcOpcode;
 use super::real::FbcReal;
 use super::soundfile::Soundfile;
+use crate::backends::interp::real::{cpp_max, cpp_min};
 use foreign_call::{ScalarType as HostScalarType, Value as HostValue};
 
 /// Stack sizes matching the C++ interpreter constants.
@@ -1959,8 +1960,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 Maxf => {
                     let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
-                    // Match C++ std::max semantics: (a < b) ? b : a
-                    real_stack.push(if v1 < v2 { v2 } else { v1 });
+                    real_stack.push(cpp_max(v1, v2));
                     pc += 1;
                 }
                 Min => {
@@ -1972,8 +1972,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 Minf => {
                     let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
-                    // Match C++ std::min semantics: (b < a) ? b : a
-                    real_stack.push(if v2 < v1 { v2 } else { v1 });
+                    real_stack.push(cpp_min(v1, v2));
                     pc += 1;
                 }
                 Copysignf => {
@@ -2018,7 +2017,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 MaxfHeap => {
                     let (a, b) = (self.real_heap[o1], self.real_heap[o2]);
-                    real_stack.push(if a < b { b } else { a });
+                    real_stack.push(cpp_max(a, b));
                     pc += 1;
                 }
                 MinHeap => {
@@ -2027,7 +2026,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 MinfHeap => {
                     let (a, b) = (self.real_heap[o1], self.real_heap[o2]);
-                    real_stack.push(if b < a { b } else { a });
+                    real_stack.push(cpp_min(a, b));
                     pc += 1;
                 }
 
@@ -2057,7 +2056,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 MaxfStack => {
                     let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let a = self.real_heap[o1];
-                    real_stack.push(if a < v { v } else { a });
+                    real_stack.push(cpp_max(a, v));
                     pc += 1;
                 }
                 MinStack => {
@@ -2068,7 +2067,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 MinfStack => {
                     let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let a = self.real_heap[o1];
-                    real_stack.push(if v < a { v } else { a });
+                    real_stack.push(cpp_min(a, v));
                     pc += 1;
                 }
 
@@ -2097,7 +2096,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 MaxfStackValue => {
                     let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
-                    real_stack.push(if rv < v { v } else { rv });
+                    real_stack.push(cpp_max(rv, v));
                     pc += 1;
                 }
                 MinStackValue => {
@@ -2107,7 +2106,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 MinfStackValue => {
                     let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
-                    real_stack.push(if v < rv { v } else { rv });
+                    real_stack.push(cpp_min(rv, v));
                     pc += 1;
                 }
 
@@ -2132,7 +2131,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 MaxfValue => {
                     let h = self.real_heap[o1];
-                    real_stack.push(if rv < h { h } else { rv });
+                    real_stack.push(cpp_max(rv, h));
                     pc += 1;
                 }
                 MinValue => {
@@ -2141,7 +2140,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 MinfValue => {
                     let h = self.real_heap[o1];
-                    real_stack.push(if h < rv { h } else { rv });
+                    real_stack.push(cpp_min(rv, h));
                     pc += 1;
                 }
 

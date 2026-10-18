@@ -15,6 +15,19 @@
 
 use std::fmt;
 
+/// C++ `std::max(a, b)`, which is `(a < b) ? b : a`: on a NaN operand the
+/// result depends on the operand order, unlike Rust's `f32::max`. The
+/// interpreter executes `Maxf` with it, as the C++ interpreter does, and its
+/// constant folding must give the same value.
+pub(crate) fn cpp_max<R: PartialOrd>(a: R, b: R) -> R {
+    if a < b { b } else { a }
+}
+
+/// C++ `std::min(a, b)`, which is `(b < a) ? b : a` (see [`cpp_max`]).
+pub(crate) fn cpp_min<R: PartialOrd>(a: R, b: R) -> R {
+    if b < a { b } else { a }
+}
+
 /// Trait bound for the interpreter's REAL type parameter.
 ///
 /// Replaces the C++ `template <class REAL>` pattern used in

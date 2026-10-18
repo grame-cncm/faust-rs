@@ -980,8 +980,10 @@ fn fold_ext_binary_real<R: FbcReal>(v1: R, v2: R, op: FbcOpcode) -> Option<FbcIn
         FbcOpcode::Atan2f => Some(r(v2.fbc_atan2(v1))),
         FbcOpcode::Fmodf => Some(r(v2.fbc_fmod(v1))),
         FbcOpcode::Powf => Some(r(v2.fbc_pow(v1))),
-        FbcOpcode::Maxf => Some(r(v2.fbc_max(v1))),
-        FbcOpcode::Minf => Some(r(v2.fbc_min(v1))),
+        // `v2` is the operand the executor pops first: folding must give what
+        // executing gives, including on a NaN, so both use C++ `std::max`/`std::min`.
+        FbcOpcode::Maxf => Some(r(crate::backends::interp::real::cpp_max(v2, v1))),
+        FbcOpcode::Minf => Some(r(crate::backends::interp::real::cpp_min(v2, v1))),
         _ => None,
     }
 }

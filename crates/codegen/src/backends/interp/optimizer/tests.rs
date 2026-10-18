@@ -405,3 +405,27 @@ fn test_block_store_payload_preserved_across_optimization() {
         _ => panic!("expected inline BlockStoreData::Real"),
     }
 }
+
+/// Folding `Maxf`/`Minf` gives what executing them gives, NaN included: the
+/// executor follows C++ `std::max`/`std::min`, and the fold used Rust's
+/// `f32::max`/`min`, which ignore a NaN. `v2` is the operand popped first.
+#[test]
+fn min_max_fold_matches_execution_on_nan() {
+    let folded = |op| {
+        fold_ext_binary_real::<f32>(1.0, f32::NAN, op)
+            .expect("Maxf/Minf fold")
+            .real_value
+    };
+    // NaN popped first: `std::max(NaN, 1)` and `std::min(NaN, 1)` are NaN
+    // (Rust's `max`/`min` gave 1).
+    assert!(folded(FbcOpcode::Maxf).is_nan());
+    assert!(folded(FbcOpcode::Minf).is_nan());
+    // NaN popped second: both are 1.
+    let swapped = |op| {
+        fold_ext_binary_real::<f32>(f32::NAN, 1.0, op)
+            .expect("Maxf/Minf fold")
+            .real_value
+    };
+    assert_eq!(swapped(FbcOpcode::Maxf), 1.0);
+    assert_eq!(swapped(FbcOpcode::Minf), 1.0);
+}
