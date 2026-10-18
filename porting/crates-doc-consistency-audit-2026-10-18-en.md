@@ -509,7 +509,7 @@ No discrepancy. C++ module mapping, sampled line numbers, options `-svg`, `--sca
 **minor**
 - `fir/src/types.rs:22` — `cargo doc` error (see §1).
 - `fir/src/builder.rs:404` — redundant link target.
-- `fir/src/matcher.rs:259`, `builder.rs:838`, `codegen/.../interp/compiler/ui_soundfile.rs:217` — `Soundfile::kChannels` → `fChannels` (`Soundfile.h:71`).
+- `fir/src/matcher.rs:259`, `builder.rs:838`, `codegen/.../interp/compiler/ui_soundfile.rs:217` — `Soundfile::kChannels` is absent from the pinned reference but exists on upstream `master-dev` (`dsp_aux.hh`, `enum { kBuffers, kLength, kSR, kOffset, kChannels }`, used by the channel wrap); the citations should say so rather than be renamed. (Corrected during the fix pass: an earlier version of this item proposed `fChannels`.)
 
 ---
 
