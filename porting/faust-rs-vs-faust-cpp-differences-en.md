@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-18 (partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded; `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1429,6 +1429,56 @@ must run unchanged with Faust C++ should not pass them.
   `crates/faust/tests/ddsp.rs`, `crates/faust/tests/allocation.rs`,
   [`docs/embedding-layers-en.md`](../docs/embedding-layers-en.md).
 
+### DIFF-API-009 — `libfaust-box.h` and `libfaust-signal.h` cover a subset of the reference
+
+- Status: `narrower`.
+- The C APIs (`libfaust-box-c.h`, `libfaust-signal-c.h`) follow the
+  reference. The C++ headers
+  [`crates/box-ffi/include/libfaust-box.h`](../crates/box-ffi/include/libfaust-box.h)
+  and
+  [`crates/signal-ffi/include/libfaust-signal.h`](../crates/signal-ffi/include/libfaust-signal.h)
+  are inline wrappers over them (see `DIFF-API-004` for why) and wrap mainly
+  the constructors. Compared after preprocessing with the pinned reference's
+  `architecture/faust/dsp/libfaust-box.h` and `libfaust-signal.h`, they do not
+  declare:
+  - Box: the `isBox*` matchers, `DSPToBoxes`, `boxesToSignals`/`2`,
+    `createSourceFromBoxes`, `getBoxType`, `boxPar3`–`boxPar5`, `boxPrim2`,
+    `extractName`, `ffname`/`ffarity`, `prim0name`–`prim5name`,
+    `getDefNameProperty`;
+  - Signal: most `isSig*` matchers (`isSigHSlider`, `isSigRDTbl`,
+    `isSigWRTbl`, `isSigSoundfile*`, `isSigControl`, `isSigEnable`, ...),
+    `getSigInterval`/`setSigInterval`, `getSigNature`, `sigBranches`,
+    `xtendedName`/`xtendedArity`, `printBox`/`printSignal`.
+- Spelling: the two-operand Box operator overloads are named after their C
+  counterparts, `boxAddAux(Box, Box)` etc., where the reference declares
+  `boxAdd(Box, Box)` next to `boxAdd()`. A reference C++ client that composes
+  boxes this way does not compile against these headers; the zero-argument
+  form `boxAdd()` matches.
+- The headers also declare the Rust-only `CboxFad`/`CboxRad` constructors of
+  `DIFF-SRC-001`/`002` in the C API.
+- Compatibility impact: C clients are unaffected. A C++ client of the
+  reference headers that uses only the wrapped constructors compiles; one that
+  uses a missing function or the two-operand `boxAdd` form must call the C name
+  (`CisBoxHSlider`, `CboxesToSignals`, `CboxAddAux`, ...) instead.
+- Evidence: the comparison above (reference `8eebea429`); the headers'
+  syntax check in `cargo run -p xtask -- libfaust-export-check`.
+
+### DIFF-API-010 — `libfaust-c.h` does not declare `freeCMemory`
+
+- Status: `parity-gap`.
+- The reference `architecture/faust/dsp/libfaust-c.h` declares
+  `void freeCMemory(void* ptr)`, which releases the strings its functions
+  return. [`crates/libfaust-ffi/include/libfaust-c.h`](../crates/libfaust-ffi/include/libfaust-c.h)
+  does not: its comment points to the declaration in the backend headers of the
+  same distribution (`libfaust-box-c.h`, `interpreter-dsp-c.h`, ...), and the
+  C++ `libfaust.h` declares it itself. The symbol is exported by
+  `libfaust-rs` either way.
+- Compatibility impact: a C client that includes only `libfaust-c.h` and calls
+  `freeCMemory` gets an implicit-declaration error (C99 and later) until it
+  includes another header of the distribution or declares the function.
+- Evidence: `crates/libfaust-ffi/include/libfaust-c.h` (line 18 comment);
+  reference `libfaust-c.h:145`.
+
 ## 8. Internal architectural adaptations
 
 These differences normally preserve Faust semantics, but matter to maintainers
@@ -1502,6 +1552,7 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
 | DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
 | DIFF-GAP-017 | `parity-gap` | A division by a zero that is constant without being a literal when its sequence is evaluated (`z = 0 <: _, !;`), used as a **pattern-matching argument whose value is then unused** (`f(0) = 1; f(n) = 2; process = f(1 / z);`), compiles in Rust and fails in C++ (`ERROR : division by 0 in 1 / 0`): C++ simplifies the argument eagerly and its exception is fatal, Rust folds a pattern argument as an optimization and gives up on this one. With a literal divisor both fail, and wherever the quotient is used (a signal, an iteration count, a route size, a label) Rust reports the division too. Pinned by `a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument` in `crates/compiler/tests/diagnostic_errors.rs`; see `DIFF-BEH-010`. |
+| DIFF-GAP-020 | `narrower` | The automatic mathematical documentation of C++ `-mdoc` (`compiler/documentator/`) is not ported: `faust-rs` has no `-mdoc` option and rejects it as an unknown argument, and `crates/doc`, the crate the porting plan assigns to it, is an empty scaffold. |
 
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
