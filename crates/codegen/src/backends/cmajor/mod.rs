@@ -55,7 +55,8 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    ModuleView, SkeletonCodes, block_items, decode_module, find_function_body, non_sub_module,
+    ModuleView, SkeletonCodes, block_items, decode_module, find_function_body, is_dsp_api_method,
+    non_sub_module,
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
@@ -1778,27 +1779,6 @@ fn io_channel(name: &str, prefix: &str) -> Option<usize> {
 /// Recognizes the canonical FIR zones assigned to bargraph widgets.
 fn is_bargraph_zone(name: &str) -> bool {
     name.starts_with("fHbargraph") || name.starts_with("fVbargraph")
-}
-
-/// Whether a function is reshaped into the Cmajor processor contract.
-fn is_dsp_api_method(name: &str) -> bool {
-    const METHODS: [&str; 14] = [
-        "metadata",
-        "getNumInputs",
-        "getNumOutputs",
-        "getSampleRate",
-        "classInit",
-        "instanceConstants",
-        "instanceResetUserInterface",
-        "instanceClear",
-        "instanceInit",
-        "init",
-        "buildUserInterface",
-        "control",
-        "frame",
-        "compute",
-    ];
-    METHODS.contains(&name)
 }
 
 #[cfg(test)]

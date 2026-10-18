@@ -40,10 +40,10 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    SkeletonCodes, block_declares_var, block_stores_var, decode_module, section_items,
-    unsupported_node,
+    FunctionDecl as DeclareFunView, SkeletonCodes, block_declares_var, block_stores_var,
+    collect_defined_functions, decode_module, section_items, unsupported_node,
 };
-use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
+use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
 use crate::backends::faust_api;
 
@@ -194,19 +194,6 @@ enum EmitMode {
     Ui,
 }
 
-/// Body-bearing FIR function declaration normalized for textual emission.
-///
-/// Prototype-only FIR declarations are intentionally filtered out when this view
-/// is collected. Public lifecycle fallbacks should not be displaced by a
-/// declaration that has no body.
-#[derive(Debug, Clone)]
-struct DeclareFunView {
-    name: String,
-    typ: FirType,
-    named_args: Vec<NamedType>,
-    body: Option<FirId>,
-}
-
 #[must_use]
 /// Returns the stable backend identifier.
 pub fn backend_id() -> &'static str {
@@ -284,7 +271,7 @@ fn generate_julia_module_step(
         .as_deref()
         .unwrap_or(module.name.as_str())
         .to_owned();
-    let functions = collect_module_functions(store, module.functions)?;
+    let functions = collect_defined_functions(store, module.functions)?;
     let struct_inits = collect_struct_initializers(store, module.dsp_struct, module.globals)?;
     let table_inits = collect_table_initializers(store, module.dsp_struct, module.globals)?;
 
@@ -1680,40 +1667,6 @@ fn collect_table_initializers(
             _ => None,
         })
         .collect())
-}
-
-/// Collects body-bearing function declarations from the module function block.
-///
-/// Prototype-only declarations are ignored because they are not executable
-/// bodies and should not suppress lifecycle fallback generation.
-///
-/// The resulting vector preserves FIR declaration order. Public API methods are
-/// selected by name later, and any remaining helper definitions are emitted in
-/// this stable order.
-fn collect_module_functions(
-    store: &FirStore,
-    functions: FirId,
-) -> Result<Vec<DeclareFunView>, CodegenError> {
-    let items = section_items("functions", functions, store)?;
-    let mut functions = Vec::new();
-    for item in items {
-        if let FirMatch::DeclareFun {
-            name,
-            typ,
-            args,
-            body: Some(body),
-            ..
-        } = match_fir(store, item)
-        {
-            functions.push(DeclareFunView {
-                name,
-                typ,
-                named_args: args,
-                body: Some(body),
-            });
-        }
-    }
-    Ok(functions)
 }
 
 /// Formats a floating literal in Julia syntax.

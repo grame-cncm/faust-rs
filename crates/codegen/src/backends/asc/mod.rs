@@ -28,8 +28,9 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    ModuleView, SkeletonCodes, block_declares_var, block_stores_var, decode_module,
-    find_function_body, invalid_section, non_sub_module, section_items, unsupported_node,
+    ModuleView, SkeletonCodes, block_declares_var, block_stores_var,
+    collect_declared_function_names, decode_module, find_function_body, invalid_section,
+    is_receiver_lifecycle_method, non_sub_module, section_items, unsupported_node,
 };
 use fir::{
     AccessType, FirBinOp, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir,
@@ -158,7 +159,7 @@ fn generate_asc_module_step(
         .as_deref()
         .unwrap_or(module.name.as_str())
         .to_owned();
-    let declared_functions = collect_module_function_names(store, module.functions)?;
+    let declared_functions = collect_declared_function_names(store, module.functions)?;
 
     let mut out = String::new();
     let _ = writeln!(
@@ -535,21 +536,6 @@ fn emit_declared_method(
     Ok(())
 }
 
-/// Collects declared function names to decide which DSP API stubs to synthesize.
-fn collect_module_function_names(
-    store: &FirStore,
-    functions: FirId,
-) -> Result<Vec<String>, CodegenError> {
-    let items = section_items("functions", functions, store)?;
-    let mut names = Vec::new();
-    for item in items {
-        if let FirMatch::DeclareFun { name, .. } = match_fir(store, item) {
-            names.push(name);
-        }
-    }
-    Ok(names)
-}
-
 /// Emits a module section as class fields (`DeclareVar` only).
 fn emit_section_fields(
     store: &FirStore,
@@ -909,7 +895,7 @@ fn emit_declare_fun(
     let tab = "    ".repeat(indent);
 
     // For DSP API methods, the FIR carries an explicit leading `dsp` arg; strip it.
-    let strip_dsp_arg = is_dsp_api_method(decl.name)
+    let strip_dsp_arg = is_receiver_lifecycle_method(decl.name)
         && matches!(decl.named_args.first(), Some(n) if n.name == "dsp");
 
     let (ret, params) = match decl.typ {
@@ -1525,28 +1511,6 @@ fn emit_static_tables(
         let _ = writeln!(out);
     }
     Ok(())
-}
-
-/// Returns `true` for canonical Faust lifecycle/DSP-API function names.
-///
-/// Used by [`emit_declare_fun`] to decide whether to strip the leading `dsp`
-/// FIR argument: these methods become AssemblyScript instance methods with
-/// an implicit `this`, so their explicit FIR `dsp` parameter has no rendered
-/// counterpart.
-fn is_dsp_api_method(name: &str) -> bool {
-    // `control`/`frame` are the execution-options entry points (plan §5.7:
-    // the AssemblyScript one-sample target).
-    matches!(
-        name,
-        "metadata"
-            | "instanceConstants"
-            | "instanceResetUserInterface"
-            | "instanceClear"
-            | "buildUserInterface"
-            | "compute"
-            | "control"
-            | "frame"
-    )
 }
 
 /// Escapes arbitrary text for embedding inside an AssemblyScript double-quoted

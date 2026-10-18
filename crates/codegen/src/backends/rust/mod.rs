@@ -49,10 +49,11 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    SkeletonCodes, block_declares_var, block_stores_var, decode_module, is_sub_module_method,
-    non_sub_module, section_items, unsupported_node,
+    FunctionDecl as DeclareFunView, SkeletonCodes, block_declares_var, block_stores_var,
+    collect_defined_functions, decode_module, is_sub_module_method, non_sub_module, section_items,
+    unsupported_node,
 };
-use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
+use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
 use crate::backends::faust_api;
 
@@ -216,19 +217,6 @@ struct StateTypes {
     table_elem_types: HashMap<String, FirType>,
 }
 
-/// Body-bearing FIR function declaration normalized for textual emission.
-///
-/// Prototype-only FIR declarations are intentionally filtered out when this
-/// view is collected. Public lifecycle fallbacks should not be displaced by a
-/// declaration that has no body.
-#[derive(Debug, Clone)]
-struct DeclareFunView {
-    name: String,
-    typ: FirType,
-    named_args: Vec<NamedType>,
-    body: Option<FirId>,
-}
-
 #[must_use]
 /// Returns the stable backend identifier.
 pub fn backend_id() -> &'static str {
@@ -269,7 +257,7 @@ fn generate_rust_module_step(
 ) -> Result<String, CodegenError> {
     let module = decode_module(store, module)?;
     let class_name = options.class_name.as_deref().unwrap_or("mydsp").to_owned();
-    let functions = collect_module_functions(store, module.functions)?;
+    let functions = collect_defined_functions(store, module.functions)?;
     let struct_inits = collect_struct_initializers(store, module.dsp_struct, module.globals)?;
     let table_inits = collect_table_initializers(store, module.dsp_struct, module.globals)?;
     let state_types = collect_state_types(
@@ -2742,36 +2730,6 @@ fn collect_state_types(store: &FirStore, sections: &[FirId]) -> StateTypes {
         }
     }
     out
-}
-
-/// Collects body-bearing function declarations from the module function block.
-///
-/// Prototype-only declarations are ignored because they are not executable
-/// bodies and should not suppress lifecycle fallback generation.
-fn collect_module_functions(
-    store: &FirStore,
-    functions: FirId,
-) -> Result<Vec<DeclareFunView>, CodegenError> {
-    let items = section_items("functions", functions, store)?;
-    let mut out = Vec::new();
-    for item in items {
-        if let FirMatch::DeclareFun {
-            name,
-            typ,
-            args,
-            body: Some(body),
-            ..
-        } = match_fir(store, item)
-        {
-            out.push(DeclareFunView {
-                name,
-                typ,
-                named_args: args,
-                body: Some(body),
-            });
-        }
-    }
-    Ok(out)
 }
 
 /// Formats a typed floating literal: `0.5f32`, or `f32::INFINITY` for a

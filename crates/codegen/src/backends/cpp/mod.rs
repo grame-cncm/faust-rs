@@ -27,8 +27,9 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    SkeletonCodes, block_declares_var, block_stores_var, decode_module, find_function_body,
-    invalid_section, is_empty_block, is_sub_module_method, non_sub_module, section_items,
+    SkeletonCodes, block_declares_var, block_stores_var, collect_declared_function_names,
+    decode_module, find_function_body, invalid_section, is_empty_block,
+    is_receiver_lifecycle_method, is_sub_module_method, non_sub_module, section_items,
     unsupported_node,
 };
 use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
@@ -219,7 +220,7 @@ fn generate_cpp_module_step(
     let module_name = module.name.clone();
     let effective_options = options.clone();
     let metadata_name = options.metadata_name.as_deref().unwrap_or(&module_name);
-    let declared_functions = collect_module_function_names(store, module.functions)?;
+    let declared_functions = collect_declared_function_names(store, module.functions)?;
     let has_sample_rate_field = block_declares_var(store, module.dsp_struct, "fSampleRate")
         || block_declares_var(store, module.globals, "fSampleRate");
     let class_name = options
@@ -997,22 +998,6 @@ fn mem0_class_tables(analysis: &Mem0Analysis) -> Vec<&MemoryZone> {
         .collect()
 }
 
-/// Collects declared function names to decide which DSP API stubs to synthesize.
-fn collect_module_function_names(
-    store: &FirStore,
-    functions: FirId,
-) -> Result<Vec<String>, CodegenError> {
-    let items = section_items("functions", functions, store)?;
-
-    let mut names = Vec::new();
-    for item in items {
-        if let FirMatch::DeclareFun { name, .. } = match_fir(store, item) {
-            names.push(name);
-        }
-    }
-    Ok(names)
-}
-
 /// The headers the C++ prelude always includes.
 const CPP_PRELUDE_HEADERS: &[&str] = &[
     "<algorithm>",
@@ -1522,7 +1507,8 @@ fn emit_declare_fun(
         .map_err(|msg| CodegenError::new(CodegenErrorCode::InvalidModuleSection, msg))?;
     let tab = "    ".repeat(indent);
     let mut params_override: Option<String> = None;
-    let strip_explicit_dsp_arg = (is_dsp_api_method(decl.name) || is_sub_module_method(decl.name))
+    let strip_explicit_dsp_arg = (is_receiver_lifecycle_method(decl.name)
+        || is_sub_module_method(decl.name))
         && matches!(decl.named_args.first(), Some(named) if named.name == "dsp")
         && matches!(
             decl.typ,
@@ -1567,7 +1553,7 @@ fn emit_declare_fun(
     if let Some(override_params) = params_override {
         params = override_params;
     }
-    let is_dsp_api = is_dsp_api_method(decl.name);
+    let is_dsp_api = is_receiver_lifecycle_method(decl.name);
     // The pinned reference emits `void control()` as a plain method but
     // `frame`/`compute` as virtual (cpp_code_container.cpp at 8eebea429).
     let method_prefix = if is_dsp_api && decl.name != "control" {
@@ -1670,21 +1656,6 @@ fn emit_compute_body(
 ) -> Result<(), CodegenError> {
     let mut mode = EmitMode::Compute;
     emit_block_with_mode(store, out, options, "", body, indent, &mut mode)
-}
-
-/// Returns `true` when `name` belongs to the canonical Faust DSP API surface.
-fn is_dsp_api_method(name: &str) -> bool {
-    matches!(
-        name,
-        "metadata"
-            | "instanceConstants"
-            | "instanceResetUserInterface"
-            | "instanceClear"
-            | "buildUserInterface"
-            | "compute"
-            | "control"
-            | "frame"
-    )
 }
 
 /// Emits one FIR value expression into a C++ expression string.

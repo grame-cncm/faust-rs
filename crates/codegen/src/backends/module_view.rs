@@ -17,7 +17,7 @@
 //! the errors for a module the lowering should never produce. Emission stays
 //! in each backend.
 
-use fir::{FirId, FirMatch, FirStore, match_fir};
+use fir::{FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
 use super::codegen_error::{BackendError, CodegenErrorCode};
 
@@ -206,6 +206,94 @@ pub(crate) fn is_sub_module_method(name: &str) -> bool {
         || name.starts_with("fill") && name != "fill"
 }
 
+/// One function definition of the `functions` section.
+#[derive(Debug, Clone)]
+pub(crate) struct FunctionDecl {
+    pub(crate) name: String,
+    pub(crate) typ: FirType,
+    pub(crate) named_args: Vec<NamedType>,
+    /// Always `Some` from [`collect_defined_functions`]; kept optional so a
+    /// backend can build a declaration-only view.
+    pub(crate) body: Option<FirId>,
+}
+
+/// The function *definitions* of a `functions` section, in declaration order.
+///
+/// Prototype-only declarations are skipped: they are not executable bodies
+/// and must not suppress the lifecycle stub a backend synthesizes for a
+/// function the module does not define.
+pub(crate) fn collect_defined_functions<C: SkeletonCodes>(
+    store: &FirStore,
+    functions: FirId,
+) -> Result<Vec<FunctionDecl>, BackendError<C>> {
+    let items = section_items("functions", functions, store)?;
+    Ok(items
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareFun {
+                name,
+                typ,
+                args,
+                body: Some(body),
+                ..
+            } => Some(FunctionDecl {
+                name,
+                typ,
+                named_args: args,
+                body: Some(body),
+            }),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The names of every function a `functions` section declares, prototypes
+/// included, in declaration order.
+pub(crate) fn collect_declared_function_names<C: SkeletonCodes>(
+    store: &FirStore,
+    functions: FirId,
+) -> Result<Vec<String>, BackendError<C>> {
+    let items = section_items("functions", functions, store)?;
+    Ok(items
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareFun { name, .. } => Some(name),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The methods of the Faust `dsp` class API (`faust/dsp/dsp.h`).
+const DSP_API_METHODS: [&str; 14] = [
+    "metadata",
+    "getNumInputs",
+    "getNumOutputs",
+    "getSampleRate",
+    "classInit",
+    "instanceConstants",
+    "instanceResetUserInterface",
+    "instanceClear",
+    "instanceInit",
+    "init",
+    "buildUserInterface",
+    "control",
+    "frame",
+    "compute",
+];
+
+/// Returns `true` for a method of the Faust `dsp` class API.
+pub(crate) fn is_dsp_api_method(name: &str) -> bool {
+    DSP_API_METHODS.contains(&name)
+}
+
+/// Returns `true` for a lifecycle function the FIR lowers with an explicit
+/// `dsp` receiver: every [`super::is_lifecycle_function`] but `staticInit`,
+/// which is class-level. A target with an implicit receiver (`this`) drops
+/// that first argument.
+pub(crate) fn is_receiver_lifecycle_method(name: &str) -> bool {
+    name != "staticInit" && super::is_lifecycle_function(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +342,27 @@ mod tests {
             function_body(&store, &[prototype, definition], "instanceClear"),
             Some(body)
         );
+    }
+
+    #[test]
+    fn receiver_methods_are_the_lifecycle_functions_but_static_init() {
+        for name in [
+            "metadata",
+            "instanceConstants",
+            "instanceResetUserInterface",
+            "instanceClear",
+            "buildUserInterface",
+            "compute",
+            "control",
+            "frame",
+        ] {
+            assert!(is_receiver_lifecycle_method(name), "{name}");
+            assert!(is_dsp_api_method(name), "{name}");
+        }
+        assert!(!is_receiver_lifecycle_method("staticInit"));
+        assert!(!is_receiver_lifecycle_method("init"));
+        assert!(is_dsp_api_method("init"));
+        assert!(!is_dsp_api_method("staticInit"));
     }
 
     #[test]

@@ -39,7 +39,7 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    ModuleView, SkeletonCodes, block_items, decode_module, find_function_body,
+    ModuleView, SkeletonCodes, block_items, decode_module, find_function_body, is_dsp_api_method,
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
@@ -917,27 +917,6 @@ fn emit_declare_fun(
     emit_stmt_or_block(store, out, options, body, indent + 1, Phase::Body)?;
     let _ = writeln!(out, "{tab}}}");
     Ok(())
-}
-
-/// Whether `name` is a DSP API method the section emitters re-shape themselves.
-fn is_dsp_api_method(name: &str) -> bool {
-    const METHODS: [&str; 14] = [
-        "metadata",
-        "getNumInputs",
-        "getNumOutputs",
-        "getSampleRate",
-        "classInit",
-        "instanceConstants",
-        "instanceResetUserInterface",
-        "instanceClear",
-        "instanceInit",
-        "init",
-        "buildUserInterface",
-        "control",
-        "frame",
-        "compute",
-    ];
-    METHODS.contains(&name)
 }
 
 /// Emits one value expression.

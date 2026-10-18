@@ -27,10 +27,11 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    SkeletonCodes, block_declares_var, block_stores_var, decode_module, invalid_section,
-    is_empty_block, non_sub_module, section_items, unsupported_node,
+    FunctionDecl as DeclareFunView, SkeletonCodes, block_declares_var, block_stores_var,
+    collect_defined_functions, decode_module, invalid_section, is_empty_block, non_sub_module,
+    section_items, unsupported_node,
 };
-use fir::{AccessType, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
+use fir::{AccessType, FirId, FirMatch, FirStore, FirType, match_fir};
 
 use crate::backends::c_family::{self, CFamilySyntax, EmitMode, StructInit, TableInit};
 use crate::backends::faust_api;
@@ -170,19 +171,6 @@ impl SkeletonCodes for CodegenErrorCode {
 /// carrier; only the code enum above is specific to this backend.
 pub type CodegenError = BackendError<CodegenErrorCode>;
 
-/// Normalized function declaration extracted from FIR before textual emission.
-///
-/// Keeping an owned view here avoids repeatedly borrowing through the FIR store
-/// while the emitter walks several lifecycle/API synthesis passes.
-#[derive(Debug, Clone)]
-struct DeclareFunView {
-    name: String,
-    typ: FirType,
-    named_args: Vec<NamedType>,
-    /// `None` when this is a prototype-only declaration (no body).
-    body: Option<FirId>,
-}
-
 #[must_use]
 /// Returns the stable backend identifier (`"c"`).
 pub fn backend_id() -> &'static str {
@@ -246,7 +234,7 @@ fn generate_c_module_step(
         None
     };
 
-    let declared_functions = collect_module_functions(store, module.functions)?;
+    let declared_functions = collect_defined_functions(store, module.functions)?;
     let struct_inits = collect_struct_initializers(store, module.dsp_struct, module.globals)?;
     let table_inits = collect_table_initializers(store, module.dsp_struct, module.globals)?;
     let mut out = String::new();
@@ -1355,37 +1343,6 @@ fn collect_table_initializers(
     c_family::collect_table_initializers(store, dsp_struct, globals, |section| {
         invalid_section("struct", section, store)
     })
-}
-
-/// Extracts all body-bearing helper/function definitions from the module.
-fn collect_module_functions(
-    store: &FirStore,
-    functions: FirId,
-) -> Result<Vec<DeclareFunView>, CodegenError> {
-    let items = section_items("functions", functions, store)?;
-
-    let mut names = Vec::new();
-    for item in items {
-        if let FirMatch::DeclareFun {
-            name,
-            typ,
-            args,
-            body: Some(body),
-            ..
-        } = match_fir(store, item)
-        {
-            // Only collect function *definitions* (with body). Prototype-only
-            // DeclareFun nodes (body: None) are forward declarations and do not
-            // displace the canonical stub generation in emit_c_api.
-            names.push(DeclareFunView {
-                name,
-                typ,
-                named_args: args,
-                body: Some(body),
-            });
-        }
-    }
-    Ok(names)
 }
 
 /// Emits a FIR block in default rendering mode.
