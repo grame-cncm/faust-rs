@@ -410,3 +410,21 @@ fn rust_maps_exp2_like_log2() {
     let text = generate(&store, module).expect("exp2/log2 compile");
     assert!(text.contains("f32::log2(f32::exp2("), "{text}");
 }
+
+/// A module without a `metadata` function gets the compilation metadata,
+/// as with an empty one: the c backend declared a bring-up placeholder
+/// (`"faust-rs": "module-first c backend prototype"`) instead.
+#[test]
+fn c_replays_the_compilation_metadata_when_metadata_is_absent() {
+    let (_, entry, generate) = backends()
+        .into_iter()
+        .find(|(name, _, _)| *name == "c")
+        .expect("c is listed");
+    let (store, module) = module_with(entry, |_| Vec::new());
+    let text = generate(&store, module).expect("compiles");
+    assert!(
+        text.contains("m->declare(m->metaInterface, \"filename\", \"mydsp.dsp\");"),
+        "{text}"
+    );
+    assert!(!text.contains("module-first c backend prototype"), "{text}");
+}

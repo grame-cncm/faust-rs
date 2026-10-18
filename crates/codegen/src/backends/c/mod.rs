@@ -1159,14 +1159,37 @@ fn emit_metadata(
     if let Some(f) = declared_functions.iter().find(|f| f.name == "metadata") {
         emit_named_fun(store, out, options, class_name, f)
     } else {
+        // Absent and empty are the same request, as in cpp and julia: replay
+        // the compilation metadata. This used to declare a bring-up
+        // placeholder, `"faust-rs": "module-first c backend prototype"`.
         let _ = writeln!(out, "void metadata{class_name}(MetaGlue* m) {{");
-        let _ = writeln!(
-            out,
-            "    m->declare(m->metaInterface, \"faust-rs\", \"module-first c backend prototype\");"
-        );
+        emit_compilation_metadata(out, options, class_name);
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
         Ok(())
+    }
+}
+
+/// Writes the compilation metadata (`filename`, `name`, the options'
+/// entries) as `m->declare` lines.
+fn emit_compilation_metadata(out: &mut String, options: &COptions, class_name: &str) {
+    let filename = options
+        .metadata_filename
+        .clone()
+        .unwrap_or_else(|| format!("{class_name}.dsp"));
+    let name = options
+        .metadata_name
+        .clone()
+        .unwrap_or_else(|| class_name.to_owned());
+    for (key, value) in
+        c_family::ordered_compilation_metadata(&options.metadata_entries, filename, name)
+    {
+        let _ = writeln!(
+            out,
+            "    m->declare(m->metaInterface, {}, {});",
+            c_string_literal(&key),
+            c_string_literal(&value)
+        );
     }
 }
 
@@ -1219,24 +1242,7 @@ fn emit_named_fun(
     if decl.name == "compute" {
         emit_compute_body(store, out, options, body, 1)?;
     } else if decl.name == "metadata" && is_empty_block(store, body) {
-        let filename = options
-            .metadata_filename
-            .clone()
-            .unwrap_or_else(|| format!("{class_name}.dsp"));
-        let name = options
-            .metadata_name
-            .clone()
-            .unwrap_or_else(|| class_name.to_owned());
-        for (key, value) in
-            c_family::ordered_compilation_metadata(&options.metadata_entries, filename, name)
-        {
-            let _ = writeln!(
-                out,
-                "    m->declare(m->metaInterface, {}, {});",
-                c_string_literal(&key),
-                c_string_literal(&value)
-            );
-        }
+        emit_compilation_metadata(out, options, class_name);
     } else {
         let mut mode = match decl.name.as_str() {
             "metadata" => EmitMode::Metadata,
