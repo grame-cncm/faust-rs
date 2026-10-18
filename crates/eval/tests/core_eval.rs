@@ -1941,32 +1941,23 @@ fn bind_definitions_allows_shadowing_from_outer_scope() {
 
 // ── EvalStats tests ───────────────────────────────────────────────────────────
 
-/// `eval` should return the same result as `eval_process` plus stats with
-/// at least one env_lookup (the `process` lookup itself) and at least one layer pushed.
+/// `eval` returns the evaluated `process` box with its side results; a program
+/// without findings has no warnings.
 #[test]
-fn eval_process_with_stats_returns_consistent_result_and_stats() {
+fn eval_returns_the_process_box_and_its_side_results() {
     let mut arena = TreeArena::new();
     let wire = BoxBuilder::new(&mut arena).wire();
     let nil = arena.nil();
     let def_process = make_def(&mut arena, "process", nil, wire);
     let defs = make_defs(&mut arena, &[def_process]);
 
-    let (out, stats) = eval::eval(&mut arena, defs, &eval::EvalRequest::default())
-        .expect("eval_process_with_stats should succeed");
+    let (out, stats) =
+        eval::eval(&mut arena, defs, &eval::EvalRequest::default()).expect("eval should succeed");
     assert!(
         matches!(match_box(&arena, out), BoxMatch::Wire),
         "result should be the wire node"
     );
-    assert!(
-        stats.env_lookups >= 1,
-        "at least the `process` lookup should be counted, got {}",
-        stats.env_lookups
-    );
-    assert!(
-        stats.env_layers_pushed >= 1,
-        "at least the root scope should be counted, got {}",
-        stats.env_layers_pushed
-    );
+    assert!(stats.warnings.is_empty(), "{:?}", stats.warnings);
 }
 
 #[test]

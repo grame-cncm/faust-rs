@@ -8,7 +8,7 @@
 //! |---|---|
 //! | `Environment` | `compiler/evaluate/environment.hh/.cpp` |
 //! | `LoopDetector` | `compiler/evaluate/loopDetector.hh` |
-//! | `EvalStats` | `gGlobal->gStats` fields (`fEnvLayersPushed`, `fEnvLookups`, …) |
+//! | `EvalStats` | the side results C++ keeps in `gGlobal` (warnings, `setDefNameProperty` names) |
 //! | `eval_process` | `compiler/evaluate/eval.cpp` — `evalprocess()` entry point |
 //! | `eval_box` | `compiler/evaluate/eval.cpp` — `eval()` recursive dispatch |
 //! | `bind_definitions` | `pushMultiClosureDefs()` in `environment.cpp` |
@@ -106,7 +106,7 @@
 //! | Barrier mechanism | `pushEnvBarrier` / `searchIdDef` | `push_barrier_scope()` + `lookup_until_barrier()` | Same semantics |
 //! | `copyEnvReplaceDefs` | Present (env rewiring) | Present | `copy_env_replace_defs(...)` + `rewrite_captured_env(...)` |
 //! | Redefinition check | `addLayerDef` throws on conflict | `bind_definitions` returns `EvalError::RedefinedSymbol` | Same semantics, typed error |
-//! | Profiling | `gGlobal->gStats` (global mutable) | `EvalStats` (returned value) | Safer, composable |
+//! | Side results | `gGlobal` (global mutable) | `EvalStats` (returned value) | Safer, composable |
 //!
 //! # Performance comparison — C++ vs Rust
 //!
@@ -387,7 +387,6 @@ fn eval_entrypoint_full(
     let mut env = Environment::empty_with_source_context(source_context);
     let mut stats = EvalStats::default();
     bind_definitions(arena, definitions, &mut env)?;
-    stats.env_layers_pushed += 1; // root scope
     let available_defs = top_level_definition_names(arena, definitions)?;
     // Use get_symbol (no alloc, &self) — if the requested entry-point name was
     // never interned it was never bound.
@@ -399,7 +398,6 @@ fn eval_entrypoint_full(
             definitions,
             available_defs,
         })?;
-    stats.env_lookups += 1;
     let mut loop_detector = match cancel {
         Some(flag) => LoopDetector::with_cancel(flag),
         None => LoopDetector::new(),
@@ -408,7 +406,6 @@ fn eval_entrypoint_full(
     let result = eval_value(arena, entry, &env, &mut loop_detector)?;
     let result = a2sb_value(arena, result, &mut loop_detector)?;
     loop_detector.report_apply_memo();
-    stats.loop_detector_max_depth = loop_detector.call_stack.len();
     // Remap def_names keys through a2sb's symbolic_box_cache: pre-a2sb IDs that were
     // rebuilt by a2sb (because their subtree contained residual Abstr nodes) get new IDs.
     // Without this remap, the tagged boxes are unreachable from process_box in the SVG.

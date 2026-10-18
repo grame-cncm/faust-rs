@@ -29,47 +29,18 @@ pub enum EvalWarning {
     },
 }
 
-/// Statistics collected during evaluation.
+/// Side results of an evaluation, returned by [`eval`](crate::eval) alongside
+/// the evaluated box tree.
 ///
-/// Returned by [`eval`](crate::eval) alongside the evaluated box tree, without
-/// global mutable state. The fields mirror the C++ `gGlobal->gStats` evaluator
-/// counters, but only part of them is populated today: `env_layers_pushed` and
-/// `env_lookups` count the root scope and the entry-point lookup only (each is
-/// 1 after a successful run), `env_lookup_total_depth` and `nodes_evaluated` are
-/// never written (always 0), and `loop_detector_max_depth` holds the
-/// loop-detector stack length once evaluation has returned, not a running
-/// maximum.
-///
-/// # C++ correspondence
-///
-/// | Rust field | C++ equivalent | C++ location |
-/// |---|---|---|
-/// | `env_layers_pushed` | `gStats.fEnvLayersPushed` | `environment.cpp` — `pushNewLayer` |
-/// | `env_lookups` | `gStats.fEnvLookups` | `environment.cpp` — `searchIdDef` |
-/// | `env_lookup_total_depth` | `gStats.fEnvLookupTotalDepth` | `environment.cpp` — `searchIdDef` loop |
-/// | `loop_detector_max_depth` | (no C++ equivalent) | |
-/// | `nodes_evaluated` | (not tracked in C++) | |
+/// Unlike C++, which keeps them in `gGlobal`, they are collected locally and
+/// returned by value. The C++ evaluator profiling counters (`gStats.fEnv*`,
+/// printed only by the `-lang fir` output of a `FIR_BUILD` compiler) have no
+/// counterpart: nothing in `faust-rs` read them, and fields that were never
+/// populated were removed on 2026-10-18.
 #[derive(Clone, Debug, Default)]
 pub struct EvalStats {
     /// Non-fatal findings collected during the evaluation, in order.
     pub warnings: Vec<EvalWarning>,
-    /// Environment layers pushed. Only the root scope is counted today, so
-    /// this is 1 after a successful run.
-    /// C++ equivalent: `gStats.fEnvLayersPushed`.
-    pub env_layers_pushed: u64,
-    /// Symbol lookups. Only the entry-point lookup is counted today, so this
-    /// is 1 after a successful run.
-    /// C++ equivalent: `gStats.fEnvLookups`.
-    pub env_lookups: u64,
-    /// Intended as the total scope depth traversed across all lookups; not
-    /// populated (always 0).
-    /// C++ equivalent: `gStats.fEnvLookupTotalDepth`.
-    pub env_lookup_total_depth: u64,
-    /// Loop-detector call-stack length once evaluation has returned (not the
-    /// maximum depth reached during evaluation).
-    pub loop_detector_max_depth: usize,
-    /// Intended as the number of box nodes evaluated; not populated (always 0).
-    pub nodes_evaluated: u64,
     /// Definition-name map: evaluated `BoxId` → source definition name.
     ///
     /// Populated during eval whenever a named closure is forced to a concrete box.

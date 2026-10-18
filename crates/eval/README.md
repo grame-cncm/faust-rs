@@ -46,7 +46,7 @@ cooperative cancellation.
 | `EvalRequest` | Entry point, source context and cancellation flag of one run |
 | `EvalError` | Typed error covering all evaluation failure modes |
 | `EvalWarning` | Non-fatal finding (unmatched modulation target) |
-| `EvalStats` | Warnings, definition names, composition origins, and partial environment counters |
+| `EvalStats` | Side results: warnings, definition names, composition origins |
 | `DepthGuard`, `DepthLimit`, `DepthLimitSource`, `DepthContext` | Depth-budget diagnostics |
 | `Environment` | Lexical environment (name → box, closure or pattern-matcher value) |
 | `EvalSourceContext` | Source-resolution context for `component` / `library` loading |
