@@ -2593,53 +2593,13 @@ fn collect_wasm_imports_in_node(
             out.insert(import.clone());
         }
     }
-    for child in fir_children(store, id) {
+    // Every child, through the shared walker: a hand-rolled list here missed
+    // `WhileLoop`, `Switch`, `TeeVar`, `Bitcast` and the soundfile loads, so a
+    // call found only under one of them was never imported.
+    for child in fir::fir_match_children(store, id) {
         collect_wasm_imports_in_node(store, child, foreign_fun_imports, options, out)?;
     }
     Ok(())
-}
-
-/// Returns the direct child nodes visited by backend-local FIR traversals.
-fn fir_children(store: &FirStore, id: FirId) -> Vec<FirId> {
-    match match_fir(store, id) {
-        FirMatch::Block(items) => items,
-        FirMatch::DeclareVar { init, .. } => init.into_iter().collect(),
-        FirMatch::StoreVar { value, .. } => vec![value],
-        FirMatch::StoreTable { index, value, .. } => vec![index, value],
-        FirMatch::LoadTable { index, .. } => vec![index],
-        FirMatch::SimpleForLoop { upper, body, .. } => vec![upper, body],
-        FirMatch::ForLoop {
-            init,
-            end,
-            step,
-            body,
-            ..
-        } => vec![init, end, step, body],
-        FirMatch::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
-        FirMatch::Cast { value, .. } => vec![value],
-        FirMatch::Neg { value, .. } => vec![value],
-        FirMatch::Select2 {
-            cond,
-            then_value,
-            else_value,
-            ..
-        } => vec![cond, then_value, else_value],
-        FirMatch::FunCall { args, .. } => args,
-        FirMatch::Return(Some(value)) => vec![value],
-        FirMatch::Drop(value) => vec![value],
-        FirMatch::Control { cond, stmt } => vec![cond, stmt],
-        FirMatch::If {
-            cond,
-            then_block,
-            else_block,
-        } => else_block
-            .into_iter()
-            .fold(vec![cond, then_block], |mut acc, item| {
-                acc.push(item);
-                acc
-            }),
-        _ => Vec::new(),
-    }
 }
 
 /// Returns `true` when an intrinsic can map directly to a native WASM opcode.

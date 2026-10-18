@@ -588,6 +588,55 @@ fn wasm_module_imports_external_math_functions_for_compute() {
     assert_eq!(imports, vec!["_atan2", "_cos", "_pow", "_sin"]);
 }
 
+/// A math call found only under a `WhileLoop` is imported: the import walk
+/// used a hand-rolled child list that stopped at `WhileLoop`, `Switch`,
+/// `TeeVar`, `Bitcast` and the soundfile loads.
+#[test]
+fn wasm_imports_a_math_call_found_only_inside_a_while_loop() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let x = b.float32(0.5);
+    let call = b.fun_call("sin", &[x], FirType::Float32);
+    let scratch = b.declare_var("fScratch", FirType::Float32, AccessType::Stack, Some(call));
+    let loop_body = b.block(&[scratch]);
+    let never = b.int32(0);
+    let while_loop = b.while_loop(never, loop_body);
+    let body = b.block(&[while_loop]);
+    let compute = b.declare_fun(
+        "compute",
+        crate::fixtures::compute_fun_type(),
+        &crate::fixtures::compute_fun_args(),
+        Some(body),
+        false,
+    );
+    let dsp_struct = b.block(&[]);
+    let globals = b.block(&[]);
+    let functions = b.block(&[compute]);
+    let static_decls = b.block(&[]);
+    let module = b.module(
+        0,
+        1,
+        "while_import",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+
+    let out = generate_wasm_module(&store, module, &WasmOptions::default())
+        .expect("a sin call under a while loop compiles");
+    let mut imports = Vec::new();
+    for payload in Parser::new(0).parse_all(&out.wasm_binary) {
+        if let Payload::ImportSection(section) = payload.expect("payload should decode") {
+            for import in section {
+                imports.push(import.expect("import should decode").name.to_owned());
+            }
+        }
+    }
+    assert_eq!(imports, vec!["_sinf"]);
+}
+
 #[test]
 fn wasm_compute_calls_imported_math_functions() {
     let (store, module) = build_math_intrinsics_test_module();
