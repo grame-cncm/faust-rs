@@ -1764,7 +1764,13 @@ fn emit_value(
         FirMatch::Neg { value: inner, typ } => {
             let rendered = emit_value(store, options, locked, inner)?;
             let rendered = coerce_rendered(store, &typ, inner, &rendered);
-            Ok(format!("(-{rendered})"))
+            // An integer negation wraps like the other integer operations:
+            // `-i32::MIN` panics in a debug build.
+            if matches!(typ, FirType::Int32 | FirType::Int64) {
+                Ok(format!("({rendered}).wrapping_neg()"))
+            } else {
+                Ok(format!("(-{rendered})"))
+            }
         }
         FirMatch::Cast { typ, value: inner } => {
             let rendered = emit_value(store, options, locked, inner)?;
@@ -2853,6 +2859,24 @@ mod tests {
             .expect_err("a zone with no parameter must be refused");
         assert_eq!(err.code(), CodegenErrorCode::InvalidModuleSection);
         assert!(err.message().contains("fGhost"));
+    }
+
+    /// Integer negation wraps like the other integer operations; a plain
+    /// `-x` panics on `i32::MIN` in a debug build.
+    #[test]
+    fn integer_negation_wraps_and_real_negation_does_not() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let i = b.load_var("iState", AccessType::Struct, FirType::Int32);
+        let neg_int = b.neg(i, FirType::Int32);
+        let f = b.load_var("fState", AccessType::Struct, FirType::Float32);
+        let neg_real = b.neg(f, FirType::Float32);
+        let options = RustOptions::default();
+        let locked = std::collections::BTreeSet::new();
+        let int_text = emit_value(&store, &options, &locked, neg_int).expect("int neg");
+        let real_text = emit_value(&store, &options, &locked, neg_real).expect("real neg");
+        assert!(int_text.ends_with(".wrapping_neg()"), "{int_text}");
+        assert!(real_text.starts_with("(-"), "{real_text}");
     }
 
     #[test]
