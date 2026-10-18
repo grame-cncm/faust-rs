@@ -37,6 +37,28 @@ impl HostScalarType {
     pub(crate) fn is_real(self) -> bool {
         !matches!(self, Self::Int)
     }
+
+    /// The host type of a typed function's parameter or result, which is
+    /// `int`, `float` or `double`.
+    pub(crate) fn of_abi(ty: foreign_call::ScalarType) -> Self {
+        match ty {
+            foreign_call::ScalarType::Int32 => Self::Int,
+            foreign_call::ScalarType::Float32 => Self::Float,
+            foreign_call::ScalarType::Float64 => Self::Double,
+            foreign_call::ScalarType::Bool | foreign_call::ScalarType::Void => {
+                unreachable!("a typed function takes and returns int, float or double")
+            }
+        }
+    }
+
+    /// The foreign-call ABI type of this host type.
+    pub(crate) fn abi(self) -> foreign_call::ScalarType {
+        match self {
+            Self::Int => foreign_call::ScalarType::Int32,
+            Self::Float => foreign_call::ScalarType::Float32,
+            Self::Double => foreign_call::ScalarType::Float64,
+        }
+    }
 }
 
 /// The C signature of a host function, as a host registers it:
@@ -52,6 +74,19 @@ pub struct HostFunctionSignature {
 }
 
 impl HostFunctionSignature {
+    /// The signature of a typed function (`foreign_call`'s C math library
+    /// entries and the backends' own math).
+    pub(crate) fn of_typed(function: foreign_call::TypedFunction) -> Self {
+        Self {
+            ret: HostScalarType::of_abi(function.ret()),
+            params: function
+                .params()
+                .iter()
+                .map(|ty| HostScalarType::of_abi(*ty))
+                .collect(),
+        }
+    }
+
     /// Parses a C prototype without or with its function name:
     /// `float(int, float)`, `double w_d(double)`, `int()`, `int(void)`.
     /// The types are `int`, `float` and `double`; `name`, when given, must be

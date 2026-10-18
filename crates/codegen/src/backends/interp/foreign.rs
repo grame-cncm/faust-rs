@@ -247,13 +247,13 @@ pub fn lookup_foreign_function_for_call(
         });
     };
     let matches = function.signature.as_ref().is_none_or(|signature| {
-        host_scalar(signature.ret) == ret
+        signature.ret.abi() == ret
             && signature.params.len() == args.len()
             && signature
                 .params
                 .iter()
                 .zip(args)
-                .all(|(param, arg)| host_scalar(*param) == *arg)
+                .all(|(param, arg)| param.abi() == *arg)
     });
     Some(if matches {
         Ok(function.address)
@@ -268,27 +268,7 @@ pub fn lookup_foreign_function_for_call(
 #[must_use]
 pub fn libm_signature(name: &str) -> Option<HostFunctionSignature> {
     let function = foreign_call::libm_function(name)?.function;
-    let host = |ty: foreign_call::ScalarType| match ty {
-        foreign_call::ScalarType::Int32 => HostScalarType::Int,
-        foreign_call::ScalarType::Float32 => HostScalarType::Float,
-        foreign_call::ScalarType::Float64 => HostScalarType::Double,
-        foreign_call::ScalarType::Bool | foreign_call::ScalarType::Void => {
-            unreachable!("a typed function takes and returns int, float or double")
-        }
-    };
-    Some(HostFunctionSignature {
-        ret: host(function.ret()),
-        params: function.params().iter().map(|ty| host(*ty)).collect(),
-    })
-}
-
-/// The foreign-call ABI type of a host function type.
-fn host_scalar(ty: HostScalarType) -> foreign_call::ScalarType {
-    match ty {
-        HostScalarType::Int => foreign_call::ScalarType::Int32,
-        HostScalarType::Float => foreign_call::ScalarType::Float32,
-        HostScalarType::Double => foreign_call::ScalarType::Float64,
-    }
+    Some(HostFunctionSignature::of_typed(function))
 }
 
 /// The interpreter's foreign scalar type of a host function type.

@@ -26,7 +26,7 @@ use super::host::host_math;
 use super::{ExternFunction, HostFunctionSignature, HostScalarType};
 use crate::backends::host_function::{faust_declaration, signature_mismatch};
 use fir::{FirMathOp, FirType};
-use foreign_call::{NamedFunction, ScalarType, libm_function};
+use foreign_call::{NamedFunction, libm_function};
 use std::collections::HashMap;
 
 /// Maps a FIR unary math op to its `f32` host symbol.
@@ -117,30 +117,9 @@ pub(crate) struct HostCall<'a> {
     pub(crate) params: Vec<HostScalarType>,
 }
 
-/// The host function type of a typed function's parameter or result, which
-/// is `int`, `float` or `double`.
-fn host_type(ty: ScalarType) -> HostScalarType {
-    match ty {
-        ScalarType::Int32 => HostScalarType::Int,
-        ScalarType::Float32 => HostScalarType::Float,
-        ScalarType::Float64 => HostScalarType::Double,
-        ScalarType::Bool | ScalarType::Void => {
-            unreachable!("a typed function takes and returns int, float or double")
-        }
-    }
-}
-
 /// The signature of a typed function.
 fn signature_of(function: &NamedFunction) -> HostFunctionSignature {
-    HostFunctionSignature {
-        ret: host_type(function.function.ret()),
-        params: function
-            .function
-            .params()
-            .iter()
-            .map(|ty| host_type(*ty))
-            .collect(),
-    }
+    HostFunctionSignature::of_typed(function.function)
 }
 
 fn typed_call(function: &'static NamedFunction) -> HostCall<'static> {
@@ -311,6 +290,7 @@ pub(crate) fn resolve_math_call(
 mod tests {
     use super::*;
     use crate::backends::cranelift::host::HOST_MATH;
+    use foreign_call::ScalarType;
 
     const ALL_MATH_OPS: &[FirMathOp] = &[
         FirMathOp::Pow,
