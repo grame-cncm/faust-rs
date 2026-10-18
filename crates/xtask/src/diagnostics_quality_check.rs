@@ -50,7 +50,7 @@ const SERIALIZED_ENUMS: &[(&str, &str)] = &[
 /// Every entry is a *presentation* decision — what a reader sees, in what
 /// order — never a fact a tool consumes:
 ///
-/// - `human.rs` condenses the paired composition block a propagate diagnostic
+/// - `diagnostics_human.rs` condenses the paired composition block a propagate diagnostic
 ///   writes for that purpose, and hides internal IR previews below
 ///   `--error-verbosity debug`;
 /// - `diagnostics/src/lib.rs` sorts notes into the canonical
@@ -59,7 +59,7 @@ const SERIALIZED_ENUMS: &[(&str, &str)] = &[
 /// This list must not grow. A new consumer of note text is the regression this
 /// gate exists to catch.
 const NOTE_MATCHING_ALLOWLIST: &[&str] = &[
-    "crates/compiler/src/cli/human.rs",
+    "crates/compiler/src/diagnostics_human.rs",
     "crates/diagnostics/src/lib.rs",
 ];
 
