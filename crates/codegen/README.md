@@ -29,7 +29,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 
 | Rust path | C++ origin |
 |---|---|
-| `backends::asc` | `compiler/generator/asc/` |
+| `backends::asc` | `compiler/generator/assemblyscript/` (upstream `master-dev`; absent from the pinned reference `8eebea429`) |
 | `backends::c` | `compiler/generator/c/` |
 | `backends::cpp` | `compiler/generator/cpp/` |
 | `backends::cmajor` | `compiler/generator/cmajor/` |
@@ -165,7 +165,7 @@ let c_source = generate_c_module(&store, root_id, &opts)?;
 |---|---|
 | `COptions` | Class/type names, precision, and `memory_manager_mode` |
 | `generate_c_module` | `(&FirStore, FirId, &COptions) → Result<String, CodegenError>` |
-| `CodegenError` | Codes `FRS-CGEN-C-0001..0003` |
+| `CodegenError` | Codes `FRS-CGEN-C-0001..0004` (`0004`: `mem0` memory layout) |
 
 With `memory_manager_mode: MemoryManagerMode::Mem0`, eligible instance buffers
 and writable generated tables are allocated through the embedded, versioned
@@ -195,7 +195,7 @@ let cpp_source = generate_cpp_module(&store, root_id, &opts)?;
 |---|---|
 | `CppOptions` | Class/namespace/type names, precision, and `memory_manager_mode` |
 | `generate_cpp_module` | `(&FirStore, FirId, &CppOptions) → Result<String, CodegenError>` |
-| `CodegenError` | Codes `FRS-CGEN-CPP-0001..0003` |
+| `CodegenError` | Codes `FRS-CGEN-CPP-0001..0004` (`0004`: `mem0` memory layout) |
 
 `MemoryManagerMode::Mem0` emits the compatible `dsp_memory_manager` surface,
 external buffer/table allocation, deep clone, captured-manager destruction,
@@ -256,15 +256,18 @@ emitter (see below).
 2. `generate_interp_module` — maps the FIR DSP lifecycle functions into
    `FbcDspFactory` code blocks, splitting `compute` into `compute_block` and
    `compute_dsp_block` when possible.
-3. `FbcDspFactory::optimize(level)` — runs peephole bytecode optimizer
-   (levels 0–6; `MAX_OPT_LEVEL = 6`).
+3. `FbcDspFactory::optimize()` — runs the peephole bytecode optimizer once,
+   up to the factory's `opt_level` (levels 0–6; `MAX_OPT_LEVEL = 6`).
 4. `write_fbc` / `read_fbc` — serialize/deserialize to/from `.fbc` text.
 5. `FbcDspInstance` — in-process DSP runtime (`init`, `compute`).
 
 ```rust
 use codegen::backends::interp::{InterpOptions, generate_interp_module, write_fbc};
 
-let opts = InterpOptions { opt_level: 4, module_name: None };
+let opts = InterpOptions {
+    opt_level: 4,
+    ..Default::default()
+};
 let factory = generate_interp_module::<f32>(&store, root_id, &opts)?;
 let mut buf = Vec::new();
 write_fbc(&factory, &mut buf)?;
@@ -284,7 +287,7 @@ write_fbc(&factory, &mut buf)?;
 
 | Item | Description |
 |---|---|
-| `InterpOptions` | `opt_level: i32`, `module_name: Option<String>` |
+| `InterpOptions` | `opt_level: i32`, `module_name: Option<String>`, `compile_options`, `keep_fir_order` |
 | `generate_interp_module` | `(&FirStore, FirId, &InterpOptions) → Result<FbcDspFactory<f32>, CodegenError>` |
 | `FbcDspFactory<R>` | Compiled bytecode program with lifecycle/data blocks |
 | `FbcDspInstance` | Runtime DSP state; provides `init` and `compute` |
@@ -309,7 +312,9 @@ at the output side.
 
 The generator performs a single pass over each of the 6 code blocks,
 maintaining a **virtual stack** of named C++ temporaries (`fRN` for reals,
-`iIN` for integers). All 298 FBC opcodes are covered.
+`iIN` for integers). All 298 FBC opcodes are handled: foreign calls and
+soundfile field loads return `FbcCppError::Unsupported`, and `AddSoundfile` is
+emitted as a comment.
 
 #### Control-flow translation
 
@@ -397,6 +402,7 @@ use codegen::backends::julia::{JuliaOptions, JuliaRealType, generate_julia_modul
 let opts = JuliaOptions {
     class_name: Some("mydsp".to_owned()),
     real_type: JuliaRealType::Float64,
+    ..Default::default()
 };
 let julia = generate_julia_module(&store, root_id, &opts)?;
 std::fs::write("mydsp.jl", julia)?;
@@ -414,7 +420,7 @@ Important emitter rules:
 
 | Item | Description |
 |---|---|
-| `JuliaOptions` | `class_name`, `real_type` |
+| `JuliaOptions` | `class_name`, `real_type`, `compile_options`, `metadata_name`, `metadata_filename`, `metadata_entries`, `dsp_json` |
 | `JuliaRealType` | `Float32` (default) or `Float64` |
 | `generate_julia_module` | `(&FirStore, FirId, &JuliaOptions) -> Result<String, CodegenError>` |
 | `CodegenError` | Codes `FRS-CGEN-JULIA-0001..0003` |
@@ -441,13 +447,14 @@ use codegen::backends::rust::{RustOptions, RustRealType, generate_rust_module};
 let opts = RustOptions {
     class_name: Some("mydsp".to_owned()),
     faust_float_type: RustRealType::Float32,
+    ..Default::default()
 };
 let rust_source = generate_rust_module(&store, root_id, &opts)?;
 ```
 
 | Item | Description |
 |---|---|
-| `RustOptions` | `class_name`, `faust_float_type` |
+| `RustOptions` | `class_name`, `faust_float_type`, `compile_options` |
 | `RustRealType` | `Float32` (default) or `Float64` |
 | `generate_rust_module` | `(&FirStore, FirId, &RustOptions) -> Result<String, CodegenError>` |
 | `CodegenError` | Codes `FRS-CGEN-RUST-0001..0003` |
@@ -518,12 +525,18 @@ together. In particular:
 #### Memory layout
 
 `backends::wasm::layout::WasmMemoryLayout` exposes the current linear-memory
-contract shared by code generation and companion JSON:
+contract shared by code generation and companion JSON. The emitted module lays
+out its runtime prefix small fields first:
 
-- static tables first,
-- mutable DSP/global fields next,
+- `Soundfile*` fields first,
+- then the mutable DSP/global fields by increasing byte size,
+- then the static tables,
+- then the compute-local arrays,
 - then the I/O zone / audio heap start,
 - then the embedded JSON segment.
+
+`WasmMemoryLayout::from_module` instead returns the declaration-order layout
+(static tables first) that the C++-style JSON of the other backends follows.
 
 This is the source of truth for exported UI offsets and host-side parameter
 access.

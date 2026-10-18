@@ -9,18 +9,25 @@
 //!
 //! # Role in pipeline
 //! - Consumes FIR (`fir::FirStore` + FIR roots) produced by compile lanes.
-//! - Emits target-language source text for supported backends.
+//! - Emits target-language source text, FBC bytecode, WASM binaries, or
+//!   Cranelift JIT code, depending on the backend.
 //! - Centralizes backend option structs and signature validation helpers.
 //!
 //! # Public surface
 //! - [`backends`] exposes backend modules.
+//! - [`backend_error`] is the common code/message surface of backend errors.
+//! - [`json`] builds the Faust JSON description from FIR metadata/UI bodies.
+//! - [`memory_layout`] and [`compute_cost`] hold the `-mem0` allocation and
+//!   compute-cost analyses shared by C, C++, and Cranelift.
+//! - [`shortname`] derives short unique identifiers from UI widget paths.
 //! - [`fixtures`] provides shared FIR fixtures used by backend tests and parity
 //!   checks.
 //!
 //! # Current status
-//! - C/C++ backends are implemented for the active module-first slice.
-//! - Other backend modules are scaffolded with stable identifiers and explicit
-//!   placeholders for future parity work.
+//! - `asc`, `c`, `cmajor`, `codebox`, `cpp`, `cranelift` (native targets
+//!   only), `interp`, `julia`, `rust`, and `wasm` are implemented.
+//! - `csharp`, `dlang`, `jax`, `jsfx`, `llvm`, `sdf3`, and `vhdl` are scaffolded
+//!   with stable identifiers and explicit placeholders for future parity work.
 //!
 //! # API mapping status
 //! - Backend option structs and generation entry points are `adapted` APIs:

@@ -2098,11 +2098,6 @@ impl<'a, 'b, 'c> InlineStmtCloner<'a, 'b, 'c> {
     }
 }
 
-/// Hygienic subtree cloner shared by the preparation and rewrite stages.
-///
-/// The cloner preserves FIR semantics while renaming stack/loop locals to avoid
-/// capture, and can additionally remap `kFunArgs` references to materialized
-/// temporary stack slots during inline preparation.
 /// Rebuilds a module while removing pure `Drop` roots introduced only to
 /// materialize a shared expression DAG during FIR construction.
 ///
@@ -2195,6 +2190,11 @@ pub fn is_obviously_side_effect_free_value(store: &FirStore, value: FirId) -> bo
     }
 }
 
+/// Hygienic subtree cloner shared by the preparation and rewrite stages.
+///
+/// The cloner preserves FIR semantics while renaming stack/loop locals to avoid
+/// capture, and can additionally remap `kFunArgs` references to materialized
+/// temporary stack slots during inline preparation.
 struct HygienicCloner<'a, 'b> {
     src: &'a FirStore,
     dst: &'b mut FirStore,

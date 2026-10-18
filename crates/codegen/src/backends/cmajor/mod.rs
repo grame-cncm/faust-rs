@@ -40,9 +40,10 @@
 //!
 //! # Table representation adaptation
 //!
-//! The C++ backend runs `CmajorTableTypeVisitor` and
-//! `CmajorTableVisitor` because its generic instruction functions may still
-//! carry placeholder table types. Canonical Rust FIR already co-locates the
+//! The C++ backend runs `TableSizeVisitor` and `TableSizeCloneVisitor`
+//! (`cmajor_code_container.hh`), which record and rename each `fill*` call by
+//! table size, because its generic instruction functions may still carry
+//! placeholder table types. Canonical Rust FIR already co-locates the
 //! concrete element type and length in [`FirType::Array`] and
 //! [`FirMatch::DeclareTable`]. The emitter therefore renders those owned types
 //! directly: no name-indexed specialization side table is needed. Integration

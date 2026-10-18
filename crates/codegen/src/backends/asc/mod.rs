@@ -1,7 +1,8 @@
 //! AssemblyScript (`asc`) backend generation from FIR `Module` roots.
 //!
 //! # Source provenance
-//! Mirrors the C++ Faust AssemblyScript backend:
+//! Mirrors the C++ Faust AssemblyScript backend (present on upstream
+//! `master-dev`, absent from the pinned reference `8eebea429`):
 //! - `compiler/generator/assemblyscript/assemblyscript_instructions.hh`
 //! - `compiler/generator/assemblyscript/assemblyscript_code_container.cpp`
 //!

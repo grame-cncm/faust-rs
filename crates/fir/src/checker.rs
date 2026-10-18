@@ -37,6 +37,18 @@
 //! | FIR-F07 | W | Function has no body (prototype/extern declaration) |
 //! | FIR-F08 | W | `frame` is declared but the canonical `compute` body is not empty |
 //! | FIR-F09 | W | `control`/`frame` body references the block `count` argument |
+//! | FIR-M08 | E | `compute` input alias or `inputs[i]` index exceeds `num_inputs` |
+//! | FIR-M09 | E | `compute` output alias or `outputs[i]` index exceeds `num_outputs` |
+//!
+//! ## Generated-table sub-modules
+//! | Code | Sev | Check |
+//! |---|---|---|
+//! | FIR-SM01 | E | A sub-module's `fill` is never called from `staticInit` or `instanceConstants` |
+//! | FIR-SM02 | E | `sub_modules` shape, or a sub-module not exposing exactly `instanceInit{name}` and `fill{name}` |
+//! | FIR-SM03 | E | `fill` signature is not `(dsp, count: Int32, table: Ptr(elem_type))`, or it writes another table |
+//! | FIR-SM04 | E | Duplicate sub-module name |
+//! | FIR-SM05 | E | A nested generator's `fill` is not called from the owner's `instanceInit` |
+//! | FIR-SM06 | E | A `fill` call does not cover the table's whole declared length |
 //!
 //! ## Phase 2 — per-function scope analysis
 //! | Code | Sev | Check |

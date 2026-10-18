@@ -1,7 +1,7 @@
 //! Soundfile data structure for the interpreter backend.
 //!
 //! # Source provenance (C++)
-//! - `Soundfile` struct in `architecture/faust/sound_player.h`
+//! - `Soundfile` struct in `architecture/faust/gui/Soundfile.h`
 //! - Per-part metadata (`fLength`, `fSR`, `fOffset`) and channel buffers
 //!   (`fBuffers[chan][sample_idx]`).
 //!
@@ -16,7 +16,7 @@
 /// Runtime soundfile data: per-part metadata and interleaved channel buffers.
 ///
 /// # C++ parity
-/// - `Soundfile` in `architecture/faust/sound_player.h`
+/// - `Soundfile` in `architecture/faust/gui/Soundfile.h`
 /// - `fLength[part]`, `fSR[part]`, `fOffset[part]`, `fBuffers[chan][idx]`
 #[derive(Debug, Clone)]
 pub struct Soundfile {

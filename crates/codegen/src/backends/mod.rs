@@ -2,16 +2,18 @@
 //!
 //! # Organization
 //! - Implemented backends:
-//!   - [`c`], [`codebox`], [`cpp`]
+//!   - [`asc`], [`c`], [`cmajor`], [`codebox`], [`cpp`], `cranelift` (native
+//!     targets only), [`interp`], [`julia`], [`rust`], [`wasm`]
 //! - Shared helpers:
+//!   - [`codegen_error`] (the carrier of the textual backends' typed errors)
+//!   - [`host_function`] (C signatures of host functions called by address)
 //!   - internal `faust_api` module (DSP API signature validation)
 //!   - internal `c_family` module (syntax-parameterless emission shared by
 //!     `c`/`cpp`; see `porting/c-family-emitter-core-plan-2026-07-04-en.md`)
 //!   - internal `textual` module (precedence-aware expression layout reusable
 //!     by textual targets)
-//! - Scaffolded backends (planned parity targets):
-//!   - `cranelift`, `cmajor`, `csharp`, `dlang`, `interp`, `jax`, `jsfx`,
-//!     `julia`, `llvm`, `rust`, `sdf3`, `vhdl`, `wasm`.
+//! - Scaffolded backends (planned parity targets, `backend_id()` only):
+//!   - `csharp`, `dlang`, `jax`, `jsfx`, `llvm`, `sdf3`, `vhdl`.
 //!
 //! # Module contract
 //! - Each backend module owns:
@@ -67,8 +69,9 @@ pub(crate) fn sub_module_names(store: &FirStore, sub_modules: FirId) -> Vec<Stri
 ///
 /// That mistake was made independently in the `c`, `rust` and `julia` backends
 /// before this list existed. `is_lifecycle_function` is the single place to
-/// consult; `backends::emits_no_lifecycle_leak` in the compiler test suite is
-/// what catches a backend that forgets to.
+/// consult; the compiler test `lifecycle_leak_guard`
+/// (`no_backend_emits_static_init_as_an_ordinary_function`) is what catches a
+/// backend that forgets to.
 const LIFECYCLE_FUNCTIONS: &[&str] = &[
     "staticInit",
     "metadata",
