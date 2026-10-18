@@ -1636,7 +1636,7 @@ fn compile_source_to_rust_emits_rust_source() {
         .expect("rust facade compile must succeed");
 
     assert!(
-        out.contains("Rust backend"),
+        out.contains("Compilation options: -lang rust"),
         "expected the Rust backend header, got: {}",
         &out[..out.len().min(200)]
     );

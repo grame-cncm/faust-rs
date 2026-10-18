@@ -290,17 +290,18 @@ fn generate_cmajor_module_step(
     let ui = collect_ui(store, view.functions)?;
 
     let mut out = String::new();
-    let _ = writeln!(out, "/* Code generated with faust-rs {}", crate::VERSION);
-    let _ = writeln!(
-        out,
-        "   Compilation options: {} */",
+    // Upstream's banner, as for c and cpp; the `name:` line needs the DSP
+    // name, which `CmajorOptions` does not carry.
+    crate::backends::literals::faust_banner(
+        &mut out,
+        None,
         options
             .compile_options
             .as_deref()
             .unwrap_or(match options.real_type {
                 CmajorRealType::Float32 => "-lang cmajor -single",
                 CmajorRealType::Float64 => "-lang cmajor -double",
-            })
+            }),
     );
     let _ = writeln!(out, "namespace faust");
     let _ = writeln!(out, "{{");

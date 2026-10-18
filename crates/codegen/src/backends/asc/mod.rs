@@ -169,7 +169,7 @@ fn generate_asc_module_step(
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "// Code generated with faust-rs {} (https://faust.grame.fr)",
+        "// Code generated with Faust {} (https://faust.grame.fr)",
         crate::VERSION
     );
     let _ = writeln!(

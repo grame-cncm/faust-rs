@@ -334,29 +334,18 @@ fn generate_rust_module_step(
 /// equivalent, and `rint` must preserve the C library's rounding-mode
 /// semantics rather than using Rust's fixed ties-to-even operation.
 fn emit_rust_header(out: &mut String, options: &RustOptions) {
-    let _ = writeln!(
+    // Upstream's banner, as for c and cpp; the `name:` line needs the DSP
+    // name, which `RustOptions` does not carry.
+    crate::backends::literals::faust_banner(
         out,
-        "/* ------------------------------------------------------------"
-    );
-    let _ = writeln!(
-        out,
-        "Code generated with Faust {} Rust backend (faust-rs)",
-        crate::VERSION
-    );
-    let _ = writeln!(
-        out,
-        "Compilation options: {}",
+        None,
         options
             .compile_options
             .as_deref()
             .unwrap_or(match options.faust_float_type {
                 RustRealType::Float32 => "-lang rust -single",
                 RustRealType::Float64 => "-lang rust -double",
-            })
-    );
-    let _ = writeln!(
-        out,
-        "------------------------------------------------------------ */"
+            }),
     );
     let _ = writeln!(out);
     let _ = writeln!(out);

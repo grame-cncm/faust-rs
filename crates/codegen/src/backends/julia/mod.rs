@@ -319,7 +319,7 @@ fn generate_julia_module_step(
 /// runtime vocabulary.
 fn emit_julia_header(out: &mut String, options: &JuliaOptions) {
     let _ = writeln!(out, "#=");
-    let _ = writeln!(out, "Code generated with faust-rs {}", crate::VERSION);
+    let _ = writeln!(out, "Code generated with Faust version {}", crate::VERSION);
     let _ = writeln!(
         out,
         "Compilation options: {}",

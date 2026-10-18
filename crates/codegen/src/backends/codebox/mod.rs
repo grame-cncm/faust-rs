@@ -184,7 +184,11 @@ fn generate_codebox_module_step(
     let view = decode_module(store, module)?;
     let mut out = String::new();
 
-    let _ = writeln!(out, "// Code generated with faust-rs {}", crate::VERSION);
+    let _ = writeln!(
+        out,
+        "// Code generated with Faust version {}",
+        crate::VERSION
+    );
     let _ = writeln!(
         out,
         "// Compilation options: {}",
