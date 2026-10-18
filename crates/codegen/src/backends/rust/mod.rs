@@ -49,9 +49,9 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    FunctionDecl as DeclareFunView, SkeletonCodes, block_declares_var, block_stores_var,
-    collect_defined_functions, decode_module, is_sub_module_method, non_sub_module, section_items,
-    unsupported_node,
+    FunctionDecl as DeclareFunView, SkeletonCodes, SubModuleView, block_declares_var,
+    block_stores_var, collect_defined_functions, decode_module, is_sub_module_method,
+    section_items, sub_module_views, unsupported_node,
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
@@ -2330,21 +2330,15 @@ fn emit_sub_modules(
     locked: &BTreeSet<String>,
     sub_modules: FirId,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
-        return Ok(());
-    };
-    for item in items {
-        let FirMatch::SubModule {
+    for sub in sub_module_views(store, sub_modules)? {
+        let SubModuleView {
             name,
             dsp_struct,
             static_decls,
             functions,
             sub_modules: nested,
             ..
-        } = match_fir(store, item)
-        else {
-            return Err(non_sub_module(item));
-        };
+        } = sub;
 
         emit_sub_modules(store, out, options, locked, nested)?;
         emit_static_tables(store, out, options, static_decls)?;

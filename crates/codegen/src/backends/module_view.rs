@@ -206,6 +206,49 @@ pub(crate) fn is_sub_module_method(name: &str) -> bool {
         || name.starts_with("fill") && name != "fill"
 }
 
+/// One generated-table sub-module, as its fields' ids.
+#[derive(Debug, Clone)]
+pub(crate) struct SubModuleView {
+    pub(crate) name: String,
+    pub(crate) elem_type: FirType,
+    pub(crate) dsp_struct: FirId,
+    pub(crate) static_decls: FirId,
+    pub(crate) globals: FirId,
+    pub(crate) functions: FirId,
+    pub(crate) sub_modules: FirId,
+}
+
+/// The sub-modules of a `sub_modules` block, in declaration order; none when
+/// it is not a block, an error for an entry that is not a `SubModule`.
+pub(crate) fn sub_module_views<C: SkeletonCodes>(
+    store: &FirStore,
+    sub_modules: FirId,
+) -> Result<Vec<SubModuleView>, BackendError<C>> {
+    block_items(store, sub_modules)
+        .into_iter()
+        .map(|item| match match_fir(store, item) {
+            FirMatch::SubModule {
+                name,
+                elem_type,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                sub_modules,
+            } => Ok(SubModuleView {
+                name,
+                elem_type,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                sub_modules,
+            }),
+            _ => Err(non_sub_module(item)),
+        })
+        .collect()
+}
+
 /// The error message for sub-modules left in `module` after flattening, if
 /// any.
 ///

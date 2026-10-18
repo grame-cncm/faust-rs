@@ -27,10 +27,10 @@ use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
-    SkeletonCodes, block_declares_var, block_stores_var, collect_declared_function_names,
-    decode_module, find_function_body, invalid_section, is_empty_block,
-    is_receiver_lifecycle_method, is_sub_module_method, non_sub_module, section_items,
-    unsupported_node,
+    SkeletonCodes, SubModuleView, block_declares_var, block_stores_var,
+    collect_declared_function_names, decode_module, find_function_body, invalid_section,
+    is_empty_block, is_receiver_lifecycle_method, is_sub_module_method, section_items,
+    sub_module_views, unsupported_node,
 };
 use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
@@ -1378,11 +1378,8 @@ fn emit_sub_modules(
     module_name: &str,
     sub_modules: FirId,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
-        return Ok(());
-    };
-    for item in items {
-        let FirMatch::SubModule {
+    for sub in sub_module_views(store, sub_modules)? {
+        let SubModuleView {
             name,
             dsp_struct,
             static_decls,
@@ -1390,10 +1387,7 @@ fn emit_sub_modules(
             functions,
             sub_modules: nested,
             ..
-        } = match_fir(store, item)
-        else {
-            return Err(non_sub_module(item));
-        };
+        } = sub;
 
         emit_sub_modules(store, out, options, module_name, nested)?;
         emit_static_tables(store, out, options, static_decls)?;
