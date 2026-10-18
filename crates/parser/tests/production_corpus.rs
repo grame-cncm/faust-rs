@@ -2,7 +2,7 @@
 //!
 //! Scope:
 //! - Verifies `crates/parser` public entry points on representative corpus inputs.
-//! - Keeps end-to-end checks on the production API boundary (not parser-proto internals).
+//! - Keeps end-to-end checks on the production API boundary (not parser internals).
 
 use std::fs;
 use std::path::Path;

@@ -122,7 +122,7 @@ pub(crate) fn eval_pattern(
 ///    signal propagation + `simplify()` (delegates to `simplify_pattern`,
 ///    which is the Rust equivalent of C++ `isBoxNumeric`).
 /// 2. If that fails AND the node is a `PatternOp`
-///    (Par / Seq / Split / Merge / Rec only — matches C++ `isBoxPatternOp`),
+///    (Par / Seq / Split / Merge / Rec only — matches C++ `isBoxPatternOpBinary` / `isBoxPatternOpTernary`),
 ///    recurse into its two children.
 /// 3. Otherwise return the pattern unchanged.
 ///

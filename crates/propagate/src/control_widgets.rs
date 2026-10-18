@@ -64,7 +64,7 @@ impl ControlWidgets {
 /// The group context of a box occurrence, as the UI builder keys controls.
 ///
 /// Start from [`UiGroupContext::default`] at the root of the box given to
-/// [`control_widgets`], [`UiGroupContext::enter`] each group box on the way
+/// [`control_widgets()`], [`UiGroupContext::enter`] each group box on the way
 /// down, and restart from the root context at the seeds of `fad` and `rad`,
 /// which the UI builder walks without their enclosing groups.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

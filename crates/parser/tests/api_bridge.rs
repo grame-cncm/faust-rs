@@ -1,4 +1,5 @@
-//! Integration tests for `api_bridge`.
+//! Integration tests for the `parser` public API (parse entry points, recovery,
+//! import expansion, metadata).
 //!
 //! Scope:
 //! - Exercises public APIs and structural invariants for the targeted module.

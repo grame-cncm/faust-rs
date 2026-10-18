@@ -846,7 +846,7 @@ impl LoopDetector {
 
     /// Enters a structural lowering frame (`a2sb` / `a2sb_value`).
     ///
-    /// Unlike [`enter`], this path does not record an identity key because
+    /// Unlike [`enter`](Self::enter), this path does not record an identity key because
     /// every iteration creates a fresh `boxSlot`, making cycle detection
     /// impossible. The counter only enforces the `max_depth` budget so a
     /// diverging user program fails with `RecursionDepthExceeded` instead of

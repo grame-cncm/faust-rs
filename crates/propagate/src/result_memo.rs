@@ -7,12 +7,11 @@
 //! - `compiler/tlib/tree.cpp`, whose hash-consed `Tree*` values make slot and
 //!   path context identity pointer-sized.
 //!
-//! The Rust adaptation uses [`SlotEnvId`](crate::context_id::SlotEnvId) and
-//! [`UiPathId`](crate::context_id::UiPathId) for those canonical context
-//! components. Zero-, one-, and two-signal buses are stored directly in the
-//! key; larger buses are interned once per propagation run. A probe for the
-//! overwhelmingly common small buses therefore neither allocates nor clones an
-//! owned `Vec<SigId>`.
+//! The Rust adaptation uses [`SlotEnvId`] and [`UiPathId`] for those canonical
+//! context components. Zero-, one-, and two-signal buses are stored directly
+//! in the key; larger buses are interned once per propagation run. A probe for
+//! the overwhelmingly common small buses therefore neither allocates nor
+//! clones an owned `Vec<SigId>`.
 //!
 //! Clocked wrappers (`ondemand`, upsampling, downsampling) are eligible since
 //! 2026-09-18. A wrapper allocates one clock domain per propagation *miss*;

@@ -926,11 +926,9 @@ fn eval_value_uncached(
             eval_value(arena, body, env, loop_detector)
         }
         BoxMatch::ForwardAD(exp, seed) => {
-            // Source provenance (C++):
-            // - `/Users/letz/faust/compiler/evaluate/eval.cpp`
-            // - `isBoxForwardAD(exp, seed) -> boxForwardAD(eval(exp, ...), eval(seed, ...))`
-            //
-            // Mapping status: `1:1`.
+            // faust-rs extension: the pinned C++ reference has no `fad` box.
+            // Evaluated like the two-child box constructors of
+            // `compiler/evaluate/eval.cpp`.
             // Both children must be evaluated under the current lexical environment,
             // then rewrapped so the AD primitive remains explicit at the post-eval
             // propagation boundary.

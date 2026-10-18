@@ -29,7 +29,7 @@
 //! 2. **Adjoint accumulation.** Initialize `adjoints[primal] = 1.0` for every
 //!    primal, then walk the postorder in reverse and emit local transpose
 //!    contributions `child_bar += y_bar * d y / d child` for each visited
-//!    `y`. Existing entries are summed via [`add_adjoint`].
+//!    `y`. Existing entries are summed via [`ReverseADTransform::add_adjoint`].
 //! 3. **Seed extraction.** Re-emit `primals` followed by, for each seed
 //!    lane, the accumulated `adjoints[seed]` (or `0.0` when the seed is not
 //!    reached from any primal output, e.g. `rad(sin(x), y)`).
@@ -117,7 +117,7 @@
 //! - `reverse_ad.rs` still works in Signal IR, where nodes are typed by the
 //!   signal type system and can be rewritten by later normalization/preparation
 //!   passes.  Backend-local objects such as `fBraTapeN` arrays are not signal
-//!   nodes and cannot participate in `normalform.rs` / `signalPromotion`.
+//!   nodes and cannot participate in `normalform.rs` / `signalPromote`.
 //! - The correct execution schedule depends on the surrounding FIR context.
 //!   A top-level `process = rad(body, seeds)` usually exposes both primal and
 //!   gradient projections as public outputs, so FIR lowering emits a forward
@@ -989,7 +989,7 @@ fn build_block_reverse_ad(arena: &mut TreeArena, primals: &[SigId], seeds: &[Sig
 /// targeted diagnostic.
 ///
 /// The fallback boundary is intentionally semantic.  Tape layout, enforcement
-/// that actual tape stores are already `real_ty` after `signalPromotion`,
+/// that actual tape stores are already `real_ty` after `signalPromote`,
 /// persistent `fConst*` storage for constants reused by generated sweeps, and
 /// split-vs-inline loop scheduling are all FIR-lowering responsibilities.
 pub(super) fn generate_rad_signals(
