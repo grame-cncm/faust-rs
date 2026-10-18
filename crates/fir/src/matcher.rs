@@ -257,7 +257,8 @@ pub enum FirMatch {
         part: FirId,
     },
     /// C++ parity: `fSoundN->fChannels` (`Soundfile::kChannels`), the divisor
-    /// of the soundfile channel wrap `chan % fChannels`.
+    /// of the soundfile channel wrap `chan % fChannels`. Upstream `master-dev`
+    /// only: the pinned reference `8eebea429` has no channel wrap.
     LoadSoundfileChannels {
         var: String,
     },

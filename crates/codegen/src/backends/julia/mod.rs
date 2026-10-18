@@ -229,8 +229,9 @@ pub fn backend_id() -> &'static str {
 
 /// Generates Julia code from a FIR module root.
 ///
-/// The emitter expects a module produced by the transform fast lane. It emits a
-/// single Julia source unit containing:
+/// The emitter expects a module produced by `transform`'s signal→FIR lowering
+/// (`compile_signals_to_fir_fastlane`). It emits a single Julia source unit
+/// containing:
 /// - helper aliases (`REAL`, `pow`, `rint`, `remainder`),
 /// - static tables,
 /// - a mutable DSP state struct,

@@ -214,7 +214,8 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     ///
     /// # Source provenance (C++)
     /// - `InterpreterInstructionsCompiler::generateSoundfileBuffer` loads
-    ///   `Soundfile::kChannels` to wrap the requested channel.
+    ///   `Soundfile::kChannels` to wrap the requested channel (upstream
+    ///   `master-dev`; absent from the pinned reference `8eebea429`).
     ///
     /// `fChannels` is a scalar field: unlike `fLength`/`fSR`, nothing is
     /// pushed, and the executor pops no part for this selector.

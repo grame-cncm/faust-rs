@@ -8,9 +8,9 @@
 //! In the Rust interpreter sample data is stored as `f64` regardless of the
 //! DSP precision mode; the executor converts on the fly via `FbcReal::from_f64`.
 //!
-//! Runtime contract (C++ `architecture/faust/gui/Soundfile.h`): `num_channels
-//! >= 1` and `buffers` holds the `num_channels` real channels, no more. A
-//! channel requested beyond them is wrapped by the generated code
+//! Runtime contract (C++ `architecture/faust/gui/Soundfile.h`):
+//! `num_channels >= 1` and `buffers` holds the `num_channels` real channels, no
+//! more. A channel requested beyond them is wrapped by the generated code
 //! (`chan % fChannels`, see `transform`'s `emit_soundfile_buffer`), not here.
 
 /// Runtime soundfile data: per-part metadata and interleaved channel buffers.

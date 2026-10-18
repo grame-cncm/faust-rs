@@ -14,7 +14,7 @@
 //!
 //! # API mapping status
 //! - `InterpreterInstVisitor<REAL>` → [`FirToFbcCompiler<R>`]: adapted.
-//! - `gMathLibTable` → [`math_lib_lookup`]: const fn match.
+//! - `gMathLibTable` → [`math_lib_lookup`]: `match` lookup.
 //! - `gBinOpTable` → [`binop_to_fbc`]: const fn match.
 //! - `fFieldTable` → [`FirToFbcCompiler::field_table`]: `HashMap<String, MemoryDesc>`.
 

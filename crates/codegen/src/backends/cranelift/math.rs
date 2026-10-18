@@ -2,8 +2,9 @@
 //! backend implements.
 //!
 //! The subset pre-check and the lowering both decide through
-//! [`resolve_math_call`], over the one inventory [`HOST_MATH`], so a call the
-//! pre-check accepts is one the lowering can emit.
+//! [`resolve_math_call`], over the one inventory
+//! [`HOST_MATH`](super::host::HOST_MATH), so a call the pre-check accepts is
+//! one the lowering can emit.
 //!
 //! A call reaches here under two kinds of names:
 //! - FIR's own math names (`sin`, `pow`, `fabs`, ...: [`fir::FirMathOp`]),

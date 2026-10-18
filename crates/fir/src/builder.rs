@@ -401,7 +401,7 @@ impl<'a> FirBuilder<'a> {
     }
 
     /// A header or library the generated code depends on; see
-    /// [`FirMatch::DeclareDependency`](crate::FirMatch::DeclareDependency).
+    /// [`FirMatch::DeclareDependency`].
     #[must_use]
     pub fn declare_dependency(
         &mut self,
@@ -837,7 +837,8 @@ impl<'a> FirBuilder<'a> {
 
     /// C++ parity: `fSoundN->fChannels`, the `Soundfile::kChannels` field load
     /// `InstructionsCompiler::generateSoundfileBuffer` divides the requested
-    /// channel by. Always returns `Int32` (`int` in the Soundfile struct).
+    /// channel by (upstream `master-dev`; the pinned reference `8eebea429` has
+    /// no channel wrap). Always returns `Int32` (`int` in the Soundfile struct).
     #[must_use]
     pub fn load_soundfile_channels(&mut self, var: impl Into<String>) -> FirId {
         let typ_id = encode_type(&mut self.store.arena, &FirType::Int32);

@@ -24,7 +24,7 @@
 //!   did; `cpp` emitted the raw bytes into the literal.
 //!
 //! # Source provenance (C++)
-//! Upstream `/Users/letz/faust/compiler/generator/Text.hh` plays the same
+//! Upstream `compiler/generator/Text.hh` plays the same
 //! role for every one of upstream's textual backends: one shared
 //! literal/operator-formatting module instead of one copy per backend.
 

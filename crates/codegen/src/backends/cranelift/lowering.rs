@@ -1535,7 +1535,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     }
 
     /// Lowers FIR calls to imported host functions: a math function of
-    /// [`HOST_MATH`](super::host::HOST_MATH) (`sinf`, `pow`, ...) or a host
+    /// [`HOST_MATH`] (`sinf`, `pow`, ...) or a host
     /// function registered with a signature, its arguments and result
     /// converted as in C ([`resolve_call`]), or else a host function
     /// registered without one.

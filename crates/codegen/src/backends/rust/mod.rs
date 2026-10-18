@@ -18,6 +18,8 @@
 //! `FaustFloat`, `Meta`, `UI`, `ParamIndex`, and `FaustDsp`. The generated
 //! unit is therefore intended for insertion into a Faust Rust architecture,
 //! just like the C++ reference output; it does not package a private runtime.
+//! Validate contract-affecting emitter changes by building the output inside
+//! `faust2jackrust -source` / `faust2portaudiorust -source` projects (AGENTS.md).
 //!
 //! # C-semantics preservation
 //!
@@ -249,8 +251,9 @@ pub fn backend_id() -> &'static str {
 
 /// Generates Rust code from a FIR module root.
 ///
-/// The emitter expects a module produced by the transform fast lane. It emits a
-/// single Rust source unit containing:
+/// The emitter expects a module produced by `transform`'s signal→FIR lowering
+/// (`compile_signals_to_fir_fastlane`). It emits a single Rust source unit
+/// containing:
 /// - static tables,
 /// - a `pub struct` DSP state container with a `new()` constructor,
 /// - Faust lifecycle methods (`init`, `class_init`, `instance_init`, ...),
