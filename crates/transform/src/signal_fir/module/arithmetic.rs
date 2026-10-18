@@ -288,7 +288,7 @@ impl<'a> SignalToFirLower<'a> {
     /// `de_bruijn_to_sym` preparation step.
     ///
     /// Expects symbolic recursion payloads (`SYMREC` / `SYMREF`) — the normal
-    /// fast-lane input form produced by `signal_prepare`.
+    /// input form produced by `signal_prepare`.
     ///
     /// **Scheduled body evaluation**: a delayed `Proj(SYMREF)` may allocate the
     /// group's carriers before the owning `Proj(SYMREC)` is reached. Body

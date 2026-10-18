@@ -1,7 +1,7 @@
 //! Structural tests for the four execution shapes of the `-ec`/`-os` port
-//! (plan provenance: execution-options port §7.1): classic block, external
-//! control,
-//! one-sample, and the combined mode.
+//! (plan provenance: execution-options port §7.1,
+//! `porting/external-control-one-sample-port-plan-2026-07-23-en.md`): classic
+//! block, external control, one-sample, and the combined mode.
 //!
 //! Each test compiles `input(0) * hslider(0)` — one sample-rate input, one
 //! block-rate control value — and asserts the emitted module shape: which

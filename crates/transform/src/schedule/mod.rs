@@ -45,7 +45,7 @@
 //! | Item | Status | Rationale |
 //! |---|---|---|
 //! | [`SchedulingStrategy`] | `adapted` | Same four strategies as `-ss`, as a Rust `enum` instead of an integer flag; [`SchedulingStrategy::decode`] matches the C++ `0 / 1 / 2 / n>=3` split exactly. |
-//! | [`ScheduleDag`] | `adapted` | C++ has no such trait — `digraph<N>` is used directly by every algorithm. The trait is the Rust seam letting one algorithm implementation serve every graph shape (`hgraph::Digraph`, `signal_fir::LoopGraph`, future callers) instead of copying the four algorithms per graph type. |
+//! | [`ScheduleDag`] | `adapted` | C++ has no such trait — `digraph<N>` is used directly by every algorithm. The trait is the Rust seam letting one algorithm implementation serve every graph shape (`hgraph::Digraph`, `signal_fir::loop_graph::LoopGraph`, …) instead of copying the four algorithms per graph type. |
 //! | [`schedule`] | `adapted` | Literal port of the four algorithms, plus typed, total cycle/self-edge detection that C++ does not perform (C++ assumes a DAG and recurses/loops unconditionally). |
 //! | [`verify_schedule`] | `adapted` | No C++ equivalent; mirrors the Lean `verifySchedule` as an independent postcondition checker (plan provenance: §5.10) never reusing a scheduling algorithm. |
 //!

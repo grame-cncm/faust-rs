@@ -93,7 +93,7 @@ same sub-module, through `module::subcontainer_compile`. See
 | Tier | Items |
 |---|---|
 | Stable compiler contract | `signal_fir::{compile_signals_to_fir_fastlane, SignalFirRequest}`, `SignalFirOptions`, `SignalFirOutput`, `SignalFirError`/`SignalFirErrorCode`, `RealType`, `ComputeMode`, `ControlRateMode`, `ProcessingApi`, `TableInitMode`, `VectorPipelineStatus`, `VectorFallbackReason`, `VectorEffectiveMode`, `DEFAULT_BRA_TAPE_BLOCK_SIZE`, `schedule::SchedulingStrategy`, `signal_prepare::{prepare_signals_for_fir, prepare_signals_for_fir_verified, PreparedSignals, VerifiedPreparedSignals, PrepareOptions}` and their `*_with_options` / `prepare_signals_for_fir_verified_with_origins` variants |
-| Diagnostic / testing surface | `clk_env::annotate`, `hgraph::{build_hgraph, audit_hgraph, audit_control_variability, schedule}`, `signal_fir::decoration_verify`, `signal_fir::shadow`, `signal_fir::pv_slice`, the vector artifact producers/checkers under `signal_fir::vector::*` |
+| Diagnostic / testing surface | `clk_env::annotate`, `hgraph::{build_hgraph, audit_hgraph, audit_control_variability, schedule}`, `signal_fir::decoration_verify`, `signal_fir::diagnostics::{shadow, pv_slice}` (re-exported as `signal_fir::shadow` / `signal_fir::pv_slice`), the vector artifact producers/checkers under `signal_fir::vector::*` |
 | Compatibility facade | `signal_fir::vector_*` aliases of the grouped `signal_fir::vector::{...}` modules (retained during the 2026-07 cleanup; do not remove without an explicit API decision) |
 
 ### `signal_fir` key items

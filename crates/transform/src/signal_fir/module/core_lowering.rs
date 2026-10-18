@@ -451,13 +451,12 @@ impl<'a> SignalToFirLower<'a> {
 
     /// Lowers supported foreign constants.
     ///
-    /// Active parity slice mirrors the C++ fast-lane special-case for
+    /// Mirrors the C++ `InstructionsCompiler::generateFConst` special case for
     /// `fSamplingFreq`, which loads the persistent `fSampleRate` struct field.
     ///
-    /// `fSamplingFreq` is typed as Int in the signal domain, so its FIR type is
-    /// always `Int32`.  If it appears in a Real context the promoter wraps it in a
-    /// `FloatCast` node, which is lowered separately by `lower_cast`.  No implicit
-    /// cast is needed here.
+    /// The field is an `Int32`. When the prepared type of the `FConst` node is
+    /// `Real` (as in `exp(-2π/ma.SR)`), the load is cast here to that FIR type;
+    /// otherwise it is returned as it is.
     pub(super) fn lower_fconst(
         &mut self,
         sig: SigId,

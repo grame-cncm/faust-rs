@@ -33,7 +33,7 @@
 //! one concern per file:
 //!
 //! - `manager.rs` — [`DelayManager`] state, sizing decisions, allocation.
-//! - `plan.rs` — [`DelayPlan`] + the `plan_delays` / `DelayPlanner` single-pass walk.
+//! - `plan.rs` — [`plan::DelayPlan`] + the `plan_delays` / `DelayPlanner` single-pass walk.
 //! - `context.rs` — [`DelayFirCtx`] / [`DelayLoweringCtx`] borrow bundles.
 //! - `shift.rs` / `circular_pow2.rs` / `if_wrapping.rs` — the three strategies.
 //! - `sizing.rs` — pure delay-amount → size resolution.
@@ -91,8 +91,8 @@
 //!
 //! The planning split is:
 //!
-//! - [`plan_delays`] produces a [`DelayPlan`] with both per-carrier max delays
-//!   and recursion-output sizing metadata in one DAG walk.
+//! - [`plan_delays`] produces a [`plan::DelayPlan`] with both per-carrier max
+//!   delays and recursion-output sizing metadata in one DAG walk.
 //! - `prepare_delay_lines` allocates each line through
 //!   `DelayManager::ensure_delay_line_in_context`.
 //! - `ensure_recursion_array_for_group` in `module/` consumes the recursion-output
@@ -107,9 +107,9 @@
 //! | Item | Kind | Purpose |
 //! |------|------|---------|
 //! | [`pow2limit_for_delay`] | free fn | `next_power_of_two(N + 1)` with overflow checks |
-//! | [`constant_delay_amount`] | free fn | Extract a literal `SIGINT` delay amount |
-//! | [`variable_delay_max_bound`] | free fn | Derive a bound from interval analysis |
-//! | [`min_const_upper_bound`] | free fn | Structural fallback: `SIGMIN(SigInt(n), _)` |
+//! | [`sizing::constant_delay_amount`] | free fn | Extract a literal `SIGINT` delay amount |
+//! | [`sizing::variable_delay_max_bound`] | free fn | Derive a bound from interval analysis |
+//! | [`sizing::min_const_upper_bound`] | free fn | Structural fallback: `SIGMIN(SigInt(n), _)` |
 //! | [`delay_size_for_amount`] | free fn | Unified resolver (tries all three above) |
 //! | [`DelayOptions`] | struct | `-mcd` / `-dlt` threshold options |
 //! | [`DelayKind`] | enum | Strategy + all per-strategy FIR emission behaviour |
@@ -118,7 +118,7 @@
 //! | [`DelayFirCtx`] | struct | Borrow bundle for FIR-emitting methods |
 //! | [`GlobalCircularCursor`] | struct | Shared `fIOTA` cursor service for circular storage |
 //! | [`plan_delays`] | free fn | Unified single-pass delay planner |
-//! | [`DelayPlan`] | struct | Pure-data delay decision; input to allocation |
+//! | [`plan::DelayPlan`] | struct | Pure-data delay decision; input to allocation |
 //!
 //! The complementary **stateful orchestration** layer (`lower_fixed_delay`,
 //! `lower_delay_state`, recursion-carrier resolution, and `lower_signal`

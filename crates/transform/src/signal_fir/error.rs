@@ -53,7 +53,8 @@ pub enum SignalFirErrorCode {
     /// The program contains a block-sensitive operation (`BlockReverseAD` or
     /// `ReverseTimeRec`) whose semantics are defined relative to the block
     /// boundary, so it has no one-sample meaning under `-os` (execution
-    /// options port, decision D2).
+    /// options port, decision D2,
+    /// `porting/external-control-one-sample-port-plan-2026-07-23-en.md`).
     BlockSensitiveOneSample,
 }
 

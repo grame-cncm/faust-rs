@@ -47,7 +47,7 @@ pub(super) enum RecursionStorageStrategy {
     ///
     /// The current sample value is materialized separately as a stack-local
     /// binding during the sample iteration, then committed back to the struct
-    /// field in `PostOutput`.
+    /// field in the `post_output` sample phase.
     SingleScalar,
     /// Exact-size shift carrier:
     /// - current sample in slot `0`

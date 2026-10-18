@@ -6,8 +6,8 @@
 //! `build.rs`: the `checker_*` leaf helpers near the bottom of this file are
 //! deliberate duplicates of `build.rs`'s small derivation primitives, kept
 //! under separate names. That duplication is the assurance boundary (plan
-//! `clock-ad-checker-independence-plan-2026-07-20-en.md` §2) and must not be
-//! shared with the producer.
+//! `porting/clock-ad-checker-independence-plan-2026-07-20-en.md` §2) and must
+//! not be shared with the producer.
 //!
 //! `verify_vector_clock_ad_plan_after_vector_plan` is called by BOTH the
 //! producer's terminal verification (`build_vector_clock_ad_plan`) and the

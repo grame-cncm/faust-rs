@@ -166,7 +166,7 @@ pub(super) fn is_trivially_reverse_evaluable(arena: &TreeArena, sig: SigId) -> b
 /// backward adjoint for `x` at the previous reverse step must be tracked, but
 /// the traversal stops at any node kind not covered by the match below (an
 /// unsupported kind will be caught with a proper error in
-/// [`crate::signal_fir::module::SignalToFirLower::propagate_bra_adj`]).
+/// `module::SignalToFirLower::propagate_bra_adj`).
 pub(super) fn collect_bra_postorder(
     arena: &TreeArena,
     root: SigId,

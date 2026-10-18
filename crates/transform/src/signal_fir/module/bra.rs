@@ -1527,7 +1527,7 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// The loop variable `i0` used for the tape load is the same reverse-loop
     /// counter driven by the outer `build_module` reverse iteration; loading
-    /// tape[i0] during the backward sweep at step `n` retrieves the forward
+    /// `tape[i0]` during the backward sweep at step `n` retrieves the forward
     /// value stored at forward step `n`.
     ///
     /// A value that is neither taped nor trivially re-evaluable is refused:

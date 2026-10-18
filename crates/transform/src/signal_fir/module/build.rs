@@ -11,8 +11,10 @@
 //! `buildUserInterface`, and `compute`, plus `frame` (one-sample mode) and
 //! `control` (external control) when requested.
 //!
-//! All other submodules in `module/` provide `impl SignalToFirLower` methods
-//! that are invoked from the orchestration logic here.
+//! Most other submodules in `module/` provide `impl SignalToFirLower` methods
+//! that are invoked from the orchestration logic here; `region.rs`,
+//! `rad_formula_builder.rs`, and `subcontainer_compile.rs` define supporting
+//! types and the generator sub-module compiler instead.
 
 use super::region;
 use super::setup;
@@ -1060,11 +1062,10 @@ fn assemble_module_output(
 
 /// Lowers a prepared signal forest into a complete FIR module.
 ///
-/// Entry point for the fast-lane lowering boundary: accepts pre-validated
+/// Entry point of the scalar signal->FIR lowering: accepts pre-validated
 /// planning data and a prepared signal forest, returns a [`SignalFirOutput`]
-/// with all Faust lifecycle sections (`metadata`, `instanceConstants`,
-/// `instanceResetUserInterface`, `instanceClear`, `buildUserInterface`,
-/// `compute`) assembled in deterministic order.
+/// with all Faust lifecycle sections (listed in the module header) assembled
+/// in deterministic order.
 ///
 /// # Promotion invariant
 ///

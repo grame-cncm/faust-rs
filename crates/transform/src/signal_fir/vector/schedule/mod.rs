@@ -1,9 +1,9 @@
 //! Strategy-dependent vector execution schedules over [`VectorPlan`].
 //!
 //! Production scheduling stage (history: P5 slice of
-//! `vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md`): the
-//! strategy-independent plan is verified first, then each epoch's induced DAG
-//! is serialized in ascending rank. The plan certificate remains unchanged
+//! `porting/vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md`):
+//! the strategy-independent plan is verified first, then each epoch's induced
+//! DAG is serialized in ascending rank. The plan certificate remains unchanged
 //! when the scheduling strategy changes.
 //!
 //! The implementation delegates every ordering decision to the generic

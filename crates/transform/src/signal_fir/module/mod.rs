@@ -344,7 +344,7 @@ fn collect_descendants(arena: &TreeArena, roots: &[SigId], output: &mut HashSet<
 /// side channels: value expressions, per-lifecycle-section statement lists,
 /// persistent state and UI declarations, waveform tables, and deferred
 /// compute-time updates.  All are accumulated in the fields below and
-/// assembled into a [`SignalFirOutput`] by [`build_module`].
+/// assembled into a [`SignalFirOutput`](super::SignalFirOutput) by [`build_module`].
 ///
 /// The forest must satisfy the **promotion invariant** documented on
 /// [`build_module`]: all type coercions are represented as explicit

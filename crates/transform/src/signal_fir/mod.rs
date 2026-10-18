@@ -1,9 +1,10 @@
 //! Signal→FIR lowering: scalar path, checked vector path, and selection.
 //!
 //! # Inputs and outputs
-//! Entry points take the propagated signal forest, the arity contract, the
+//! The entry point [`compile_signals_to_fir_fastlane`] takes a
+//! [`SignalFirRequest`]: the propagated signal forest, the arity contract, the
 //! grouped [`UiProgram`], optionally the propagation-owned
-//! `ClockDomainTable`, and [`SignalFirOptions`]. They return a
+//! `ClockDomainTable`, and [`SignalFirOptions`]. It returns a
 //! [`SignalFirOutput`]: an owned [`FirStore`] with the module root, plus the
 //! observable vector status (`vector_pipeline_status`,
 //! `vector_effective_mode`, `vector_pipeline_detail`) and diagnostics.
@@ -129,7 +130,7 @@ use crate::signal_prepare::{
 /// (`FAUSTFLOAT**` in `compute`) and UI zone variables (sliders, bargraphs,
 /// buttons) always use `FirType::FaustFloat` regardless of this setting.
 ///
-/// Corresponds to Faust's `-double` compilation flag and `gFLoatSize`:
+/// Corresponds to Faust's `-double` compilation flag and `gFloatSize`:
 /// - `Float32` → C++ `float` (default),
 /// - `Float64` → C++ `double`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

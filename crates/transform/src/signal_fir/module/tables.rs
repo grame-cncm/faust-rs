@@ -441,8 +441,8 @@ impl<'a> SignalToFirLower<'a> {
 
     /// Expands a table generator signal into concrete initializer values.
     ///
-    /// Only generator shapes that can be fully resolved at compile-time are
-    /// accepted in the current fast-lane slice.
+    /// Only generator shapes that can be fully resolved at compile time are
+    /// accepted here.
     pub(super) fn expand_generator_values(
         &mut self,
         generator_sig: SigId,

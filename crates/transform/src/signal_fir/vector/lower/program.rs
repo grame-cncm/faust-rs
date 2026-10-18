@@ -177,7 +177,8 @@ impl VerifiedPureVectorProgram {
 pub enum PureVectorLowerError {
     /// Route construction or verification failed.
     Route(VectorRouteError),
-    /// Internal real precision is outside the active fast-lane contract.
+    /// A real or element type the vector lowerer does not support (the
+    /// internal real type must be `Float32` or `Float64`).
     InvalidRealType(FirType),
     /// A planned signal id is absent from the verified prepared forest.
     MissingPreparedSignal {

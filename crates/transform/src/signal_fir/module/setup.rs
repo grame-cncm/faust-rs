@@ -69,7 +69,8 @@ pub(super) struct NameGen {
     /// (`{i|f}tbl{k}`), shared by integer and real tables.
     ///
     /// C++ parity: `getTypedNames` builds `"i"|"f"` + `getFreshID("tbl")`
-    /// (`instructions_compiler.cpp:1040`), so the type letter is a prefix and
+    /// (`instructions_compiler.cpp`, `generateTable` / `generateStaticTable`),
+    /// so the type letter is a prefix and
     /// not part of the counter key: an int table followed by a real one yields
     /// `itbl0` then `ftbl1`, never two zeros.
     pub(super) tbl_counter: u32,
@@ -127,7 +128,7 @@ impl PlacementInfo {
 }
 
 impl<'a> SignalToFirLower<'a> {
-    /// Creates a fresh lowering state for one [`build_module`] call.
+    /// Creates a fresh lowering state for one [`build_module`](super::build_module) call.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         arena: &'a TreeArena,
@@ -591,7 +592,7 @@ impl<'a> SignalToFirLower<'a> {
 
     /// Returns the reduced prepared signal type attached to one signal node.
     ///
-    /// The fast-lane relies on the pre-FIR `signal_prepare` boundary to decide
+    /// The lowerer relies on the pre-FIR `signal_prepare` boundary to decide
     /// whether one value/state/table should stay integer or use the internal
     /// real computation type, mirroring the reduced
     /// `deBruijn2Sym -> typeAnnotation -> signalPromote` contract.

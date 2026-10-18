@@ -3,7 +3,8 @@
 //! # Source provenance (C++)
 //! - `compiler/signals/clkEnvInference.cpp` (`ClkEnvInference`, 638 lines,
 //!   branch `master-dev-ocpp-od-fir-2-FIR19`, commit `8eebea429`)
-//! - rules document `ClockEnvironmentInferenceRulesV2.md` as summarized in
+//! - rules document `ClockEnvironmentInferenceRulesV2.md` (not in the pinned
+//!   C++ checkout) as summarized in
 //!   `porting/ondemand-clock-domains-analysis-port-plan-2026-06-10-en.md`
 //!   §3.6 / §4.1.
 //!
@@ -738,7 +739,7 @@ impl<'a> Inference<'a> {
 /// group (`inferClkEnvWithHypothesis`), which re-infers the subgraph below a
 /// definition, nested groups' bodies included, once per group that reaches
 /// it; the hypotheses, the round count and the first error met in group
-/// order are the same ([`find_fixpoint_per_group`], kept as the reference,
+/// order are the same (`find_fixpoint_per_group`, kept as the reference,
 /// checks it in tests).
 fn find_fixpoint(
     arena: &TreeArena,

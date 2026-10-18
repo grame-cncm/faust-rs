@@ -1,15 +1,18 @@
 //! Guarded-block lowering for clocked wrappers (`ondemand`/US/DS).
 //!
 //! # Source provenance (C++)
-//! - `compiler/generator/compile_scal.cpp` (`generateOD`, `generateTempVar`,
-//!   `generatePermVar`, `sigSeq`/`sigClocked` cases, 2181-2284; branch
-//!   `master-dev-ocpp-od-fir-2-FIR19`, commit `8eebea429`)
+//! - `compiler/generator/compile_scal.cpp` (`sigTempVar`/`sigPermVar`/
+//!   `sigSeq`/`sigOD`/`sigClocked` dispatch cases, 838-853; `generateTempVar`,
+//!   `generatePermVar`, `generateOD`, `generateUS`, `generateDS`, 2182-2284;
+//!   branch `master-dev-ocpp-od-fir-2-FIR19`, commit `8eebea429`)
 //! - `compiler/parallelize/loop.cpp` (`CodeIFblock`)
 //!
 //! # Scope
-//! Guard shapes (plan provenance: ondemand port §3.8): boolean `ondemand` → `if (clock != 0) { … }`
-//! (C++ `CodeIFblock`); integer `ondemand` / `upsampling` → counted
-//! `SimpleForLoop`; `downsampling` → `if (fDSCounter == 0)` + modulo post-code.
+//! Guard shapes (plan provenance: ondemand port §3.8, i.e.
+//! `porting/ondemand-clock-domains-analysis-port-plan-2026-06-10-en.md`):
+//! boolean `ondemand` → `if (clock != 0) { … }` (C++ `CodeIFblock`); integer
+//! `ondemand` / `upsampling` → counted `SimpleForLoop`; `downsampling` →
+//! `if (fDSCounter == 0)` + modulo post-code.
 //! All reuse the generic FIR `If` / `SimpleForLoop` / `Block` statements per
 //! the region-tree FIR-vocabulary decision (`region.rs`).
 //!
