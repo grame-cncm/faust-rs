@@ -498,3 +498,40 @@ fn a_metadata_declare_never_passes_a_zone() {
         assert!(text.contains(expected), "{backend}:\n{text}");
     }
 }
+
+/// The rust and cmajor options carry the compilation metadata the c, cpp and
+/// julia ones do: the banner names the DSP, and the rust `metadata()`
+/// replays the entries when the FIR body is absent or empty.
+#[test]
+fn rust_and_cmajor_report_the_compilation_metadata() {
+    let entries = vec![("author".to_owned(), "GRAME".to_owned())];
+    let (store, module) = module_with("compute", |_| Vec::new());
+    let rust_options = rust::RustOptions {
+        metadata_name: Some("Meta Test".to_owned()),
+        metadata_filename: Some("meta.dsp".to_owned()),
+        metadata_entries: entries.clone(),
+        ..rust::RustOptions::default()
+    };
+    let text = rust::generate_rust_module(&store, module, &rust_options).expect("rust");
+    assert!(
+        text.contains("name: \"Meta Test\"\nCode generated with Faust"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "        m.declare(\"author\", \"GRAME\");\n        m.declare(\"filename\", \"meta.dsp\");\n        m.declare(\"name\", \"Meta Test\");\n"
+        ),
+        "{text}"
+    );
+
+    let cmajor_options = cmajor::CmajorOptions {
+        metadata_name: Some("Meta Test".to_owned()),
+        metadata_entries: entries,
+        ..cmajor::CmajorOptions::default()
+    };
+    let text = cmajor::generate_cmajor_module(&store, module, &cmajor_options).expect("cmajor");
+    assert!(
+        text.contains("name: \"Meta Test\"\nCode generated with Faust"),
+        "{text}"
+    );
+}

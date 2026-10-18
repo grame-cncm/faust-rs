@@ -882,6 +882,31 @@ fn embedded_json_description(
     })
 }
 
+/// Fills a backend's compilation metadata from the session, unless the
+/// caller set it: the DSP name (the UI root label), the file name, and the
+/// `declare` entries followed by `compile_options`.
+///
+/// Shared by every backend whose options carry the `metadata_*` trio (c,
+/// cpp, julia, rust, cmajor), so the banner and the `metadata` callback say
+/// the same thing on each.
+fn fill_compilation_metadata(
+    name: &mut Option<String>,
+    filename: &mut Option<String>,
+    entries: &mut Vec<(String, String)>,
+    compile_options: Option<&str>,
+    source_name: &str,
+    output: &SignalCompileOutput,
+) {
+    name.get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
+    filename.get_or_insert_with(|| source_name_to_filename(source_name));
+    if entries.is_empty() {
+        *entries = c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
+        if let Some(compile_options) = compile_options {
+            entries.push(("compile_options".to_owned(), compile_options.to_owned()));
+        }
+    }
+}
+
 /// Lowers signals through the transform fast lane, verifies FIR, then emits C++.
 pub(crate) fn lower_signals_to_cpp_transform_fastlane(
     source_name: &str,
@@ -891,21 +916,14 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
 ) -> Result<String, LowerToCppError> {
     let module_name = resolve_module_name(options.class_name.as_deref(), source_name);
     let mut effective_options = options.clone();
-    effective_options
-        .metadata_name
-        .get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
-    effective_options
-        .metadata_filename
-        .get_or_insert_with(|| source_name_to_filename(source_name));
-    if effective_options.metadata_entries.is_empty() {
-        effective_options.metadata_entries =
-            c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
-        if let Some(compile_options) = effective_options.compile_options.clone() {
-            effective_options
-                .metadata_entries
-                .push(("compile_options".to_owned(), compile_options));
-        }
-    }
+    fill_compilation_metadata(
+        &mut effective_options.metadata_name,
+        &mut effective_options.metadata_filename,
+        &mut effective_options.metadata_entries,
+        effective_options.compile_options.as_deref(),
+        source_name,
+        output,
+    );
     let timing_sink = ctx.timing_sink.as_ref();
     let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
         lower_signals_to_fir_transform_fastlane_with_timing(
@@ -952,21 +970,14 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
 ) -> Result<String, LowerToCError> {
     let module_name = resolve_module_name(options.class_name.as_deref(), source_name);
     let mut effective_options = options.clone();
-    effective_options
-        .metadata_name
-        .get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
-    effective_options
-        .metadata_filename
-        .get_or_insert_with(|| source_name_to_filename(source_name));
-    if effective_options.metadata_entries.is_empty() {
-        effective_options.metadata_entries =
-            c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
-        if let Some(compile_options) = effective_options.compile_options.clone() {
-            effective_options
-                .metadata_entries
-                .push(("compile_options".to_owned(), compile_options));
-        }
-    }
+    fill_compilation_metadata(
+        &mut effective_options.metadata_name,
+        &mut effective_options.metadata_filename,
+        &mut effective_options.metadata_entries,
+        effective_options.compile_options.as_deref(),
+        source_name,
+        output,
+    );
     let timing_sink = ctx.timing_sink.as_ref();
     let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
         lower_signals_to_fir_transform_fastlane_with_timing(
@@ -1044,21 +1055,14 @@ pub(crate) fn lower_signals_to_julia_transform_fastlane(
         RealType::Float32 => JuliaRealType::Float32,
         RealType::Float64 => JuliaRealType::Float64,
     };
-    codegen_options
-        .metadata_name
-        .get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
-    codegen_options
-        .metadata_filename
-        .get_or_insert_with(|| source_name_to_filename(source_name));
-    if codegen_options.metadata_entries.is_empty() {
-        codegen_options.metadata_entries =
-            c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
-        if let Some(compile_options) = codegen_options.compile_options.clone() {
-            codegen_options
-                .metadata_entries
-                .push(("compile_options".to_owned(), compile_options));
-        }
-    }
+    fill_compilation_metadata(
+        &mut codegen_options.metadata_name,
+        &mut codegen_options.metadata_filename,
+        &mut codegen_options.metadata_entries,
+        codegen_options.compile_options.as_deref(),
+        source_name,
+        output,
+    );
     if codegen_options.dsp_json.is_none() {
         let dsp_name = codegen_options
             .metadata_name
@@ -1126,6 +1130,14 @@ pub(crate) fn lower_signals_to_rust_transform_fastlane(
         RealType::Float32 => RustRealType::Float32,
         RealType::Float64 => RustRealType::Float64,
     };
+    fill_compilation_metadata(
+        &mut codegen_options.metadata_name,
+        &mut codegen_options.metadata_filename,
+        &mut codegen_options.metadata_entries,
+        codegen_options.compile_options.as_deref(),
+        source_name,
+        output,
+    );
     time_phase_with_sink(timing_sink, "rust-codegen", || {
         generate_rust_module(&lowered.store, lowered.module, &codegen_options)
     })
@@ -1274,6 +1286,14 @@ pub(crate) fn lower_signals_to_cmajor_transform_fastlane(
         RealType::Float32 => codegen::backends::cmajor::CmajorRealType::Float32,
         RealType::Float64 => codegen::backends::cmajor::CmajorRealType::Float64,
     };
+    fill_compilation_metadata(
+        &mut codegen_options.metadata_name,
+        &mut codegen_options.metadata_filename,
+        &mut codegen_options.metadata_entries,
+        codegen_options.compile_options.as_deref(),
+        source_name,
+        output,
+    );
     time_phase_with_sink(timing_sink, "cmajor-codegen", || {
         generate_cmajor_module(&lowered.store, lowered.module, &codegen_options)
     })

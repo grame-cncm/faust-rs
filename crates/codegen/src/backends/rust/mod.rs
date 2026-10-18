@@ -51,8 +51,8 @@ use std::fmt::Write as _;
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
     FunctionDecl as DeclareFunView, SkeletonCodes, SubModuleView, block_declares_var,
-    block_stores_var, collect_defined_functions, decode_module, is_sub_module_method,
-    section_items, sub_module_views, unsupported_node,
+    block_stores_var, collect_defined_functions, decode_module, is_empty_block,
+    is_sub_module_method, section_items, sub_module_views, unsupported_node,
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
@@ -77,6 +77,13 @@ pub struct RustOptions {
     /// [`Self::faust_float_type`], for callers (mostly tests) that do not
     /// thread the real CLI flags through.
     pub compile_options: Option<String>,
+    /// Source-level DSP name reported in the generated banner and metadata
+    /// callback. This is independent from [`Self::class_name`].
+    pub metadata_name: Option<String>,
+    /// Source basename reported by the generated metadata callback.
+    pub metadata_filename: Option<String>,
+    /// Non-identity compilation metadata replayed by `metadata()`.
+    pub metadata_entries: Vec<(String, String)>,
 }
 
 impl Default for RustOptions {
@@ -85,6 +92,9 @@ impl Default for RustOptions {
             class_name: Some("mydsp".to_owned()),
             faust_float_type: RustRealType::Float32,
             compile_options: None,
+            metadata_name: None,
+            metadata_filename: None,
+            metadata_entries: Vec::new(),
         }
     }
 }
@@ -334,11 +344,15 @@ fn generate_rust_module_step(
 /// equivalent, and `rint` must preserve the C library's rounding-mode
 /// semantics rather than using Rust's fixed ties-to-even operation.
 fn emit_rust_header(out: &mut String, options: &RustOptions) {
-    // Upstream's banner, as for c and cpp; the `name:` line needs the DSP
-    // name, which `RustOptions` does not carry.
+    // Upstream's banner, as for c and cpp.
+    let name = options
+        .metadata_name
+        .as_deref()
+        .or(options.class_name.as_deref())
+        .unwrap_or("mydsp");
     crate::backends::literals::faust_banner(
         out,
-        None,
+        Some(name),
         options
             .compile_options
             .as_deref()
@@ -570,6 +584,7 @@ fn emit_rust_api(
         emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(out, "    pub fn metadata(&self, m: &mut dyn Meta) {{");
+        emit_compilation_metadata(out, options);
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out);
     }
@@ -983,6 +998,13 @@ fn emit_named_method(
     if decl.name == "instanceConstants" && !block_stores_var(store, body, "fSampleRate") {
         let _ = writeln!(out, "        self.fSampleRate = sample_rate;");
     }
+    if decl.name == "metadata" && is_empty_block(store, body) {
+        // Absent and empty are the same request, as in c, cpp and julia.
+        emit_compilation_metadata(out, options);
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out);
+        return Ok(());
+    }
     let mode = match decl.name.as_str() {
         "metadata" => EmitMode::Metadata,
         "buildUserInterface" => EmitMode::Ui,
@@ -1001,6 +1023,32 @@ fn emit_named_method(
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out);
     Ok(())
+}
+
+/// Writes the compilation metadata (`filename`, `name`, the options'
+/// entries) as `m.declare` lines, in the order c, cpp and julia replay it.
+fn emit_compilation_metadata(out: &mut String, options: &RustOptions) {
+    let class_name = options.class_name.as_deref().unwrap_or("mydsp");
+    let filename = options
+        .metadata_filename
+        .clone()
+        .unwrap_or_else(|| format!("{class_name}.dsp"));
+    let name = options
+        .metadata_name
+        .clone()
+        .unwrap_or_else(|| class_name.to_owned());
+    for (key, value) in crate::backends::c_family::ordered_compilation_metadata(
+        &options.metadata_entries,
+        filename,
+        name,
+    ) {
+        let _ = writeln!(
+            out,
+            "        m.declare({}, {});",
+            rust_string_literal(&key),
+            rust_string_literal(&value)
+        );
+    }
 }
 
 /// Emits a non-canonical helper function declared in the FIR functions block.

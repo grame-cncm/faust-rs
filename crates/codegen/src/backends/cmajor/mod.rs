@@ -95,6 +95,14 @@ pub struct CmajorOptions {
     /// [`Self::real_type`], for callers (mostly tests) that do not thread the
     /// real CLI flags through.
     pub compile_options: Option<String>,
+    /// Source-level DSP name reported in the generated banner. This is
+    /// independent from [`Self::class_name`].
+    pub metadata_name: Option<String>,
+    /// Source basename. Cmajor has no metadata callback; kept for the same
+    /// shape as the other backends' options.
+    pub metadata_filename: Option<String>,
+    /// Non-identity compilation metadata (the `declare` entries).
+    pub metadata_entries: Vec<(String, String)>,
 }
 
 impl Default for CmajorOptions {
@@ -103,6 +111,9 @@ impl Default for CmajorOptions {
             class_name: "mydsp".to_owned(),
             real_type: CmajorRealType::Float32,
             compile_options: None,
+            metadata_name: None,
+            metadata_filename: None,
+            metadata_entries: Vec::new(),
         }
     }
 }
@@ -290,11 +301,15 @@ fn generate_cmajor_module_step(
     let ui = collect_ui(store, view.functions)?;
 
     let mut out = String::new();
-    // Upstream's banner, as for c and cpp; the `name:` line needs the DSP
-    // name, which `CmajorOptions` does not carry.
+    // Upstream's banner, as for c and cpp.
     crate::backends::literals::faust_banner(
         &mut out,
-        None,
+        Some(
+            options
+                .metadata_name
+                .as_deref()
+                .unwrap_or(&options.class_name),
+        ),
         options
             .compile_options
             .as_deref()

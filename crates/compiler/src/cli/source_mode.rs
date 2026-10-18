@@ -12,7 +12,7 @@ use codegen::backends::cpp::CppOptions;
 use codegen::backends::cranelift::CraneliftOptions;
 use codegen::backends::interp::{FbcCppOptions, InterpOptions, generate_cpp_from_fbc, read_fbc};
 use codegen::backends::julia::JuliaOptions;
-use codegen::backends::rust::{RustOptions, generate_rust_module};
+use codegen::backends::rust::RustOptions;
 use codegen::backends::wasm::WasmOptions;
 use compiler::{Compiler, FirVerifyOptions, golden_snapshot_from_file};
 use fir::{checker::verify_fir_module, dump_fir};
@@ -643,6 +643,7 @@ pub(crate) fn run_source_mode(
                 cli,
                 Some(cli_lang_name(CliLang::Cmajor)),
             )),
+            ..CmajorOptions::default()
         };
         let result = compiler.compile_file_to_cmajor_with_lane(
             input_path,
@@ -720,39 +721,31 @@ pub(crate) fn run_source_mode(
             cli.error_verbosity,
         );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = compiler.compile_file_to_fir_with_lane(
+        // Through the signal lowering, as c, cpp, julia and cmajor: it fills
+        // the compilation metadata (DSP name, file name, `declare` entries)
+        // the banner and `metadata()` report.
+        let options = RustOptions {
+            class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
+            faust_float_type: selected_rust_real_type(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Rust)),
+            )),
+            ..RustOptions::default()
+        };
+        let result = compiler.compile_file_to_rust_with_lane(
             input_path,
             &cli.import_dir,
+            &options,
             selected_codegen_lane(cli).into_compiler_lane(),
         );
         timer.phase("rust-codegen");
 
         match result {
-            Ok(out) => {
-                let options = RustOptions {
-                    class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
-                    faust_float_type: selected_rust_real_type(cli),
-                    compile_options: Some(compile_options_full_string(
-                        cli,
-                        Some(cli_lang_name(CliLang::Rust)),
-                    )),
-                };
-                match generate_rust_module(&out.store, out.module, &options) {
-                    Ok(rust) => {
-                        emit_output(&rust, cli.output.as_ref());
-                        if cli.dump_json {
-                            emit_cli_json_companion_for_backend(
-                                &compiler,
-                                cli,
-                                input_path,
-                                CliLang::Rust,
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("Rust codegen failed: {err}");
-                        std::process::exit(1);
-                    }
+            Ok(rust) => {
+                emit_output(&rust, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Rust);
                 }
             }
             Err(err) => report_pipeline_failure("Rust pipeline failed", &err, cli),

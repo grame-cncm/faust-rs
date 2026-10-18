@@ -19,9 +19,13 @@ use ui::{ControlKind, UiGroupKind, UiMatch, match_ui};
 /// call with default `Options` has no `CliArgs` to draw them from and falls
 /// back to a bare `-lang <backend> -single`. The two legitimately differ
 /// there; facade/CLI parity tests compare everything else.
+/// Drops the compilation options, which a CLI run and a facade call with
+/// default options legitimately spell differently: the banner line, and the
+/// `compile_options` entry a `metadata()` callback replays.
 fn strip_compile_options_line(text: &str) -> String {
     text.lines()
         .filter(|line| !line.to_ascii_lowercase().contains("compilation options"))
+        .filter(|line| !line.contains("\"compile_options\""))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1627,6 +1631,27 @@ fn assert_mul_input_ui(arena: &TreeArena, sig: TreeId, expected_input: i32) {
 /// `crates/compiler/README.md` documents `compile_*` helpers as the library
 /// surface; before this existed, `-lang rust` worked but no API did, so a
 /// reader of that table concluded the backend was unsupported.
+/// The compiler fills the rust backend's compilation metadata as it does
+/// for c, cpp and julia: the declared name reaches the banner and the
+/// `declare` entries reach `metadata()`.
+#[test]
+fn compile_source_to_rust_reports_the_declared_metadata() {
+    let compiler = compiler::Compiler::default();
+    let out = compiler
+        .compile_source_to_rust(
+            "meta.dsp",
+            "declare name \"Meta Test\";\ndeclare author \"GRAME\";\nprocess = _;",
+            &codegen::backends::rust::RustOptions::default(),
+        )
+        .expect("rust facade compile must succeed");
+    assert!(out.contains("name: \"Meta Test\""), "{out}");
+    assert!(out.contains("m.declare(\"author\", \"GRAME\");"), "{out}");
+    assert!(
+        out.contains("m.declare(\"filename\", \"meta.dsp\");"),
+        "{out}"
+    );
+}
+
 #[test]
 fn compile_source_to_rust_emits_rust_source() {
     let compiler = compiler::Compiler::default();
@@ -1648,9 +1673,8 @@ fn compile_source_to_rust_emits_rust_source() {
 
 /// The facade and the CLI must agree byte-for-byte for the same input.
 ///
-/// They reach the backend by different routes (`lower_signals_to_rust` vs the
-/// CLI calling `generate_rust_module` directly), so nothing structural forces
-/// them to stay in step.
+/// Both go through `lower_signals_to_rust` since the CLI stopped calling
+/// `generate_rust_module` on its own FIR (2026-10-18); this keeps them so.
 #[test]
 fn compile_source_to_rust_matches_cli_output() {
     let dir = std::env::temp_dir().join("frs_rust_facade_parity");

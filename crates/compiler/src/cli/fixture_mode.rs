@@ -224,6 +224,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 cli,
                 Some(cli_lang_name(CliLang::Cmajor)),
             )),
+            ..CmajorOptions::default()
         };
         match generate_cmajor_module(&store, module, &options) {
             Ok(cmajor) => {
@@ -277,6 +278,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 cli,
                 Some(cli_lang_name(CliLang::Rust)),
             )),
+            ..RustOptions::default()
         };
         match generate_rust_module(&store, module, &options) {
             Ok(rust) => {
