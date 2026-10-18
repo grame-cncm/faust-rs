@@ -124,7 +124,7 @@ impl<'a> PlanIndex<'a> {
     }
 }
 
-/// Independent verifier for a [`VectorPlan`] (vector-mode plan §5.5/§5.10
+/// Independent verifier for a [`VectorPlan`] (plan provenance: vector-mode plan §5.5/§5.10
 /// `verify_vector_plan`; Lean `VectorPlanCertificate`). Re-derives every
 /// invariant from the plan's own fields; never runs a planner.
 ///
