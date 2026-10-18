@@ -2,7 +2,9 @@
 //!
 //! Mirrors the C++ `global::initDocumentNames()` / `initDirectories()` model:
 //! - `default_import_search_paths` — builds the ordered path list for a
-//!   file-backed session (current dir, `FAUST_LIB_PATH`, exe-relative, system);
+//!   file-backed session (`FAUST_LIB_PATH`, exe-relative `../share/faust`,
+//!   `/usr/local/share/faust`, `/usr/share/faust`, the source's directory;
+//!   the working directory is tried before them by `parser::import_candidates`);
 //! - `merge_import_search_paths` / `build_import_search_paths` — utilities for
 //!   combining caller-supplied paths with the defaults;
 //! - `ensure_parse_success` — converts a parse result into a `CompilerError`

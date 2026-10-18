@@ -14,7 +14,9 @@ source generation, backed by Rust `signals::SigBuilder` and `signals::match_sig`
 - Exposes normalization and source helpers
   (`CsimplifyToNormalForm`, `CsimplifyToNormalForm2`,
   `CcreateSourceFromSignals`).
-- Exposes a thin C++ convenience wrapper (`libfaust-signal.h`).
+- Exposes a thin C++ convenience wrapper (`libfaust-signal.h`) over a subset
+  of the C API: the `sig*` constructors and part of the `isSig*` matchers; the
+  rest is used through the C names.
 - Uses `tree-ffi` for shared tree handles, context-owned C strings,
   null-terminated handle arrays, and common Signal enum definitions
   (`SType`, `SOperator`).

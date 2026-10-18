@@ -2,8 +2,9 @@
 //!
 //! This dependency-light crate centralizes representation and marshalling
 //! mechanics reused by the Box, Signal, Interpreter, Cranelift, tree-handle,
-//! and WebAssembly adapters. It does not export C symbols and it does not own
-//! backend-specific factory or instance semantics.
+//! libfaust and WebAssembly adapters and by the `faust` Rust API. It does not
+//! export C symbols and it does not own backend-specific factory or instance
+//! semantics.
 //!
 //! Compiler-core crates must not depend on this crate. Keeping the dependency
 //! direction one-way confines raw-pointer operations and ABI policy to the

@@ -17,8 +17,12 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `Compiler` | Session handle; all compile entry points are methods |
 | `CompilerError` | Aggregated error type covering every pipeline stage |
 | `SignalCompileOutput` | Parse + eval + propagate result package |
-| `enrobage` | Architecture-file wrapping (Step E) |
-| `remote_fetch` | Optional native HTTP(S) transport and host authorization policy |
+| `enrobage` | Architecture-file wrapping (`-a`) |
+| `remote_fetch` | Optional native HTTP(S) transport and host authorization policy (`network-imports` feature, non-WASM) |
+| `diagnostics_human` | Human diagnostic rendering shared by the CLI and the FFI layers (`format_bundle`, `ErrorVerbosity`) |
+| `diagnostics_json` | Diagnostics-v2 JSON rendering (`render_diagnostics_v2_json`, `render_complete_diagnostics_v2_json`) |
+| `expand` | Helpers of the `-e` / `--export-dsp` self-contained expansion |
+| `execution` | Backend capability table for `-ec` / `-os` / vector mode (`validate_execution_options`) |
 
 ### `Compiler` entry points
 
@@ -68,8 +72,9 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 
 The CLI accepts the equivalent `-mem`, `-mem0`, `--memory-manager`, and
 `--memory-manager0` spellings for scalar `-lang c`, `cpp`, and `cranelift`.
-Only mode zero is implemented; vector mode, `-it`, other backends, and
-`mem1`–`mem3` fail closed. Adding `-json` emits the version-2
+Only mode zero is implemented; vector mode, other backends, and
+`mem1`–`mem3` fail closed (`-it` is not a `faust-rs` option; the C API `argv`
+parser rejects `-mem0` with it). Adding `-json` emits the version-2
 `memory_manager`/`memory_layout` description and the effective scalar FIR
 `compute_cost` next to the backend artifact.
 
@@ -147,35 +152,22 @@ the compiler then resolves URL-relative structural imports without performing
 I/O. Remote evaluator-driven `component(...)` / `library(...)` loads and
 remote inline architecture sub-includes are currently deferred.
 
-### Lane defaults to know
+### Signal→FIR lane
 
-- C / C++ file/source helpers now default to `SignalFirLane::TransformFastLane`.
-- WASM / strict JSON source helpers default to `SignalFirLane::TransformFastLane`.
-- Julia helpers default to `SignalFirLane::TransformFastLane`.
-- Rust helpers default to `SignalFirLane::TransformFastLane`.
-- AssemblyScript helpers default to `SignalFirLane::TransformFastLane`.
-- Codebox helpers default to `SignalFirLane::TransformFastLane` and force the
-  target's intrinsic external-control and one-sample lowering modes; vector
-  mode is rejected.
-- Cmajor helpers default to `SignalFirLane::TransformFastLane` and likewise
-  force the target's intrinsic event-control and one-sample execution shape;
-  vector mode is rejected.
-- Interpreter helpers now default to `SignalFirLane::TransformFastLane`.
-- `WasmArtifactRequest::new(...)` defaults to `SignalFirLane::TransformFastLane`.
-- `compile_file_default_to_wasm_artifact(...)` also defaults to
-  `SignalFirLane::TransformFastLane`.
+`SignalFirLane` has one variant, `SignalFirLane::TransformFastLane`, the
+default of every helper and of `WasmArtifactRequest::new(...)`; the
+`*_with_lane` methods keep the parameter for API stability. Codebox and Cmajor
+helpers force the target's intrinsic external-control and one-sample execution
+shape, and reject vector mode.
 
 ## Pipeline
 
-```
-parse → eval → propagate → [optional signal→FIR] → codegen (C / C++ / Cmajor / Codebox / Rust / AssemblyScript / .fbc / Cranelift / WASM / Julia / JSON)
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
 
-The public signal->FIR route is:
-
-| Lane | Description |
-|---|---|
-| `SignalFirLane::TransformFastLane` | `transform::signal_prepare` + `transform::signal_fir` |
+Every backend (C / C++ / Cmajor / Codebox / Rust / AssemblyScript / `.fbc` /
+Cranelift / WASM / Julia / JSON) goes through signal→FIR
+(`transform::signal_prepare` + `transform::signal_fir`) then `fir`; only the
+dump modes stop earlier.
 
 ## Facade responsibilities
 

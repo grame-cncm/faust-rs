@@ -4,15 +4,21 @@
 //! - `compiler/parser/enrobage.hh`
 //! - `compiler/parser/enrobage.cpp`
 //!
-//! # Porting status
-//! - Step B (pure helpers): implemented in this module.
-//! - Search/open helpers and stream-copy logic are added in subsequent steps.
+//! The `<<includeIntrinsic>>` / `<<includeclass>>` wrapping sequence follows
+//! `compiler/libcode.cpp`.
 //!
 //! # API mapping status
 //! - `fileBasename` => [`file_basename`] (`1:1` semantics on separators).
 //! - `fileDirname` => [`file_dirname`] (`1:1` fallback behavior).
 //! - `stripEnd` => [`strip_end`] (`1:1` suffix behavior).
 //! - `makeOutputFile` => [`make_output_file`] (`adapted` to `PathBuf`).
+//! - `openArchStream` => [`open_arch_stream`], `fopenSearch` =>
+//!   [`fopen_search`] (`adapted`: explicit search directories).
+//! - `streamCopyLicense` / `streamCopyUntil` / `streamCopyUntilEnd` =>
+//!   [`stream_copy_license`] / [`stream_copy_until`] /
+//!   [`stream_copy_until_end`].
+//! - Wrapping: [`wrap_cpp_with_architecture`], and
+//!   [`wrap_cpp_with_remote_architecture`] for an injected remote fetcher.
 
 use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Write};

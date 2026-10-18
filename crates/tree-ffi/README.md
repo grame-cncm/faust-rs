@@ -4,7 +4,12 @@ Shared support layer for Faust-style C ABI crates.
 
 ## Scope
 
-- Owns the shared `TreeArena` handle model used by Box and Signal FFI APIs.
+- Owns the shared `TreeArena` handle model used by Box and Signal FFI APIs,
+  held in one process-global context (`global_context`,
+  `with_global_context`, `reset_global_context`); its C entry points
+  `createLibContext` / `destroyLibContext` are exported by `box-ffi`.
+- Holds the registry of Signal FFI UI/control descriptors
+  (`FfiSignalControl`, `register_signal_control`).
 - Provides stable opaque handle encoding/decoding for C callers.
 - Tracks context-owned null-terminated handle arrays.
 - Owns context-pinned C strings used by matcher out-parameters.

@@ -1,5 +1,6 @@
-//! Backend-agnostic libfaust C API — `generateSHA1`, `expandDSP*`,
-//! `generateAuxFiles*`.
+//! Backend-agnostic libfaust C API — `generateCSHA1`, `expandCDSP*`,
+//! `generateCAuxFiles*` (C++ wrappers `generateSHA1`, `expandDSP*`,
+//! `generateAuxFiles*` in `include/libfaust.h`).
 //!
 //! # Source provenance (C++)
 //! - `compiler/generator/libfaust.h` (the C++ surface)

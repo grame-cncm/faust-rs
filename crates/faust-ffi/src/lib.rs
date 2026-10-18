@@ -1,8 +1,8 @@
 //! Unified C/C++ FFI distribution crate.
 //!
 //! This crate owns the canonical `libfaust-rs` artifacts (`staticlib` + `cdylib`).
-//! Backend-specific FFI crates (`interp-ffi`, `cranelift-ffi`, `box-ffi`,
-//! `signal-ffi`) are linked as Rust libraries and their exported `extern "C"`
+//! The FFI crates (`interp-ffi`, `cranelift-ffi`, `box-ffi`, `signal-ffi`,
+//! `libfaust-ffi`) are linked as Rust libraries and their exported `extern "C"`
 //! symbols are distributed through this single top-level library.
 
 // Same allocator as the `faust-rs` binary, for the same measured reason: the

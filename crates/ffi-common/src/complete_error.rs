@@ -6,8 +6,10 @@
 //! diagnostic rendered for a terminal (location, source snippet, notes, fixes)
 //! does not always fit, and an existing host cannot be handed more than it
 //! allocated. So the buffer keeps receiving the summary it always received,
-//! and each backend adds one entry point, `getCComplete<Backend>DSPFactoryError`,
-//! that returns the whole text from storage the library owns.
+//! and each API adds one entry point that returns the whole text from storage
+//! the library owns: `getCCompleteInterpreterDSPFactoryError`,
+//! `getCCompleteCraneliftDSPFactoryError`, `getCCompleteDSPError` (libfaust),
+//! `getCCompleteBoxError` and `getCCompleteSignalError`.
 //!
 //! # Contract of the returned pointer
 //!
@@ -19,7 +21,7 @@
 //!
 //! # How a backend uses it
 //!
-//! One `thread_local!` [`CompleteError`] per backend. Where a typed compiler
+//! One `thread_local!` [`CompleteError`] per API. Where a typed compiler
 //! error is flattened to its one-line summary, [`CompleteError::attach`]
 //! records the rendered diagnostics that summary stands for; the backend's
 //! `write_error` funnel calls [`CompleteError::report`] with the message it
@@ -34,10 +36,10 @@
 //! machine-applicable fixes), which a host applies a fix from without reading
 //! prose. [`CompleteError::attach_with_diagnostics`] records it with the
 //! text, and it is published under the same rule and with the same lifetime
-//! (`getC<Backend>...ErrorDiagnostics`), with one difference that follows from
-//! what it is: **an error that carries no typed diagnostics publishes none**,
-//! so the pointer is null after an argument error even if an earlier failure
-//! had a report. A document never outlives the failure it describes.
+//! (`getC...ErrorDiagnostics`, for every API but Signal), with one difference
+//! that follows from what it is: **an error that carries no typed diagnostics
+//! publishes none**, so the pointer is null after an argument error even if an
+//! earlier failure had a report. A document never outlives the failure it describes.
 
 use std::cell::RefCell;
 use std::ffi::{CString, c_char};

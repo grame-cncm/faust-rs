@@ -4,7 +4,8 @@ Internal, dependency-light support for Rust-side Faust FFI adapters.
 
 Provides common C ABI types (`UIGlue`, `MetaGlue`), heap allocation helpers,
 error buffer writing, and CLI argument parsing used by `interp-ffi`,
-`cranelift-ffi`, `box-ffi`, `signal-ffi`, `tree-ffi`, and `wasm-ffi`.
+`cranelift-ffi`, `box-ffi`, `signal-ffi`, `tree-ffi`, `libfaust-ffi`,
+`wasm-ffi`, and the `faust` Rust API.
 
 This is not a general-purpose utility crate. Compiler-core crates must not
 depend on it.
@@ -13,11 +14,13 @@ depend on it.
 
 | Module | Responsibility |
 |---|---|
-| `abi` | Shared `#[repr(C)]` callback tables and `FAUSTFLOAT` type |
-| `args` | CLI-like compile options accepted at FFI entry points |
+| `abi` | Shared `#[repr(C)]` callback tables, `FAUSTFLOAT` type, and the versioned custom memory-manager ABI (`FaustMemoryManager`, `FAUST_MEMORY_MANAGER_ABI_VERSION`; C header `include/faust-memory-manager.h`) |
+| `args` | FFI host options accepted at FFI entry points |
 | `complete_error` | Per-thread complete text of the last error, beyond the 4096-byte `error_msg` buffer |
+| `control_range` | `ControlRange`: a control's declared range at its compiled precision, for Rust callers (not part of the C ABI) |
 | `factory_cache` | Owned, reference-counted factory and DSP-instance cache |
 | `memory` | Opaque Rust allocation helpers |
+| `sha1` | `sha1` / `sha1_hex` digests used for factory SHA keys |
 | `strings` | C strings, `argv`, error buffers, and empty `char**` support |
 
 ## Public API

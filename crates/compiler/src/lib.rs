@@ -6,34 +6,33 @@
 //! - `compiler/libcode.cpp` (compile entry points and orchestration)
 //! - `compiler/global.cpp` (session lifecycle)
 //!
-//! # Current scope
-//! - Exposes minimal compile-session APIs.
-//! - Wires parsing through production `crates/parser` APIs.
-//!
 //! # Canonical pipeline
-//! `parse -> eval -> propagate -> normalize/type/interval (incremental) -> transform -> fir -> backend`
+//! Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate →
+//! normalize → type/interval → transform → fir → backend.
 //!
-//! The currently wired production fast path in this crate is:
-//! `parse -> eval -> propagate -> (optional signal->FIR) -> codegen`.
+//! Every backend entry point of this crate goes through signal→FIR
+//! (`transform::signal_fir`) then `fir`; only the dump modes stop earlier.
 //!
 //! # Facade responsibilities
-//! - Provide one orchestrator type ([`Compiler`]) for file-based compilation.
+//! - Provide one orchestrator type ([`Compiler`]) for source- and file-based
+//!   compilation.
 //! - Aggregate typed stage errors into one top-level [`CompilerError`] surface.
 //! - Provide test/golden-oriented helper outputs (box dump, signal dump, FIR dump).
 //! - Route backend generation, with consistent options, to every emitter:
-//!   C++, C, Cmajor, Rust, Julia, AssemblyScript, interpreter `.fbc`, WASM, the JSON
-//!   description, and the Cranelift JIT status report. Every entry point
-//!   returns source text or bytes; a caller that needs to *run* JIT-compiled
-//!   code must own the generated module itself and so lowers through the FIR
-//!   entry points instead (see `crates/cranelift-ffi`).
+//!   C++, C, Cmajor, Codebox (RNBO), Rust, Julia, AssemblyScript, interpreter
+//!   `.fbc`, WASM, the JSON description, and the Cranelift JIT status report.
+//!   Every entry point returns source text or bytes; a caller that needs to
+//!   *run* JIT-compiled code must own the generated module itself and so
+//!   lowers through the FIR entry points instead (see `crates/cranelift-ffi`).
 //!
 //! # API mapping status
 //! - External facade API is `adapted`: it targets behavior compatibility with
 //!   C++ compile flows while using Rust structs/results and explicit lane options.
 //!
-//! # Current lane note
-//! - The active signal->FIR lowering route is [`SignalFirLane::TransformFastLane`],
-//!   owned by `crates/transform`.
+//! # Signal→FIR lane
+//! - [`SignalFirLane`] has one variant, [`SignalFirLane::TransformFastLane`]
+//!   (lowering owned by `crates/transform`); the `*_with_lane` entry points
+//!   keep the parameter for API stability.
 
 // Every public item carries documentation, as in `crates/transform`.
 //

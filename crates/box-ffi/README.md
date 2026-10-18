@@ -18,7 +18,13 @@ signals/source, backed by Rust `boxes::BoxBuilder` and `boxes::match_box`.
   - `CDSPToBoxes` — compile DSP source text to a box graph,
   - `CboxesToSignals` / `CboxesToSignals2` — propagate a box graph to signals,
   - `CcreateSourceFromBoxes` — generate backend source from a box graph.
-- Exposes a thin C++ convenience wrapper (`libfaust-box.h`).
+- Exposes a thin C++ convenience wrapper (`libfaust-box.h`) over a subset of
+  the C API: the constructor family, with the binary-operator overloads
+  spelled `boxAddAux(Box, Box)` etc. where the reference header has
+  `boxAdd(Box, Box)`. Matchers and the pipeline-conversion helpers are used
+  through their C names.
+- Adds two Rust-port constructors, `CboxFad` and `CboxRad`, absent from the
+  reference header.
 - Uses `tree-ffi` for shared tree handles, context-owned C strings,
   null-terminated handle arrays, and common Box/Signal enum definitions
   (`SType`, `SOperator`).
@@ -64,8 +70,9 @@ even right after a `CDSPToBoxes` failure that had some.
 
 ## Source provenance
 
-The exported symbol names and signatures mirror the C++ reference headers
-`architecture/faust/dsp/libfaust-box-c.h` and `libfaust-box.h`.
+The exported C symbol names and signatures mirror the C++ reference header
+`architecture/faust/dsp/libfaust-box-c.h`, plus the additions listed above;
+`libfaust-box.h` covers only the subset described in Scope.
 
 ## Relationship to other crates
 
