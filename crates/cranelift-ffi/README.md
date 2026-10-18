@@ -23,7 +23,7 @@ What is already implemented:
 - executable C ABI
 - factory/instance opaque types
 - owned, reference-counted factory and DSP-instance cache
-- source factory creation through `compiler -> FIR -> codegen::cranelift`
+- source factory creation through `compiler -> FIR -> codegen::backends::cranelift`
 - textual `.clif` (`FAUST_CLIF_V1`) bitcode-family payload with deterministic
   factory rebuild from its source fallback
 - FIR-derived native runtime descriptor for state/UI/meta handling

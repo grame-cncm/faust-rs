@@ -36,7 +36,7 @@ unused_lifetimes = "warn"
 [lints.clippy]
 all = "warn"
 
-# Both binaries are declared explicitly. Without an entry, Cargo auto-discovers
+# All three binaries are declared explicitly. Without an entry, Cargo auto-discovers
 # `src/bin/*.rs` and takes the file stem as the binary name — which is how
 # `impulse_cranelift` ended up underscored while every other tool, and its own
 # clap `name`, used a hyphen. Rust files stay snake_case; the shipped commands

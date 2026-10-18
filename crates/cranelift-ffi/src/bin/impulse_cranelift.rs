@@ -5,7 +5,9 @@
 //! scalar impulse pass (SR 44100, block 64, impulse on frame 0), emitting the
 //! reference `.ir` text format with the same `normalize()` zero-clamp.
 //!
-//! Usage: `impulse-cranelift <file.dsp> [-n <frames>] [-I <dir>]... [-ss <n>]`
+//! Usage: `impulse-cranelift <file.dsp> [-n <frames>] [-I <dir>]...
+//! [--json-output <file>] [--opt-level 0..3] [compile options]`, the compile
+//! options being those of `faust-rs` (`-double`, `-ss <n>`, `-mem0`, ...).
 
 use std::alloc::{Layout, alloc, dealloc};
 use std::collections::HashMap;

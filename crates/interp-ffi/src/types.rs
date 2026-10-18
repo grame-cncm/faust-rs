@@ -570,7 +570,7 @@ unsafe impl Send for InterpreterDspInstance {}
 
 /// Allocates a C string on the Rust heap and returns a raw owning pointer.
 ///
-/// The returned pointer must be freed with [`free_c_string`].
+/// The returned pointer must be freed with [`ffi_common::free_c_string`].
 pub(crate) fn alloc_c_string(s: &str) -> *mut c_char {
     ffi_common::alloc_c_string(s)
 }

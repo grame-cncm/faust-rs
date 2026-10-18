@@ -238,7 +238,7 @@ impl DspStateBuffer {
     /// Returns a typed offset pointer inside the allocated `dsp*` state block.
     ///
     /// The caller is responsible for keeping accesses within bounds dictated by
-    /// the matching [`StructLayoutPlan`](codegen::backends::cranelift::StructLayoutPlan).
+    /// the matching [`StructLayoutPlan`].
     pub(crate) fn ptr_at(&self, offset: usize) -> *mut u8 {
         self.as_mut_ptr().wrapping_add(offset)
     }

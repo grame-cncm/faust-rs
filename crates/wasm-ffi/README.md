@@ -205,7 +205,7 @@ Import precedence:
 | `compile_dsp` | implemented |
 | `getInfos("version")` | implemented |
 | `getInfos("help")` | implemented |
-| `getInfos("libdir"\\|"includedir"\\|"archdir"\\|"dspdir"\\|"pathslist")` | supported; mirrors C++ Faust directory-info queries |
+| `getInfos("libdir"\|"includedir"\|"archdir"\|"dspdir"\|"pathslist")` | supported; mirrors C++ Faust directory-info queries |
 | `expandDSP(...)` | Implemented: the evaluated program is serialized back to Faust source with imports and abstractions inlined (`compiler::expand`); a source already starting with a `compile_options` declaration is returned as C++ `expandDSPFromString` does; failures return an explicit error |
 | `generateAuxFiles(...)` | Implemented for `-cpp`, `-c`, `-wasm`, `-json`, `-svg`, and `-lang asc`; SVG artifacts are generated in memory through `draw::draw_schema_to_memory` |
 

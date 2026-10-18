@@ -178,7 +178,8 @@ The checked vector coverage baseline is
 the sixteen input reports with the compiler diagnostic example, then merge them:
 
 ```bash
-cargo run -p compiler --example count_vector_corpus -- 0 0 --precision=f32 --json > /tmp/vector-f32-lv0-ss0.json
+mkdir -p /tmp/vector-reports
+cargo run -p compiler --example count_vector_corpus -- 0 0 --precision=f32 --json > /tmp/vector-reports/vector-f32-lv0-ss0.json
 # Repeat for both precisions, -lv 0/1, and -ss 0..3.
 cargo run -p xtask -- vector-coverage-merge --reports /tmp/vector-reports
 ```
