@@ -36,6 +36,7 @@
 //!
 //! Unsupported FIR nodes fail with `FRS-CGEN-JULIA-0003`.
 
+use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, quoted_string};
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
@@ -1676,19 +1677,17 @@ fn collect_table_initializers(
 /// important for small constants such as Faust's noise LCG scale, where fixed
 /// decimal truncation is enough to move impulse samples.
 fn trim_float(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-Inf".to_owned()
-        } else {
-            "Inf".to_owned()
-        };
-    }
-    let s = format!("{value:?}");
-    if s == "-0.0" { "0.0".to_owned() } else { s }
+    JULIA_REAL.format(value)
 }
+
+/// Julia spelling of a real literal: `NaN`/`Inf`, `Debug` digits.
+pub(crate) const JULIA_REAL: RealSpelling = RealSpelling {
+    nan: "NaN",
+    pos_inf: "Inf",
+    neg_inf: "-Inf",
+    digits: Digits::Debug,
+    negative_zero: NegativeZero::Normalize,
+};
 
 /// Escapes a Rust string into a Julia double-quoted string literal.
 ///
@@ -1696,23 +1695,7 @@ fn trim_float(value: f64) -> String {
 /// backslashes, and common control characters are normalized while all other
 /// characters are passed through unchanged.
 fn julia_string_literal(input: &str) -> String {
-    let escaped = input
-        .chars()
-        .flat_map(|c| match c {
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            // Deliberate deviation from C++ `flattenJSON`, which leaves `$`
-            // alone: Julia interpolates it inside a double-quoted literal, so an
-            // unescaped `$` in a label or in the embedded JSON produces source
-            // that does not compile.
-            '$' => "\\$".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            _ => vec![c],
-        })
-        .collect::<String>();
-    format!("\"{escaped}\"")
+    quoted_string(input, StringDialect::Julia)
 }
 
 #[cfg(test)]

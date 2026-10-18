@@ -30,6 +30,8 @@
 
 use std::fmt::Write as _;
 
+use super::literals::{Digits, NegativeZero, RealSpelling, StringDialect, quoted_string};
+
 use fir::{AccessType, FirBinOp, FirDependencyKind, FirId, FirMatch, FirStore, FirType, match_fir};
 use std::collections::BTreeSet;
 
@@ -506,22 +508,18 @@ pub(crate) fn emit_type(typ: &FirType, syntax: &CFamilySyntax, quad: &str, fixed
 /// `0.0f` for a constant folded to `-0.0`.
 #[must_use]
 pub(crate) fn trim_float(value: f64) -> String {
-    if value.is_nan() {
-        return "NAN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-INFINITY".to_owned()
-        } else {
-            "INFINITY".to_owned()
-        };
-    }
-    let mut s = format!("{value}");
-    if !s.contains(['.', 'e', 'E']) {
-        s.push_str(".0");
-    }
-    if s == "-0.0" { "0.0".to_owned() } else { s }
+    C_FAMILY_REAL.format(value)
 }
+
+/// The C/C++ spelling of a real literal: `<math.h>`'s `NAN`/`INFINITY`,
+/// shortest digits, folded negative zero written `0.0` (upstream parity).
+pub(crate) const C_FAMILY_REAL: RealSpelling = RealSpelling {
+    nan: "NAN",
+    pos_inf: "INFINITY",
+    neg_inf: "-INFINITY",
+    digits: Digits::Shortest,
+    negative_zero: NegativeZero::Normalize,
+};
 
 /// Formats one single-precision value as a C-family `float` literal
 /// (`{value}f`), delegating special values to [`trim_float`] unsuffixed.
@@ -541,18 +539,7 @@ pub(crate) fn format_float32(value: f64) -> String {
 /// reach the emitter.
 #[must_use]
 pub(crate) fn string_literal(input: &str) -> String {
-    let escaped = input
-        .chars()
-        .flat_map(|c| match c {
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            _ => vec![c],
-        })
-        .collect::<String>();
-    format!("\"{escaped}\"")
+    quoted_string(input, StringDialect::C)
 }
 
 /// Emits `DeclareTable(AccessType::Static)` nodes as static const arrays with

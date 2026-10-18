@@ -31,6 +31,7 @@
 
 pub(crate) mod c_family;
 pub(crate) mod faust_api;
+pub(crate) mod literals;
 pub(crate) mod module_view;
 pub(crate) mod textual;
 

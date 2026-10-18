@@ -34,6 +34,7 @@
 
 pub mod eval;
 
+use crate::backends::literals::{Digits, NegativeZero, RealSpelling};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -1147,37 +1148,23 @@ fn emit_type(typ: &FirType) -> &'static str {
 /// number after the compiler narrows it, but unreadable, and it would drown a
 /// by-eye comparison against the reference in noise.
 fn float_literal(value: f64, options: &CodeboxOptions) -> String {
-    let mut text = if options.double_precision {
-        format_finite(value)
+    if options.double_precision {
+        CODEBOX_REAL.format(value)
     } else {
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "single precision emits f32 literals by definition"
-        )]
-        let narrowed = value as f32;
-        // `f32`'s own Display gives the shortest text that round-trips as f32,
-        // which is why the narrowing has to happen before formatting rather
-        // than after.
-        if narrowed.is_finite() && narrowed == narrowed.trunc() {
-            format!("{narrowed:.1}")
-        } else {
-            format!("{narrowed}")
-        }
-    };
-    if !options.double_precision {
-        text.push('f');
+        format!("{}f", CODEBOX_REAL.format_narrowed(value))
     }
-    text
 }
 
-/// Renders a number with a decimal point, so codebox reads it as a float.
-fn format_finite(value: f64) -> String {
-    if value.is_finite() && value == value.trunc() {
-        format!("{value:.1}")
-    } else {
-        format!("{value}")
-    }
-}
+/// Codebox spelling of a real literal: exact integral digits, negative zero
+/// kept, and no special case for NaN or the infinities (Rust's own `NaN` and
+/// `inf`).
+pub(crate) const CODEBOX_REAL: RealSpelling = RealSpelling {
+    nan: "NaN",
+    pos_inf: "inf",
+    neg_inf: "-inf",
+    digits: Digits::ExactIntegral,
+    negative_zero: NegativeZero::Keep,
+};
 
 /// Stable backend identifier, kept for tooling and report wiring.
 pub const BACKEND_NAME: &str = "codebox";

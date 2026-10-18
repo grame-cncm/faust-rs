@@ -50,6 +50,7 @@
 //! tests cover read-only, writable, waveform, and generated tables at multiple
 //! sizes, plus repeated generation to guard request-local determinism.
 
+use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, quoted_string};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -743,20 +744,7 @@ fn build_label(label: &str) -> String {
 
 /// Quotes a Faust label or metadata value as a Cmajor string literal.
 fn cmajor_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            other => escaped.push(other),
-        }
-    }
-    escaped.push('"');
-    escaped
+    quoted_string(value, StringDialect::C)
 }
 
 /// Emits persistent declarations from one FIR module section.
@@ -1699,38 +1687,23 @@ fn map_math_name(name: &str) -> &str {
 
 /// Formats a real literal in the selected Cmajor precision.
 fn float_literal(value: f64, real_type: CmajorRealType) -> String {
-    if value.is_nan() {
-        return "nan".to_owned();
-    }
-    if value == f64::INFINITY {
-        return "inf".to_owned();
-    }
-    if value == f64::NEG_INFINITY {
-        return "-inf".to_owned();
-    }
     match real_type {
-        CmajorRealType::Float32 => {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "single-precision Cmajor literals intentionally narrow to f32"
-            )]
-            let value = value as f32;
-            let text = if value == value.trunc() {
-                format!("{value:.1}")
-            } else {
-                value.to_string()
-            };
-            format!("{text}f")
+        CmajorRealType::Float32 if value.is_finite() => {
+            format!("{}f", CMAJOR_REAL.format_narrowed(value))
         }
-        CmajorRealType::Float64 => {
-            if value == value.trunc() {
-                format!("{value:.1}")
-            } else {
-                value.to_string()
-            }
-        }
+        CmajorRealType::Float32 | CmajorRealType::Float64 => CMAJOR_REAL.format(value),
     }
 }
+
+/// Cmajor spelling of a real literal: `nan`/`inf`, exact integral digits,
+/// negative zero kept.
+pub(crate) const CMAJOR_REAL: RealSpelling = RealSpelling {
+    nan: "nan",
+    pos_inf: "inf",
+    neg_inf: "-inf",
+    digits: Digits::ExactIntegral,
+    negative_zero: NegativeZero::Keep,
+};
 
 /// Checks the conservative identifier grammar shared by generated names.
 fn validate_identifier(name: &str, kind: &str) -> Result<(), CodegenError> {

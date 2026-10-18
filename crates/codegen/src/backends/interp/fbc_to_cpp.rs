@@ -56,6 +56,7 @@
 //! std::fs::write("my_dsp.h", cpp)?;
 //! ```
 
+use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, escape_string};
 use std::fmt::Write as _;
 
 use super::bytecode::{
@@ -844,38 +845,34 @@ fn tab(n: usize) -> String {
 /// Formats a real-typed literal for C++ with appropriate suffix.
 fn fmt_real_lit<R: FbcReal>(val: R, real_ctype: &str) -> String {
     let v64 = val.to_f64();
-    if v64.is_nan() {
-        if real_ctype == "float" {
-            "std::numeric_limits<float>::quiet_NaN()".to_owned()
+    if real_ctype == "float" {
+        if v64.is_finite() {
+            format!("{}f", FBC_FLOAT.format_narrowed(v64))
         } else {
-            "std::numeric_limits<double>::quiet_NaN()".to_owned()
-        }
-    } else if v64.is_infinite() {
-        let sign = if v64 > 0.0 { "" } else { "-" };
-        if real_ctype == "float" {
-            format!("{sign}std::numeric_limits<float>::infinity()")
-        } else {
-            format!("{sign}std::numeric_limits<double>::infinity()")
-        }
-    } else if real_ctype == "float" {
-        // Use Rust's roundtrip display for f32 (adds enough digits), then
-        // ensure a decimal point is present so the compiler never interprets
-        // e.g. `0f` as an invalid octal constant or `1f` as an integer suffix.
-        let s = format!("{val}");
-        if s.contains('.') || s.contains('e') || s.contains('E') {
-            format!("{s}f")
-        } else {
-            format!("{s}.0f")
+            FBC_FLOAT.format(v64)
         }
     } else {
-        let s = format!("{val}");
-        if s.contains('.') || s.contains('e') || s.contains('E') {
-            s
-        } else {
-            format!("{s}.0")
-        }
+        FBC_DOUBLE.format(v64)
     }
 }
+
+/// C++ `<limits>` spelling of a single-precision real literal.
+const FBC_FLOAT: RealSpelling = RealSpelling {
+    nan: "std::numeric_limits<float>::quiet_NaN()",
+    pos_inf: "std::numeric_limits<float>::infinity()",
+    neg_inf: "-std::numeric_limits<float>::infinity()",
+    digits: Digits::Shortest,
+    negative_zero: NegativeZero::Keep,
+};
+
+/// C++ `<limits>` spelling of a double-precision real literal.
+const FBC_DOUBLE: RealSpelling = RealSpelling {
+    nan: "std::numeric_limits<double>::quiet_NaN()",
+    pos_inf: "std::numeric_limits<double>::infinity()",
+    neg_inf: "-std::numeric_limits<double>::infinity()",
+    digits: Digits::Shortest,
+    negative_zero: NegativeZero::Keep,
+};
 
 /// Sanitizes a name into a valid C++ identifier.
 ///
@@ -898,18 +895,7 @@ fn sanitize_cpp_ident(name: &str) -> String {
 
 /// Escapes a string for use in C++ string literals.
 fn escape_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(ch),
-        }
-    }
-    out
+    escape_string(s, StringDialect::C)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

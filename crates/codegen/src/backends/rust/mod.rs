@@ -44,6 +44,7 @@
 //!
 //! Unsupported FIR nodes fail with `FRS-CGEN-RUST-0003`.
 
+use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, quoted_string};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -2753,19 +2754,17 @@ fn real_literal(value: f64, ty: &str) -> String {
 /// important for small constants such as Faust's noise LCG scale, where fixed
 /// decimal truncation is enough to move impulse samples.
 fn trim_float(value: f64) -> String {
-    if value.is_nan() {
-        return "f64::NAN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "f64::NEG_INFINITY".to_owned()
-        } else {
-            "f64::INFINITY".to_owned()
-        };
-    }
-    let s = format!("{value:?}");
-    if s == "-0.0" { "0.0".to_owned() } else { s }
+    RUST_REAL.format(value)
 }
+
+/// Rust spelling of an unsuffixed real literal: `Debug` digits.
+pub(crate) const RUST_REAL: RealSpelling = RealSpelling {
+    nan: "f64::NAN",
+    pos_inf: "f64::INFINITY",
+    neg_inf: "f64::NEG_INFINITY",
+    digits: Digits::Debug,
+    negative_zero: NegativeZero::Normalize,
+};
 
 /// Escapes a string into a Rust double-quoted string literal.
 ///
@@ -2773,18 +2772,7 @@ fn trim_float(value: f64) -> String {
 /// backslashes, and common control characters are normalized while all other
 /// characters are passed through unchanged.
 fn rust_string_literal(input: &str) -> String {
-    let escaped = input
-        .chars()
-        .flat_map(|c| match c {
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            _ => vec![c],
-        })
-        .collect::<String>();
-    format!("\"{escaped}\"")
+    quoted_string(input, StringDialect::C)
 }
 
 #[cfg(test)]

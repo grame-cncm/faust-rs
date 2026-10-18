@@ -395,19 +395,7 @@ fn apply_short_names(
 /// This intentionally only covers the characters needed by the Faust JSON
 /// payloads generated here; it is not exposed as a general-purpose serializer.
 pub fn escape_json_string(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+    crate::backends::literals::escape_string(input, crate::backends::literals::StringDialect::Json)
 }
 
 /// Merge compiler-supplied top-level metadata with metadata reconstructed from

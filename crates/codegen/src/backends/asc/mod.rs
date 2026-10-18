@@ -24,6 +24,7 @@
 //! Scalar code path only. Unsupported FIR nodes fail fast with
 //! `FRS-CGEN-ASC-0003`.
 
+use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, escape_string};
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
@@ -1510,18 +1511,7 @@ fn emit_static_tables(
 /// Escapes arbitrary text for embedding inside an AssemblyScript double-quoted
 /// string literal (used by the `getJSON()` snapshot).
 fn escape_as_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 16);
-    for ch in value.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            other => out.push(other),
-        }
-    }
-    out
+    escape_string(value, StringDialect::C)
 }
 
 /// Formats one `f64` as an AssemblyScript floating literal.
@@ -1536,26 +1526,17 @@ fn escape_as_string(value: &str) -> String {
 /// special-value spellings genuinely differ (C `NAN`/`INFINITY` macros vs
 /// AssemblyScript globals).
 fn trim_float(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-Infinity".to_owned()
-        } else {
-            "Infinity".to_owned()
-        };
-    }
-    let mut text = format!("{value}");
-    if !text.contains(['.', 'e', 'E']) {
-        text.push_str(".0");
-    }
-    if text == "-0.0" {
-        "0.0".to_owned()
-    } else {
-        text
-    }
+    ASC_REAL.format(value)
 }
+
+/// AssemblyScript spelling of a real literal: the `NaN`/`Infinity` globals.
+pub(crate) const ASC_REAL: RealSpelling = RealSpelling {
+    nan: "NaN",
+    pos_inf: "Infinity",
+    neg_inf: "-Infinity",
+    digits: Digits::Shortest,
+    negative_zero: NegativeZero::Normalize,
+};
 
 /// Renders a comma-joined `[...]` AssemblyScript array literal.
 fn format_array(values: impl Iterator<Item = String>) -> String {
