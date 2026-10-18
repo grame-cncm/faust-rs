@@ -2,8 +2,8 @@
 //!
 //! Each public function evaluates the label and parameters of one Faust widget
 //! constructor node and rebuilds it with the evaluated values, mirroring the
-//! C++ `evalBoxWidget(...)` / `evalBoxGroup(...)` family in
-//! `compiler/evaluate/eval.cpp`.
+//! widget and group branches (`isBoxVSlider`, `isBoxHGroup`, …) of C++
+//! `realeval(...)` in `compiler/evaluate/eval.cpp`.
 //!
 //! Slider-like widgets (`vslider`, `hslider`, `numentry`) share a common
 //! `eval_slider_like` helper that validates the four numeric parameters

@@ -2,7 +2,7 @@
 //!
 //! # Source provenance (C++)
 //! - `compiler/propagate/propagate.cpp`
-//! - `compiler/transform/sigtyperules.hh`
+//! - `compiler/signals/sigtyperules.hh`
 //! - `compiler/signals/signals.cpp`
 //!
 //! # Scope

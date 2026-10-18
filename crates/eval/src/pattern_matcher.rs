@@ -42,7 +42,7 @@
 //!    **Nonlinearity** (same variable matched against two different values) nulls out
 //!    `env_out[r]`.
 //! 3. Returns `(new_state, Some(rhs))` when the automaton reaches a **final state** (all
-//!    patterns consumed), or `(new_state, None)` for an intermediate state, or `(-1, None)`
+//!    patterns consumed), or `(new_state, None)` for an intermediate state, or `(None, None)`
 //!    on failure.
 //!
 //! After the last argument is processed, the caller picks the **first rule** whose

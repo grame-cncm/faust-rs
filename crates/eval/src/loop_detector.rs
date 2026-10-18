@@ -21,26 +21,26 @@ use crate::error::{DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalE
 /// 2. **Depth exceeded**: the call stack grows beyond `max_depth`, indicating runaway recursion
 ///    in deeply nested but non-cyclic programs.
 ///
-/// # C++ correspondence — `loopDetector.hh`
+/// # C++ correspondence — `loopDetector.hh` / `loopDetector.cpp` (adapted)
 ///
-/// The C++ `LoopDetector` uses a `set<Tree>` to track in-flight nodes plus a recursion depth
-/// counter. The Rust version uses a `Vec<TreeId>` for the call stack:
+/// The C++ `loopDetector` is a sliding window: `detect(cons(exp, env))` (`eval.cpp`) writes
+/// each evaluated `(expression, environment)` pair into a 1024-entry ring buffer and, every 400
+/// steps, reports a cycle if the current pair already occurs in the window
+/// (`gLoopDetector(1024, 400)` in `global.cpp`). Runaway depth is caught separately by
+/// `stackOverflowDetector`, which measures the native stack.
 ///
-/// | Aspect | C++ (`LoopDetector`) | Rust (`LoopDetector`) |
+/// The Rust version keeps an exact stack of in-flight frames instead:
+///
+/// | Aspect | C++ | Rust (`LoopDetector`) |
 /// |---|---|---|
-/// | In-flight tracking | `set<Tree>` — O(log n) per check | `Vec<TreeId>` linear scan — O(n) per check |
-/// | Depth counter | Separate `int` field | `call_stack.len()` |
-/// | Check cost | O(log depth) tree-pointer comparison | O(depth) u32 comparison — cache-friendly |
-///
-/// For evaluation stacks typical of Faust programs (depth < 100), the Rust O(n) scan over a
-/// compact vector is expected to be competitive with, and often faster than, the C++ O(log n)
-/// set probe because the stack stays shallow and contiguous. The tree/set approach becomes more
-/// attractive only when recursion depth grows far beyond the intended Faust range.
+/// | Cycle tracking | ring buffer of recent `cons(exp, env)` trees, checked periodically | `Vec<LoopFrame>` of in-flight `(node or symbol, environment)` frames, linear scan on every entry |
+/// | Depth limit | `stackOverflowDetector` (native stack size) | `call_stack.len()` against `max_depth`, plus structural and nesting budgets |
 ///
 /// # Performance
-/// - `enter`: O(depth) scan — the entire call stack fits in L1 cache for depth < 256.
+/// - `enter`: O(depth) scan of the call stack.
 /// - `leave`: O(1) — `Vec::pop`.
-/// - Memory: 8 bytes per frame (one `u32` TreeId, padded).
+/// - Memory: one `LoopFrame` (a node or symbol id plus an environment frame key) and one
+///   `SymId` per frame.
 ///
 /// # Evaluation-phase caches
 ///

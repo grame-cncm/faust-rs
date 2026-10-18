@@ -53,8 +53,8 @@
 //! ```text
 //! outputs = body_outputs × (1 + seed_outputs)
 //! ```
-//! This matches the C++ `getBoxType` logic (`compiler/boxes/boxtype.cpp:371`)
-//! for the single-seed case.
+//! `fad` is a faust-rs extension: the pinned C++ `getBoxType`
+//! (`compiler/boxes/boxtype.cpp`) has no rule for it.
 //!
 //! Under the explicit-seed model, `[autodiff:false]` metadata is parsed but
 //! does not gate differentiation; the seed list alone decides which signals

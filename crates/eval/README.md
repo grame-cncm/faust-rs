@@ -47,20 +47,17 @@ evaluated box tree ready for `propagate`.
 | `EvalStats` | Environment, lookup, node-visit, loop-depth, and definition-name statistics |
 | `Environment` | Lexical environment (name → `TreeId`) |
 | `EvalSourceContext` | Source-location tracking context passed to evaluator |
-| `LoopDetector` | Per-symbol expansion depth guard (mirrors C++ `loopDetector`) |
+| `LoopDetector` | Cycle and depth guard (adapted from C++ `loopDetector` + `stackOverflowDetector`) |
 | `SamplePrecision` | `Float32` / `Float64` precision selector |
 | `SymId` | Interned symbol identifier |
 | `EnvId` | Environment frame identifier |
 
 ### Pattern matcher
 
-| Item | Description |
-|---|---|
-| `make_pattern_matcher(rules)` | Build a deterministic automaton from a list of case-rules |
-| `apply_pattern_matcher(matcher, args, env)` | Run the automaton against argument list; returns matched body or `None` |
-| `Rule` | A single `(patterns, body)` case-rule |
-| `Automaton` | Compiled deterministic pattern-matching automaton |
-| `State`, `Trans`, `TransKind` | Automaton internals (states and transitions) |
+The case-rule automaton (`make_pattern_matcher`, `apply_pattern_matcher`,
+`Automaton`, `State`, `Trans`, `Rule`) lives in the private
+`pattern_matcher` module: a port of `compiler/patternmatcher/patternmatcher.cpp`
+merged into `eval`. It is not part of the public API.
 
 ### Utilities
 
@@ -71,7 +68,9 @@ evaluated box tree ready for `propagate`.
 ## Parity notes
 
 - Non-closure partial application follows C++ `applyList` semantics (implicit wire insertion).
-- Loop detection mirrors C++ `loopDetector` (per-symbol expansion depth guard).
+- Loop detection is adapted from C++ `loopDetector` (a periodically checked window of recent
+  evaluations) into an exact stack of in-flight `(node or symbol, environment)` frames with
+  depth budgets.
 
 ## Position in the pipeline
 

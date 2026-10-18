@@ -15,12 +15,13 @@ use crate::context_id::{SlotEnv, UiPathContext};
 /// propagated DSP signals plus canonical grouped UI ownership.
 ///
 /// AD parity note:
-/// - when `box_tree` is `fad(expr)`, the returned `signals` list is expanded to
-///   `primal outputs + one tangent bundle per enabled control`,
-/// - enabled controls come from the canonical UI registry and honor
-///   `[autodiff:false]`,
-/// - `rad(expr)` returns [`PropagateError::RadUnsupportedNode`] for unsupported
-///   signal shapes.
+/// - `fad(expr, seeds)` expands each primal output into the primal followed
+///   by one tangent per seed output; the seed list alone decides what is
+///   differentiated (`[autodiff:false]` metadata is not consulted),
+/// - `rad(expr, seeds)` returns the primals followed by one gradient per seed
+///   output; temporal and recursive bodies go through the `BlockReverseAD`
+///   carrier, and other unsupported signal shapes return
+///   [`PropagateError::RadUnsupportedNode`].
 ///
 /// Grouped-UI construction is configured by `ui_options`;
 /// [`PropagateUiOptions::default`] is the ordinary choice.

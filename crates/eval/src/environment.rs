@@ -201,7 +201,7 @@ pub(crate) struct EnvStore {
 /// | Scope push | `pushNewLayer(lenv)` — allocates a unique tree node | `push_scope()` — allocate one arena layer and return its `EnvId` handle |
 /// | Redefinition | `addLayerDef` throws `faustexception` on conflicting rebind | `bind_definitions` returns `EvalError::RedefinedSymbol` |
 /// | Barrier | `pushEnvBarrier` / `isEnvBarrier` — stops pattern-matcher lookup | `push_barrier_scope()` / `lookup_until_barrier()` |
-/// | Env copy/rewire | `copyEnvReplaceDefs` + `updateClosures` — for captured-env rewrites | Deferred in the current Rust model |
+/// | Env copy/rewire | `copyEnvReplaceDefs` + `updateClosures` — for captured-env rewrites | `copy_env_replace_defs` + `rewrite_captured_env` (`definitions.rs`) |
 /// | Profiling | `gGlobal->gStats.fEnvLayersPushed/fEnvLookups/fEnvLookupTotalDepth` | [`EvalStats`](crate::EvalStats) returned by [`eval`](crate::eval) |
 ///
 /// # Performance

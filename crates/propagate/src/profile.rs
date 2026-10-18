@@ -1,8 +1,10 @@
 //! Opt-in attribution for Box-to-Signal propagation cost.
 //!
-//! C++ parity source: `compiler/propagate/propagate.cpp` and its
-//! `FAUST_PROPAGATE_PROFILE` table. The profiler is deliberately dormant unless
-//! that environment variable is present. Normal compiler runs therefore keep
+//! Rust-only profiler, enabled by the `FAUST_PROPAGATE_PROFILE` environment
+//! variable; the comparable C++ counters are `gStats.fPropagateCalls` /
+//! `fPropagateCacheMisses` (`FAUST_STATS_DO` in
+//! `compiler/propagate/propagate.cpp`). The profiler is deliberately dormant
+//! unless that environment variable is present. Normal compiler runs therefore keep
 //! no counters and take no clocks; profiled runs print comparable per-Box-kind
 //! call counts plus Rust-specific slot, result-bus, lifting, and provenance
 //! measurements.

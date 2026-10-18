@@ -29,9 +29,9 @@ pub fn make_sig_input_list(arena: &mut TreeArena, n: usize) -> Vec<SigId> {
 /// - `fad(expr, seed)` reports **expanded** output arity:
 ///   `outputs = body_outputs * (1 + seed_outputs)` — one primal plus one
 ///   tangent per seed output. Single-output seed (`seed_outputs = 1`) is the
-///   common case and matches the C++ `getBoxType` behavior
-///   (`boxtype.cpp:371`). Multi-output seeds bundle several independent
-///   differentiation variables through a single `fad` node.
+///   common case (`fad` is a faust-rs extension; C++ `getBoxType` has no rule
+///   for it). Multi-output seeds bundle several independent differentiation
+///   variables through a single `fad` node.
 /// - `rad(expr, seeds)` reports `outputs = body_outputs + seed_outputs`:
 ///   primals first, then one gradient lane per seed output.
 pub fn box_arity_typed(

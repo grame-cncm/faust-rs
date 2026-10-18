@@ -9,7 +9,7 @@
 //! | `Environment` | `compiler/evaluate/environment.hh/.cpp` |
 //! | `LoopDetector` | `compiler/evaluate/loopDetector.hh` |
 //! | `EvalStats` | `gGlobal->gStats` fields (`fEnvLayersPushed`, `fEnvLookups`, …) |
-//! | `eval_process` | `compiler/evaluate/eval.cpp` — `eval()` entry point |
+//! | `eval_process` | `compiler/evaluate/eval.cpp` — `evalprocess()` entry point |
 //! | `eval_box` | `compiler/evaluate/eval.cpp` — `eval()` recursive dispatch |
 //! | `bind_definitions` | `pushMultiClosureDefs()` in `environment.cpp` |
 //! | `apply_list` | `applyList()` in `eval.cpp` |
@@ -116,7 +116,7 @@
 //! | **Lookup (found at depth d)** | Walk d layers, `getProperty` hash probe per layer | O(d) hash probes | Reverse `u32` scan per layer O(n_local), recurse O(d) | O(d × n_local) — O(1) per compare |
 //! | **Value size per binding** | `Tree*` pointer to closure node (~64 bytes closure) | Large | `SymId + EvalValue` in one arena layer | Moderate, but explicit and cache-friendly |
 //! | **Cache locality** | Pointer-chased linked list through hash-cons pool | Poor (pointer indirection) | Contiguous `Vec<(SymId, EvalValue)>` per layer | Good |
-//! | **Concurrency** | Global `gGlobal` state, not thread-safe | N/A | Fully `Send`/`Sync`, no global state | Thread-safe |
+//! | **Concurrency** | Global `gGlobal` state, not thread-safe | N/A | No global state; evaluator values use `Rc`/`RefCell` and are not `Send` | One evaluation per thread |
 //!
 //! **In practice**: for typical Faust programs (< 200 top-level definitions, scope depth ≤ 5,
 //! ≤ 30 bindings per scope), the Rust reverse scan over one compact per-layer vector is expected
@@ -264,18 +264,20 @@ pub type EnvId = usize;
 ///
 /// # C++ correspondence
 ///
-/// Corresponds to the `eval()` entry point in `compiler/evaluate/eval.cpp`:
+/// Corresponds to the `evalprocess()` entry point in `compiler/evaluate/eval.cpp`:
 /// ```cpp
 /// // eval.cpp (simplified)
-/// Tree eval(Tree ldef, int& numInputs, int& numOutputs) {
-///     gGlobal->gCurrentEnv = pushMultiClosureDefs(ldef, gGlobal->nil, gGlobal->nil);
-///     initRecursion();
-///     return eval(closure(boxIdent("process"), …, gGlobal->gCurrentEnv), 0, 0);
+/// Tree evalprocess(Tree eqlist) {
+///     gGlobal->gStackOverflowDetector = stackOverflowDetector(MAX_STACK_SIZE);
+///     Tree b = a2sb(eval(boxIdent(gGlobal->gProcessName.c_str()), gGlobal->nil,
+///                        pushMultiClosureDefs(eqlist, gGlobal->nil, gGlobal->nil)));
+///     if (gGlobal->gSimplifyDiagrams) b = boxSimplification(b);
+///     return b;
 /// }
 /// ```
 ///
 /// Key differences from C++:
-/// - No global mutable state (`gCurrentEnv`, `gGlobal`) — all state is local.
+/// - No global mutable state (`gGlobal`) — all state is local.
 /// - Returns `Result<TreeId, EvalError>` instead of throwing `faustexception`.
 /// - Redefinition errors are caught via `bind_definitions` instead of propagating globally.
 ///

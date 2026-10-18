@@ -9,37 +9,6 @@ use tlib::TreeId;
 
 use crate::suggestions::{SymbolSuggestion, rank_similar_names};
 
-/// Performance statistics collected during evaluation.
-///
-/// Returned by [`eval`](crate::eval) alongside the evaluated box tree.
-/// Provides the same information as the C++ `gGlobal->gStats` fields used for profiling
-/// the evaluator, but without global mutable state — stats are accumulated locally and
-/// returned by value.
-///
-/// # C++ correspondence
-///
-/// | Rust field | C++ equivalent | C++ location |
-/// |---|---|---|
-/// | `env_layers_pushed` | `gStats.fEnvLayersPushed` | `environment.cpp` — `pushNewLayer` |
-/// | `env_lookups` | `gStats.fEnvLookups` | `environment.cpp` — `searchIdDef` |
-/// | `env_lookup_total_depth` | `gStats.fEnvLookupTotalDepth` | `environment.cpp` — `searchIdDef` loop |
-/// | `loop_detector_max_depth` | (no direct equivalent — C++ uses `gGlobal->gRecursionLimit`) | |
-/// | `nodes_evaluated` | (not tracked in C++) | |
-///
-/// # Interpretation
-///
-/// These ratios describe the intended interpretation once all counters are wired:
-///
-/// - **`env_lookups / nodes_evaluated`**: average lookups per evaluated node. High values (> 3)
-///   indicate deeply bound symbols that might benefit from flattening or interning.
-/// - **`env_lookup_total_depth / env_lookups`**: average scope depth traversed per lookup.
-///   Values > 3 indicate deep scope chains where caching may help.
-/// - **`env_layers_pushed / nodes_evaluated`**: scope-push frequency. High values for iterative
-///   forms (`ipar`/`iseq`) are expected.
-///
-/// As of the current port, instrumentation is still incremental: the field meanings are stable,
-/// but not every evaluator path updates every counter yet. Consumers should therefore treat these
-/// values as progressively improving telemetry, not as a fully complete profiling contract.
 /// A non-fatal finding of the evaluator.
 ///
 /// The compiler reports these under its semantic-warnings option, the class
@@ -60,24 +29,46 @@ pub enum EvalWarning {
     },
 }
 
+/// Statistics collected during evaluation.
+///
+/// Returned by [`eval`](crate::eval) alongside the evaluated box tree, without
+/// global mutable state. The fields mirror the C++ `gGlobal->gStats` evaluator
+/// counters, but only part of them is populated today: `env_layers_pushed` and
+/// `env_lookups` count the root scope and the entry-point lookup only (each is
+/// 1 after a successful run), `env_lookup_total_depth` and `nodes_evaluated` are
+/// never written (always 0), and `loop_detector_max_depth` holds the
+/// loop-detector stack length once evaluation has returned, not a running
+/// maximum.
+///
+/// # C++ correspondence
+///
+/// | Rust field | C++ equivalent | C++ location |
+/// |---|---|---|
+/// | `env_layers_pushed` | `gStats.fEnvLayersPushed` | `environment.cpp` — `pushNewLayer` |
+/// | `env_lookups` | `gStats.fEnvLookups` | `environment.cpp` — `searchIdDef` |
+/// | `env_lookup_total_depth` | `gStats.fEnvLookupTotalDepth` | `environment.cpp` — `searchIdDef` loop |
+/// | `loop_detector_max_depth` | (no C++ equivalent) | |
+/// | `nodes_evaluated` | (not tracked in C++) | |
 #[derive(Clone, Debug, Default)]
-/// Lightweight evaluator statistics returned by opt-in entry points.
 pub struct EvalStats {
     /// Non-fatal findings collected during the evaluation, in order.
     pub warnings: Vec<EvalWarning>,
-    /// Number of child scopes created via `push_scope()`.
+    /// Environment layers pushed. Only the root scope is counted today, so
+    /// this is 1 after a successful run.
     /// C++ equivalent: `gStats.fEnvLayersPushed`.
     pub env_layers_pushed: u64,
-    /// Number of symbol lookups performed across all scopes.
+    /// Symbol lookups. Only the entry-point lookup is counted today, so this
+    /// is 1 after a successful run.
     /// C++ equivalent: `gStats.fEnvLookups`.
     pub env_lookups: u64,
-    /// Total scope depth traversed across all lookups (sum of per-lookup depths).
-    /// Dividing by `env_lookups` gives the average lookup depth.
+    /// Intended as the total scope depth traversed across all lookups; not
+    /// populated (always 0).
     /// C++ equivalent: `gStats.fEnvLookupTotalDepth`.
     pub env_lookup_total_depth: u64,
-    /// Maximum loop-detector stack depth reached during evaluation.
+    /// Loop-detector call-stack length once evaluation has returned (not the
+    /// maximum depth reached during evaluation).
     pub loop_detector_max_depth: usize,
-    /// Total number of box nodes visited by `eval_box`.
+    /// Intended as the number of box nodes evaluated; not populated (always 0).
     pub nodes_evaluated: u64,
     /// Definition-name map: evaluated `BoxId` → source definition name.
     ///

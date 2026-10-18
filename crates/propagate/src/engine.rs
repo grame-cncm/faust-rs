@@ -328,7 +328,7 @@ fn propagate_inner(
                 // carries the gate's rate into the value (so a constant X
                 // gated by a control is not hoisted to init time) and gives
                 // X*Y for a gate other than 0/1; the type rules keep
-                // `Control(x, _) = x`, as C++ `sigattributes.cpp`.
+                // `Control(x, _) = x`, as C++ `sigtyperules.cpp` (`isSigControl`).
                 BoxMatch::Enable => binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
                     let prod = b.mul(x, y);
                     let zero = b.real(0.0);
