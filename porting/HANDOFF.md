@@ -13,7 +13,7 @@ Date: 2026-10-18
 Commits since `main-dev` (oldest first):
 
 - `2c91ac52` — the analysis.
-- 33 code commits, `43b650f1` … `6c481627`; the list and the outcome are in
+- 32 code commits, `43b650f1` … `6c481627`; the list and the outcome are in
   `porting/codegen-factorization-analysis-2026-10-18-en.md` §9.
 - `f459ec95` — the outcome, registry, journal and handoff.
 - The §9.5 follow-up, done at the user's request:

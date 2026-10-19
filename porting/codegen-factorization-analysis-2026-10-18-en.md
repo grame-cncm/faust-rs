@@ -6,8 +6,10 @@ The seven textual backends hold about 14.9 k source lines (c 1,831, cpp 2,092,
 `c_family` 1,182, rust 2,948, julia 1,889, cmajor 1,861, asc 1,715, codebox
 1,257, `textual` 146). The three machine backends hold about 23 k non-test lines
 (interp 13.7 k, cranelift 5.2 k, wasm 4.0 k).
-**Status:** **implemented 2026-10-18** on branch `codegen-factorization`;
-the outcome, with what was built, what was rejected on reading the code and
+**Status:** **implemented 2026-10-18** on branch `codegen-factorization`,
+fast-forwarded into `main-dev` on 2026-10-19 (`e4cdb246`). The
+[summary of the work](#summary-of-the-work-done) comes first; the detailed
+outcome, with what was built, what was rejected on reading the code and
 why, is [§9](#9-outcome-2026-10-18). §0–§8 are the analysis as written
 before the work, kept as the record of what was proposed. It proposed four
 restructurings (R1–R4) and four quick wins (Q1–Q4), each landing on its own
@@ -29,6 +31,110 @@ writing this document) or **S** (taken from a survey reading, not re-checked).
 (format reference).
 
 ---
+
+## Summary of the work done
+
+**Where it is.** 37 commits on `main-dev`, from `d4f3f6a5` to `e4cdb246`,
+history linear and not pushed:
+- the analysis;
+- 34 code commits, each compiling and tested on its own;
+- two documentation commits (journal, difference registry, handoff).
+
+**Factored without changing the output.** The codegen-identity
+differential compared 632 `.dsp` × 23 backend configurations against the
+base binary after every move, with 0 differing outputs.
+- **`backends/module_view.rs` (R1).** The FIR module view and its decode,
+  the function and variable lookups, the module-shape diagnostics, the
+  function collectors, the sub-module views, and the flatten/schedule/
+  survivor preamble of the JIT backends. Seven `decode_module` copies, six
+  `find_function_body` and five `block_declares_var` became one each.
+- **`backends/literals.rs` (R2).**
+  - Real and string literals: one `RealSpelling` descriptor per backend
+    replaces seven formatters, and three string dialects replace seven
+    escapers. Old and new agree on 600,035 values.
+  - The generated-file banner.
+- **Operators (R2).** One C operator table (`textual::c_like_token`), plus
+  `FirBinOp::is_comparison` and `FirMathOp::arity` in `fir`.
+- **`backends/table_bytes.rs` (R4).** One static-table encoder for
+  cranelift and wasm. Also: the wasm import walk on `fir_match_children`,
+  and one host-type conversion for cranelift and the interpreter.
+- **Smaller sharing (Q1–Q4).** One error bridge that forwards the FIR node
+  to the diagnostic for every backend; one `RealPrecision` enum; shared test
+  builders; the c/cpp `-mem0` helpers moved into `c_family`.
+
+**Bugs fixed, live today.** Each has a test that fails without the fix.
+- **JSON addresses.** A widget `address` in the JSON (wasm, `-json`,
+  cranelift-ffi) kept raw labels where upstream's `PathBuilder` replaces
+  spaces, `/`, parentheses and so on. Web hosts address parameters by that
+  path. The corrected short names now match upstream too.
+- **codebox `min`/`max`.** codebox emitted `fmin`/`fmax`, which it does not
+  have, in nearly every program (`ma.SR` clamps with them).
+- **Foreign variables.** A foreign variable was declared as a zero-initialized
+  struct field in rust, julia and asc.
+- **Rust infinity.** A Rust infinite literal was spelled `f64::INFINITYf32`,
+  which is not valid Rust.
+- **Rust `metadata()`.** It was an empty stub. It now reports the
+  compilation metadata through new `metadata_*` fields on `RustOptions` and
+  `CmajorOptions`.
+- **CLI `-lang rust`.** It named sub-modules and tables after the file
+  instead of the class, unlike the facade and upstream.
+- **Interpreter `Maxf`/`Minf`.** The interpreter folded them differently
+  from how it executes them when an operand is NaN.
+
+**Bugs fixed, latent.** These are reachable only through FIR the production
+lowering does not originate today, or through the box/signal API:
+- nodes accepted and dropped silently (asc, codebox);
+- a `Switch` condition re-evaluated per case (julia, cmajor, wasm, interp);
+- a lifecycle prototype that suppressed its stub (cpp, asc);
+- wasm imports missed under `WhileLoop`, or shadowed across two precisions;
+- `FaustFloat` tables written 4 bytes wide under `-double`;
+- `>>>` emitted as an arithmetic shift;
+- a metadata `declare` with a zone, which does not compile in c/cpp;
+- Rust integer negation panicking in debug builds;
+- an unknown UI zone bound to parameter 0;
+- sub-modules surviving flattening (julia, codebox).
+
+**Made consistent.**
+- `tests/textual_backend_contract.rs` checks one contract on all seven
+  textual backends: every FIR statement is emitted or refused, `Switch` is
+  evaluated once, a foreign variable is not state, a prototype changes
+  nothing, a metadata `declare` has no zone.
+- The module-shape diagnostics read the same everywhere and carry their FIR
+  node.
+- The c, cpp, rust and cmajor banners copy upstream's five metadata keys,
+  identical to the reference over the 133 impulse-test programs.
+
+**Not done, and why** (details in §9.3).
+- An error-code macro: the text-based public-API baseline cannot see
+  macro-generated items.
+- A shared statement-walker trait: every arm is the target's own syntax.
+- Merging cranelift's layout into `memory_layout`: the two compute different
+  things.
+- A shared scalar-math module.
+
+Still open, listed in §9.5:
+- codebox NaN/∞ spelling;
+- `fbc_to_cpp`;
+- the interpreter's name heuristics;
+- the six UI tree walkers;
+- the stale CLI transcripts.
+
+**Size.**
+- `crates/codegen/src`: −924 lines (2,435 added, 3,359 removed).
+- The seven textual `mod.rs` files: 16,428 → 15,321 lines; asc, cmajor and
+  julia drop under the 2,000-line structure threshold.
+- A 537-line contract test is added.
+
+The gain is in single sources of truth and in consistency more than in
+volume. Most of each backend is still its own statement walker.
+
+**Validation on the final tree.**
+- Workspace tests (`--no-fail-fast`): 0 failures.
+- clippy `-D warnings`: clean.
+- The five structure gates: OK.
+- `golden-check`: 292 OK.
+- Impulse harness from clean: all nine lanes pass.
+- Compile-budget A/B against the base binary: no case moved.
 
 ## 0. Summary
 
@@ -497,9 +603,9 @@ Every step of R1–R4 and Q1, Q3 and Q4 must show **no change in emitted output*
 
 ## 9. Outcome (2026-10-18)
 
-Implemented on branch `codegen-factorization`: 33 code commits on top of
+Implemented on branch `codegen-factorization`: 32 code commits on top of
 the analysis (`2c91ac52`, itself on `d4f3f6a5`), each compiling and tested
-on its own. Net effect on
+on its own, then two more for the §9.5 metadata follow-up (§9.2). Net effect on
 `crates/codegen/src`: −1,049 lines (2,310 added, 3,359 removed, test code
 included); the seven textual backends' `mod.rs` shrink from 16,428 to 15,250 lines.
 Another 500 lines are a new shared contract test,
