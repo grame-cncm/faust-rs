@@ -530,8 +530,8 @@ pub use flat::{FlatBoxBuildError, FlatBoxId, try_build_flat_box};
 
 pub(crate) use arity::box_arity_wiring;
 pub(crate) use engine::{
-    PropagateContext, PropagateMemo, ffunction_arity, list_length, merge_compatible,
-    propagate_in_slot_env, split_compatible, usize_from_int_node,
+    ControlIdSource, PropagateContext, PropagateMemo, ffunction_arity, list_length,
+    merge_compatible, propagate_in_slot_env, split_compatible, usize_from_int_node,
 };
 pub(crate) use flat::{
     FlatNodeKind, RecFadMode, contains_forward_ad, count_fad_nodes, flat_node_kind, free_slots,

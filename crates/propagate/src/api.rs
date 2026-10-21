@@ -77,7 +77,7 @@ fn propagate_typed_with_origins_policy(
     let mut clock_domains = ClockDomainTable::new();
     let mut ctx = PropagateContext {
         cache,
-        control_ids: &ui.control_ids,
+        control_ids: ControlIdSource::Ui(&ui.control_ids),
         slot_env: &mut slot_env,
         memo: &mut memo,
         clock_domains: &mut clock_domains,
@@ -87,7 +87,6 @@ fn propagate_typed_with_origins_policy(
         pending_fad_seeds: Vec::new(),
         ui_path: UiPathContext::new(),
         signal_origins: &mut signal_origins,
-        fold: false,
     };
     let signals = propagate_in_slot_env(arena, box_tree, inputs, &mut ctx);
     ctx.memo.profile.print();
@@ -149,6 +148,8 @@ pub struct FoldSession {
     ui_path: UiPathContext,
     clock_domains: ClockDomainTable,
     validated: ahash::AHashSet<FlatBoxId>,
+    /// The placeholder control id of each widget met by the session's folds
+    /// (see [`crate::engine::ControlIdSource::Fold`]).
     control_ids: ControlIds,
 }
 
@@ -186,8 +187,10 @@ impl std::fmt::Debug for FoldSession {
 /// `session`, and returns its output signals.
 ///
 /// The same propagation as [`propagate_typed`] with no input, except that no
-/// UI program is built and widgets get a placeholder control id: a fold only
-/// asks whether the outputs are numbers. Validation, arity, free slots and
+/// UI program is built and each widget gets a placeholder control id of its
+/// own: a fold only asks whether the outputs are numbers, but two widgets
+/// must stay two signals for `b - a` not to fold to `0`. Validation, arity,
+/// free slots, placeholder ids and
 /// propagation results carry over from one call to the next within
 /// `session`, so folding `x - 1` after `x` propagates one node.
 ///
@@ -218,7 +221,7 @@ pub fn propagate_fold(
     let ui_path = std::mem::take(&mut session.ui_path);
     let mut ctx = PropagateContext {
         cache: &mut session.cache,
-        control_ids: &session.control_ids,
+        control_ids: ControlIdSource::Fold(&mut session.control_ids),
         slot_env: &mut session.slot_env,
         memo: &mut session.memo,
         clock_domains: &mut session.clock_domains,
@@ -228,7 +231,6 @@ pub fn propagate_fold(
         pending_fad_seeds: Vec::new(),
         ui_path,
         signal_origins: &mut signal_origins,
-        fold: true,
     };
     let signals = propagate_in_slot_env(arena, flat, &[], &mut ctx);
     session.ui_path = std::mem::take(&mut ctx.ui_path);

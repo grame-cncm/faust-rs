@@ -1540,7 +1540,7 @@ impl Default for PropagateMemo {
 /// signatures.
 pub(crate) struct PropagateContext<'a> {
     pub(crate) cache: &'a mut ArityCache,
-    pub(crate) control_ids: &'a ControlIds,
+    pub(crate) control_ids: ControlIdSource<'a>,
     pub(crate) slot_env: &'a mut SlotEnv,
     pub(crate) memo: &'a mut PropagateMemo,
     /// Side table of clock-domain instances allocated by clocked wrappers
@@ -1567,28 +1567,48 @@ pub(crate) struct PropagateContext<'a> {
     /// Source-neutral Box derivations for every Signal output observed at a
     /// validated propagation boundary.
     pub(crate) signal_origins: &'a mut SignalOrigins,
-    /// Constant folding (`api::propagate_fold`): there is no UI program, and a
-    /// widget gets [`FOLD_CONTROL_ID`]. A fold only asks whether the outputs
-    /// are numbers, and a widget's signal is not one whatever its id.
-    pub(crate) fold: bool,
 }
 
-/// The control id of every widget propagated by a constant fold.
+/// Where a propagation takes the control id of a widget.
+pub(crate) enum ControlIdSource<'a> {
+    /// The ids registered during UI extraction.
+    Ui(&'a ControlIds),
+    /// Constant folding (`api::propagate_fold`): there is no UI program, and
+    /// a widget gets a placeholder id, allocated the first time the fold
+    /// session meets it (box node and group path) and kept for the session.
+    ///
+    /// A widget's signal is never a number, but simplification compares
+    /// signals: two widgets sharing one id would be one signal, and `b - a`
+    /// would fold to `0`, `b / a` to `1`. Each widget therefore gets its own
+    /// id, as each C++ widget signal carries its own label path.
+    Fold(&'a mut ControlIds),
+}
+
+/// The first placeholder control id of a constant fold; the next ones count
+/// down from it, away from the ids UI extraction allocates from 0.
 pub(crate) const FOLD_CONTROL_ID: ui::ControlId = ui::ControlId::MAX;
 
 impl PropagateContext<'_> {
-    /// The control id registered for a widget during UI extraction, or
-    /// [`FOLD_CONTROL_ID`] in a constant fold, which extracts no UI.
+    /// The control id registered for a widget during UI extraction, or its
+    /// placeholder in a constant fold, which extracts no UI.
     pub(crate) fn control_id(
-        &self,
+        &mut self,
         node: tlib::TreeId,
         group_path: u64,
         widget: &str,
     ) -> ui::ControlId {
-        match self.control_ids.get(&(node, group_path)) {
-            Some(&id) => id,
-            None if self.fold => FOLD_CONTROL_ID,
-            None => panic!("{widget} control id must be registered during UI extraction"),
+        match &mut self.control_ids {
+            ControlIdSource::Ui(ids) => match ids.get(&(node, group_path)) {
+                Some(&id) => id,
+                None => panic!("{widget} control id must be registered during UI extraction"),
+            },
+            ControlIdSource::Fold(ids) => {
+                let next = ui::ControlId::try_from(ids.len())
+                    .ok()
+                    .and_then(|n| FOLD_CONTROL_ID.checked_sub(n))
+                    .expect("one fold session cannot meet more than u32::MAX widgets");
+                *ids.entry((node, group_path)).or_insert(next)
+            }
         }
     }
 }

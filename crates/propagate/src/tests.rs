@@ -339,7 +339,7 @@ fn propagate_counting_memo(
 ) -> (Vec<SigId>, (u64, u64)) {
     use crate::clock_domain::ClockDomainTable;
     use crate::context_id::{SlotEnv, UiPathContext};
-    use crate::engine::{PropagateContext, PropagateMemo, propagate_in_slot_env};
+    use crate::engine::{ControlIdSource, PropagateContext, PropagateMemo, propagate_in_slot_env};
     use crate::profile::PropagateProfile;
     use crate::result_memo::result_memo_is_safe_root;
 
@@ -356,7 +356,7 @@ fn propagate_counting_memo(
     let mut signal_origins = SignalOrigins::default();
     let mut ctx = PropagateContext {
         cache: &mut cache,
-        control_ids: &ui.control_ids,
+        control_ids: ControlIdSource::Ui(&ui.control_ids),
         slot_env: &mut slot_env,
         memo: &mut memo,
         clock_domains: &mut clock_domains,
@@ -366,7 +366,6 @@ fn propagate_counting_memo(
         pending_fad_seeds: Vec::new(),
         ui_path: UiPathContext::new(),
         signal_origins: &mut signal_origins,
-        fold: false,
     };
     let outputs = propagate_in_slot_env(arena, flat, &[], &mut ctx).expect("propagation");
     (outputs, memo.profile.result_memo_counts())
@@ -377,7 +376,7 @@ fn propagate_counting_memo(
 fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<SigId>, usize) {
     use crate::clock_domain::ClockDomainTable;
     use crate::context_id::{SlotEnv, UiPathContext};
-    use crate::engine::{PropagateContext, PropagateMemo, propagate_in_slot_env};
+    use crate::engine::{ControlIdSource, PropagateContext, PropagateMemo, propagate_in_slot_env};
     use crate::result_memo::result_memo_is_safe_root;
 
     let ui = build_ui_program(arena, flat, &PropagateUiOptions::default());
@@ -390,7 +389,7 @@ fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<Si
     let mut signal_origins = SignalOrigins::default();
     let mut ctx = PropagateContext {
         cache: &mut cache,
-        control_ids: &ui.control_ids,
+        control_ids: ControlIdSource::Ui(&ui.control_ids),
         slot_env: &mut slot_env,
         memo: &mut memo,
         clock_domains: &mut clock_domains,
@@ -400,7 +399,6 @@ fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<Si
         pending_fad_seeds: Vec::new(),
         ui_path: UiPathContext::new(),
         signal_origins: &mut signal_origins,
-        fold: false,
     };
     let outputs = propagate_in_slot_env(arena, flat, &[], &mut ctx).expect("propagation");
     (outputs, clock_domains.len())
