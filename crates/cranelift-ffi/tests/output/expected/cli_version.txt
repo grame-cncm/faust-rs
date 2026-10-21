@@ -1,7 +1,7 @@
 $ faustprobe -v
 exit=0
 --- stdout
-faustprobe 0.9.1
+faustprobe 0.9.2
 Copyright (C) 2002-2026, GRAME - Centre National de Creation Musicale. All rights reserved.
 
 --- stderr

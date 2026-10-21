@@ -1,4 +1,4 @@
-// Code generated with faust-rs 0.9.1 (https://faust.grame.fr)
+// Code generated with faust-rs 0.9.2 (https://faust.grame.fr)
 // Compilation options: -lang asc -single
 // Language: AssemblyScript (experimental)
 // name: mydsp

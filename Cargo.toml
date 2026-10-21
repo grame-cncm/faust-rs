@@ -37,7 +37,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "0.9.1"
+version = "0.9.2"
 license = "LGPL-2.1-or-later"
 authors = ["faust-rs contributors"]
 
