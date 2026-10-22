@@ -1934,6 +1934,52 @@ Validation: `contains_recursion_marks_recursion_nodes_and_everything_above_them`
 (each recursion tag, De Bruijn and symbolic forms, arities 1, 2 and 3 or more,
 hash-cons hits), and the normalize tests of DIFF-BEH-023.
 
+### 2.26 `draw`: box complexity, sharing and scheduled schemas of one drawing
+
+Status: implemented 2026-10-22
+
+Location:
+
+- `crates/boxes/src/complexity.rs`, `BoxComplexity` (`box_complexity` opens a
+  call-local one);
+- `crates/draw/src/translate.rs`, `DrawMemo` (`complexity`, `parents`,
+  `synthesized`, `prepared`, `arity`), owned by `draw::draw_diagrams`.
+
+Cache:
+
+- `BoxComplexity`: `HashMap<BoxId, usize>`, the complexity of every box asked
+  about, saturating at `MAX_BOX_COMPLEXITY` (10^9, as C++);
+- `parents`: per node, the edges from its distinct parents, counted once at
+  the start of the drawing (C++ `Occur`, #1290);
+- `synthesized`: the label of each folded unnamed shared node;
+- `prepared` / `arity`: the folded inside schema of each scheduled diagram,
+  built when it is scheduled to read its inputs and outputs, then drawn as its
+  file, and its `(inputs, outputs)`.
+
+Key and lifetime: the `BoxId`, for one drawing. A box's complexity, parents,
+expression and inside schema are functions of the node, of the root (parents)
+and of the `DrawConfig` (the schema), all fixed for the drawing (rule 6). The
+complexity is a pure function of the node, so the arena would be its natural
+owner (§1); the drawing holds `&TreeArena`, as `contains_recursion` (§2.25)
+explains for `normalize`, so the memo is the drawing's.
+
+Why: `box_complexity` recursed over the *expanded* tree at every call, and the
+drawing calls it for every sub-diagram; C++ keeps it as a tree property. A
+folded diagram's link needed its arity, which Rust read from the *unfolded*
+inside schema of the diagram (C++ calls `getBoxType`): both exponential on a
+shared DAG. Measured (temporary counter, reverted): 654 distinct boxes and
+1 299 repeats on `faust_composition/examples/fdn.dsp`, 9 764 and 19 070 on
+`phaser_flanger.dsp`, 96 and 198 on `cheb(23)`, each repeat formerly a walk of
+the expanded subtree. `phaser_flanger -svg`: 1.81 s, 595 MB resident, 368 MB
+written before; 0.57 s, 91 MB, 19 MB after (with the folding of shared nodes,
+DIFF-BEH-025).
+
+Validation: `crates/boxes/tests/shared_dags.rs` (the memo scores as an
+unmemoized walk, saturation on a 90-level Fibonacci DAG, the bounded printer),
+the `draw` tests of DIFF-BEH-025, `svg_probe.rs`
+(`a_recursion_with_shared_subproblems_draws_in_linear_size`), and two
+`faustprobe --svg` runs byte-identical on `fdn.dsp` and `texture.dsp`.
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.

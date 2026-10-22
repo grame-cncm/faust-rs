@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use boxes::{BoxId, BoxMatch, box_complexity, match_box};
+use boxes::{BoxComplexity, BoxId, BoxMatch, FloatSize, box_pp_bounded, match_box};
 use tlib::{NodeKind, TreeArena, tree_to_str};
 
 use crate::DrawConfig;
@@ -51,6 +51,74 @@ pub struct FoldState<'a> {
     pub fold_complexity: usize,
     /// The file of every diagram scheduled so far, which a link names.
     pub files: &'a mut FileNames,
+    /// What the drawing knows of the DAG: complexities, sharing, the names
+    /// given to shared nodes, the schemas prepared for scheduled diagrams.
+    pub memo: &'a mut DrawMemo,
+}
+
+/// The print budget (nodes and characters) of the expression that names a
+/// shared node folded without a definition name.
+///
+/// C++ reference: `drawschema.cpp`, `kSharedNamePrintBudget`.
+const SHARED_NAME_PRINT_BUDGET: usize = 1024;
+
+/// What one drawing computes once about its DAG.
+///
+/// C++ keeps these as tree properties (`boxComplexity`, the definition names
+/// it synthesizes) or in an `Occur` scoped to the drawing (#1290).
+#[derive(Default)]
+pub struct DrawMemo {
+    complexity: BoxComplexity,
+    /// Per node, the edges from its distinct parents (C++ `Occur`).
+    parents: HashMap<BoxId, usize>,
+    /// The expression that names a folded shared node without a definition.
+    synthesized: HashMap<BoxId, String>,
+    /// The inside schema of a scheduled diagram, built when it was scheduled
+    /// (to know its arity) and drawn when its file is written.
+    prepared: HashMap<BoxId, Box<dyn Schema>>,
+    /// The inputs and outputs of every scheduled diagram.
+    arity: HashMap<BoxId, (usize, usize)>,
+}
+
+impl DrawMemo {
+    /// The memo of a drawing of `root`: its parent counts, from one walk over
+    /// the DAG with a visited set, every child of every node counted once
+    /// per distinct parent, the root not counted.
+    ///
+    /// C++ reference: `occur.cpp`, `Occur::countOccurrences` (#1290).
+    #[must_use]
+    pub fn new(arena: &TreeArena, root: BoxId) -> Self {
+        let mut parents: HashMap<BoxId, usize> = HashMap::new();
+        let mut visited = HashSet::from([root]);
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            for &child in arena.children(node).unwrap_or(&[]) {
+                *parents.entry(child).or_insert(0) += 1;
+                if visited.insert(child) {
+                    stack.push(child);
+                }
+            }
+        }
+        Self {
+            parents,
+            ..Self::default()
+        }
+    }
+
+    /// The complexity of `b`, each distinct box scored once per drawing.
+    pub fn complexity(&mut self, arena: &TreeArena, b: BoxId) -> usize {
+        self.complexity.of(arena, b)
+    }
+
+    /// The schema prepared for `b` when it was scheduled, if any.
+    pub fn take_prepared(&mut self, b: BoxId) -> Option<Box<dyn Schema>> {
+        self.prepared.remove(&b)
+    }
+
+    /// Whether `b` has more than one parent in the DAG.
+    fn is_shared(&self, b: BoxId) -> bool {
+        self.parents.get(&b).is_some_and(|&n| n > 1)
+    }
 }
 
 /// How the files of a drawing are named.
@@ -94,10 +162,21 @@ impl FileNames {
     /// The file of diagram `b`, named `name`: the one it was given, or a new
     /// one.
     pub fn assign(&mut self, b: BoxId, name: &str) -> String {
+        self.assign_named(b, name, false)
+    }
+
+    /// The file of diagram `b`, named by an expression rather than a
+    /// definition: its stem is `diagram`, as an expression is no file name.
+    pub fn assign_expression(&mut self, b: BoxId) -> String {
+        self.assign_named(b, "diagram", true)
+    }
+
+    fn assign_named(&mut self, b: BoxId, name: &str, expression: bool) -> String {
         if let Some(file) = self.files.get(&b) {
             return file.clone();
         }
         let file = match self.naming {
+            FileNaming::BoxIdentity if expression => format!("diagram-{:08x}.svg", b.as_u32()),
             FileNaming::BoxIdentity => legal_file_name(name, b),
             FileNaming::DefinitionName => {
                 let stem = definition_stem(name);
@@ -156,6 +235,12 @@ pub fn generate_folded_inside(
 
 /// Decide whether sub-diagram `b` should be folded (separate file) or inlined.
 ///
+/// Folded when folding is on, `b` is complex enough, and it is named or
+/// shared (more than one parent in the DAG): a shared node expanded at every
+/// occurrence makes the drawing grow with the expanded tree, exponentially
+/// for `ma.chebychev(n)` (C++ #1290). An occurrence of a diagram already
+/// scheduled is a link to its file, as in C++; it is never expanded again.
+///
 /// C++ reference: `drawschema.cpp:359` — `generateDiagramSchema`.
 fn generate_diagram_schema(
     arena: &TreeArena,
@@ -163,24 +248,51 @@ fn generate_diagram_schema(
     config: &DrawConfig,
     state: &mut FoldState<'_>,
 ) -> Box<dyn Schema> {
-    // Folding: fold if the sub-diagram is named, complex enough, and not yet drawn.
-    let complexity = box_complexity(arena, b);
+    let def_name = state.def_names.get(&b);
     if state.folding
-        && complexity >= state.fold_complexity
-        && let Some(def_name) = state.def_names.get(&b)
-        && !state.drawn.contains(&b)
+        && (def_name.is_some() || state.memo.is_shared(b))
+        && state.memo.complexity(arena, b) >= state.fold_complexity
     {
-        state.drawn.insert(b);
-        let back = state.current_file.clone();
-        state.pending.push_back((b, def_name.clone(), back));
-        let link = state.files.assign(b, def_name);
-        let inner = generate_inside(arena, b, config);
-        let label = truncate_name(def_name.clone(), config.max_name_size);
-        return make_block(inner.inputs(), inner.outputs(), label, COLOR_LINK, link);
+        let (name, link) = match def_name {
+            Some(name) => (name.clone(), state.files.assign(b, name)),
+            None => {
+                let name = state
+                    .memo
+                    .synthesized
+                    .entry(b)
+                    .or_insert_with(|| expression_name(arena, b))
+                    .clone();
+                (name, state.files.assign_expression(b))
+            }
+        };
+        if state.drawn.insert(b) {
+            let back = state.current_file.clone();
+            state.pending.push_back((b, name.clone(), back));
+            // Built now for its arity, with b's own file as the current one so
+            // that its sub-diagrams link back to it, and drawn with b's file.
+            let enclosing = std::mem::replace(&mut state.current_file, link.clone());
+            let inside = generate_inside_folded(arena, b, config, state);
+            state.current_file = enclosing;
+            state
+                .memo
+                .arity
+                .insert(b, (inside.inputs(), inside.outputs()));
+            state.memo.prepared.insert(b, inside);
+        }
+        let (inputs, outputs) = match state.memo.arity.get(&b) {
+            Some(&arity) => arity,
+            // the root, which no sub-diagram contains
+            None => {
+                let inside = generate_inside(arena, b, config);
+                (inside.inputs(), inside.outputs())
+            }
+        };
+        let label = truncate_name(name, config.max_name_size);
+        return make_block(inputs, outputs, label, COLOR_LINK, link);
     }
 
     // Decoration: named sub-diagram that isn't pure routing gets a dashed border.
-    if let Some(def_name) = state.def_names.get(&b)
+    if let Some(def_name) = def_name
         && !is_pure_routing(arena, b)
     {
         let label = truncate_name(def_name.clone(), config.max_name_size);
@@ -188,6 +300,13 @@ fn generate_diagram_schema(
     }
 
     generate_inside_folded(arena, b, config, state)
+}
+
+/// The name of a folded shared node without a definition name: its own
+/// expression, printed within a budget (C++ `mBoxName`).
+fn expression_name(arena: &TreeArena, b: BoxId) -> String {
+    box_pp_bounded(arena, b, 0, FloatSize::Single, SHARED_NAME_PRINT_BUDGET)
+        .unwrap_or_else(|_| "diagram".to_owned())
 }
 
 // ─── Inside dispatch ─────────────────────────────────────────────────────────
@@ -653,11 +772,16 @@ fn generate_slot_schema(arena: &TreeArena, slot_id: BoxId) -> Box<dyn Schema> {
 ///
 /// C++ reference: `drawschema.cpp:291` — `legalFileName`.
 pub fn legal_file_name(name: &str, box_id: BoxId) -> String {
-    let stem: String = name
+    let mut stem: String = name
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .take(16)
         .collect();
+    // a file name starting with `-` reads as an option, one starting with a
+    // digit is no name (C++ `legalFileName`, since `068fb9a80`)
+    if !stem.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        stem = "diagram".to_owned();
+    }
     if stem == "process" {
         "process.svg".to_owned()
     } else {

@@ -56,8 +56,22 @@ fn file_names_come_from_definitions_and_do_not_change_between_runs() {
     let second = run("b");
     assert_eq!(first, second);
     let files: Vec<&str> = first.iter().map(|(file, _)| file.as_str()).collect();
-    assert_eq!(&files[..3], ["process.svg", "voice.svg", "voice-2.svg"]);
-    assert_eq!(first[1].1, "voice");
+    // the two `voice` diagrams, in drawing order; the sub-diagrams they
+    // share, unnamed, are `diagram.svg`, `diagram-2.svg`, ...
+    assert_eq!(files[0], "process.svg");
+    let voices: Vec<&str> = first
+        .iter()
+        .filter(|(_, name)| name == "voice")
+        .map(|(file, _)| file.as_str())
+        .collect();
+    assert_eq!(voices, ["voice.svg", "voice-2.svg"]);
+    // no name carries a box index, `voice-000000c2.svg`
+    let indexed = |file: &str| {
+        file.strip_suffix(".svg")
+            .and_then(|stem| stem.rsplit_once('-'))
+            .is_some_and(|(_, tail)| tail.len() == 8 && tail.chars().all(|c| c.is_ascii_hexdigit()))
+    };
+    assert!(!files.iter().any(|f| indexed(f)), "{files:?}");
     // what the index lists is what was written, byte for byte the same twice
     let a = contents(&fixtures.dir().join("a"));
     let b = contents(&fixtures.dir().join("b"));
@@ -228,4 +242,24 @@ fn render_flags_and_stray_drawing_options_are_refused() {
         assert!(!stderr.is_empty(), "{args:?}");
     }
     assert!(!fixtures.dir().join("out").exists());
+}
+
+#[test]
+fn a_recursion_with_shared_subproblems_draws_in_linear_size() {
+    // cheb(n) shares cheb(n-1) and cheb(n-2) with its neighbours: expanded,
+    // cheb(30) is some 10^6 boxes and its drawing several GB (C++ before
+    // #1290, faust-rs before the port); each distinct one is drawn once
+    let fixtures = Fixtures::new("cheb");
+    let dsp = fixtures.write(
+        "cheb.dsp",
+        "cheb(0,x) = 1;\ncheb(1,x) = x;\ncheb(n,x) = 2*x*cheb(n-1, x) - cheb(n-2, x);\n\
+         process = cheb(30);\n",
+    );
+    let (ok, stdout, stderr) = probe_in(fixtures.dir(), &["--svg", "out", &dsp]);
+    assert!(ok, "{stderr}");
+    let written = contents(&fixtures.dir().join("out"));
+    let bytes: usize = written.iter().map(|(_, svg)| svg.len()).sum();
+    assert_eq!(written.len(), index(&stdout).len());
+    assert!(written.len() < 100, "{} files", written.len());
+    assert!(bytes < 2_000_000, "{bytes} bytes");
 }

@@ -3,9 +3,51 @@
 //! C++ reference: `compiler/boxes/boxcomplexity.cpp` — `boxComplexity` /
 //! `computeBoxComplexity`.
 
+use std::collections::HashMap;
+
 use tlib::TreeArena;
 
 use crate::{BoxId, BoxMatch, match_box};
+
+/// Where a complexity saturates. The complexity counts the boxes of the
+/// *expanded* tree, so a shared DAG reaches it quickly (`ma.chebychev(300)`);
+/// a saturated value still reads as "very complex" to the folding tests.
+///
+/// C++ reference: `boxcomplexity.cpp`, `MAX_BOX_COMPLEXITY` (#1290).
+pub const MAX_BOX_COMPLEXITY: usize = 1_000_000_000;
+
+/// `a + b`, saturating at [`MAX_BOX_COMPLEXITY`] (C++ `addBoxComplexity`).
+fn add(a: usize, b: usize) -> usize {
+    a.saturating_add(b).min(MAX_BOX_COMPLEXITY)
+}
+
+/// The complexity of every box met so far, for a caller that asks about many
+/// boxes of one DAG (the drawing asks about every sub-diagram).
+///
+/// C++ keeps the value as a property of the tree (`BCOMPLEXITY`); a memo per
+/// caller does the same without writing to the arena.
+#[derive(Debug, Default)]
+pub struct BoxComplexity {
+    memo: HashMap<BoxId, usize>,
+}
+
+impl BoxComplexity {
+    /// An empty memo.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The complexity of `b`: each distinct box is scored once.
+    pub fn of(&mut self, arena: &TreeArena, b: BoxId) -> usize {
+        if let Some(&c) = self.memo.get(&b) {
+            return c;
+        }
+        let c = node_complexity(arena, b, &mut |child| self.of(arena, child));
+        self.memo.insert(b, c);
+        c
+    }
+}
 
 /// Recursive complexity score of a box expression.
 ///
@@ -20,8 +62,16 @@ use crate::{BoxId, BoxMatch, match_box};
 /// - Symbolic / ondemand / up/downsampling → **1 + child**
 /// - Metadata → **complexity of payload** (transparent)
 ///
+/// Sums saturate at [`MAX_BOX_COMPLEXITY`]. Each distinct box of the DAG is
+/// scored once; [`BoxComplexity`] keeps the scores across calls.
+///
 /// C++ reference: `boxcomplexity.cpp:77` — `computeBoxComplexity`.
 pub fn box_complexity(arena: &TreeArena, b: BoxId) -> usize {
+    BoxComplexity::new().of(arena, b)
+}
+
+/// The score of `b` alone, `child` scoring its children.
+fn node_complexity(arena: &TreeArena, b: BoxId, child: &mut dyn FnMut(BoxId) -> usize) -> usize {
     match match_box(arena, b) {
         // ── Zero-complexity structural nodes ─────────────────────────
         BoxMatch::Cut | BoxMatch::Wire | BoxMatch::Route(..) | BoxMatch::Environment => 0,
@@ -109,25 +159,28 @@ pub fn box_complexity(arena: &TreeArena, b: BoxId) -> usize {
         BoxMatch::Ident(_) => 1,
 
         // ── Composition: sum of children ─────────────────────────────
-        BoxMatch::Seq(a, b) => box_complexity(arena, a) + box_complexity(arena, b),
-        BoxMatch::Par(a, b) => box_complexity(arena, a) + box_complexity(arena, b),
-        BoxMatch::Split(a, b) => box_complexity(arena, a) + box_complexity(arena, b),
-        BoxMatch::Merge(a, b) => box_complexity(arena, a) + box_complexity(arena, b),
-        BoxMatch::Rec(a, b) => box_complexity(arena, a) + box_complexity(arena, b),
+        BoxMatch::Seq(a, b)
+        | BoxMatch::Par(a, b)
+        | BoxMatch::Split(a, b)
+        | BoxMatch::Merge(a, b)
+        | BoxMatch::Rec(a, b) => {
+            let ca = child(a);
+            add(ca, child(b))
+        }
 
         // ── Groups: transparent (complexity of body) ──────────────────
         BoxMatch::VGroup(_, body) | BoxMatch::HGroup(_, body) | BoxMatch::TGroup(_, body) => {
-            box_complexity(arena, body)
+            child(body)
         }
 
         // ── Wrappers: 1 + child ───────────────────────────────────────
-        BoxMatch::Symbolic(_, body) => 1 + box_complexity(arena, body),
+        BoxMatch::Symbolic(_, body) => add(1, child(body)),
         BoxMatch::Ondemand(inner) | BoxMatch::Upsampling(inner) | BoxMatch::Downsampling(inner) => {
-            1 + box_complexity(arena, inner)
+            add(1, child(inner))
         }
 
         // ── Metadata: transparent ─────────────────────────────────────
-        BoxMatch::Metadata(a, _) => box_complexity(arena, a),
+        BoxMatch::Metadata(a, _) => child(a),
 
         // ── Unknown / anything else: treat as 1 ──────────────────────
         _ => 1,

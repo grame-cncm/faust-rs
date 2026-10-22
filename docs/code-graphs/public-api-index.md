@@ -142,16 +142,20 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `BoxBuilder::vbargraph` | `crates/boxes/src/builder.rs:786` |
 | `fn` | `BoxBuilder::hbargraph` | `crates/boxes/src/builder.rs:792` |
 | `fn` | `BoxBuilder::soundfile` | `crates/boxes/src/builder.rs:798` |
-| `fn` | `box_complexity` | `crates/boxes/src/complexity.rs:24` |
+| `const` | `MAX_BOX_COMPLEXITY` | `crates/boxes/src/complexity.rs:17` |
+| `struct` | `BoxComplexity` | `crates/boxes/src/complexity.rs:30` |
+| `fn` | `BoxComplexity::new` | `crates/boxes/src/complexity.rs:37` |
+| `fn` | `BoxComplexity::of` | `crates/boxes/src/complexity.rs:42` |
+| `fn` | `box_complexity` | `crates/boxes/src/complexity.rs:69` |
 | `fn` | `dump_box` | `crates/boxes/src/dump.rs:15` |
 | `use` | `builder::BoxBuilder` | `crates/boxes/src/lib.rs:36` |
-| `use` | `complexity::box_complexity` | `crates/boxes/src/lib.rs:37` |
+| `use` | `complexity` | `crates/boxes/src/lib.rs:37` |
 | `use` | `dump::dump_box` | `crates/boxes/src/lib.rs:38` |
 | `use` | `matcher` | `crates/boxes/src/lib.rs:39` |
 | `use` | `print` | `crates/boxes/src/lib.rs:40` |
-| `const` | `CRATE_NAME` | `crates/boxes/src/lib.rs:43` |
-| `type` | `BoxId` | `crates/boxes/src/lib.rs:46` |
-| `fn` | `crate_id` | `crates/boxes/src/lib.rs:50` |
+| `const` | `CRATE_NAME` | `crates/boxes/src/lib.rs:45` |
+| `type` | `BoxId` | `crates/boxes/src/lib.rs:48` |
+| `fn` | `crate_id` | `crates/boxes/src/lib.rs:52` |
 | `enum` | `BoxMatch` | `crates/boxes/src/matcher.rs:16` |
 | `fn` | `match_box` | `crates/boxes/src/matcher.rs:190` |
 | `enum` | `FloatSize` | `crates/boxes/src/print.rs:63` |
@@ -161,8 +165,9 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `struct` | `SharedBoxProgram` | `crates/boxes/src/print.rs:157` |
 | `fn` | `SharedBoxProgram::render` | `crates/boxes/src/print.rs:168` |
 | `fn` | `box_pp` | `crates/boxes/src/print.rs:214` |
-| `fn` | `box_pp_shared` | `crates/boxes/src/print.rs:229` |
-| `fn` | `format_real` | `crates/boxes/src/print.rs:257` |
+| `fn` | `box_pp_bounded` | `crates/boxes/src/print.rs:234` |
+| `fn` | `box_pp_shared` | `crates/boxes/src/print.rs:257` |
+| `fn` | `format_real` | `crates/boxes/src/print.rs:285` |
 
 ## `codegen`
 
@@ -1327,8 +1332,8 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `struct` | `DrawConfig` | `crates/draw/src/lib.rs:75` |
 | `struct` | `Diagram` | `crates/draw/src/lib.rs:145` |
 | `fn` | `draw_diagrams` | `crates/draw/src/lib.rs:168` |
-| `fn` | `draw_schema_to_memory` | `crates/draw/src/lib.rs:248` |
-| `fn` | `draw_schema` | `crates/draw/src/lib.rs:276` |
+| `fn` | `draw_schema_to_memory` | `crates/draw/src/lib.rs:252` |
+| `fn` | `draw_schema` | `crates/draw/src/lib.rs:280` |
 | `const` | `D_WIRE` | `crates/draw/src/schema.rs:24` |
 | `const` | `D_LETTER` | `crates/draw/src/schema.rs:29` |
 | `const` | `D_HORZ` | `crates/draw/src/schema.rs:34` |
@@ -1397,14 +1402,19 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `struct` | `SplitSchema` | `crates/draw/src/schemas/split.rs:13` |
 | `fn` | `make_split` | `crates/draw/src/schemas/split.rs:25` |
 | `struct` | `FoldState` | `crates/draw/src/translate.rs:39` |
-| `enum` | `FileNaming` | `crates/draw/src/translate.rs:58` |
-| `struct` | `FileNames` | `crates/draw/src/translate.rs:77` |
-| `fn` | `FileNames::new` | `crates/draw/src/translate.rs:87` |
-| `fn` | `FileNames::assign` | `crates/draw/src/translate.rs:96` |
-| `fn` | `generate_schema` | `crates/draw/src/translate.rs:139` |
-| `fn` | `generate_folded_inside` | `crates/draw/src/translate.rs:148` |
-| `fn` | `legal_file_name` | `crates/draw/src/translate.rs:655` |
-| `fn` | `make_top_schema` | `crates/draw/src/translate.rs:774` |
+| `struct` | `DrawMemo` | `crates/draw/src/translate.rs:70` |
+| `fn` | `DrawMemo::new` | `crates/draw/src/translate.rs:90` |
+| `fn` | `DrawMemo::complexity` | `crates/draw/src/translate.rs:109` |
+| `fn` | `DrawMemo::take_prepared` | `crates/draw/src/translate.rs:114` |
+| `enum` | `FileNaming` | `crates/draw/src/translate.rs:126` |
+| `struct` | `FileNames` | `crates/draw/src/translate.rs:145` |
+| `fn` | `FileNames::new` | `crates/draw/src/translate.rs:155` |
+| `fn` | `FileNames::assign` | `crates/draw/src/translate.rs:164` |
+| `fn` | `FileNames::assign_expression` | `crates/draw/src/translate.rs:170` |
+| `fn` | `generate_schema` | `crates/draw/src/translate.rs:218` |
+| `fn` | `generate_folded_inside` | `crates/draw/src/translate.rs:227` |
+| `fn` | `legal_file_name` | `crates/draw/src/translate.rs:774` |
+| `fn` | `make_top_schema` | `crates/draw/src/translate.rs:898` |
 
 ## `eval`
 

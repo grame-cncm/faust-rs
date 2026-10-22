@@ -221,6 +221,34 @@ pub fn box_pp(
     printer.render(node, priority)
 }
 
+/// [`box_pp`] within a budget of `max_size` nodes and characters, for a
+/// label made from an expression: past the budget a node prints `...`, and a
+/// text longer than `max_size` is cut there and followed by ` ...`. The
+/// traversal, not only the text, is bounded, so a shared DAG costs at most
+/// `max_size` nodes, where [`box_pp`] is exponential.
+///
+/// C++ reference: `ppbox.cpp`, `mBox` and `PrintBudget`.
+///
+/// # Errors
+/// As [`box_pp`].
+pub fn box_pp_bounded(
+    arena: &TreeArena,
+    node: BoxId,
+    priority: u8,
+    float_size: FloatSize,
+    max_size: usize,
+) -> Result<String, BoxPrintError> {
+    let mut printer = Printer::new(arena, float_size, Sharing::Off);
+    printer.budget = Some(max_size);
+    let text = printer.render(node, priority)?;
+    Ok(if text.chars().count() > max_size {
+        let cut: String = text.chars().take(max_size).collect();
+        format!("{cut} ...")
+    } else {
+        text
+    })
+}
+
 /// Serializes one box program with sharing, the printer behind `-e`.
 ///
 /// # Errors
@@ -415,6 +443,9 @@ struct Printer<'a> {
     values: Vec<String>,
     /// Pending traversal steps.
     steps: Vec<Step>,
+    /// Nodes left to print before every further node prints `...`
+    /// ([`box_pp_bounded`]); `None` is unlimited.
+    budget: Option<usize>,
 }
 
 impl<'a> Printer<'a> {
@@ -428,6 +459,7 @@ impl<'a> Printer<'a> {
             definitions: Vec::new(),
             values: Vec::new(),
             steps: Vec::new(),
+            budget: None,
         }
     }
 
@@ -461,6 +493,14 @@ impl<'a> Printer<'a> {
 
     /// Handles one `Enter` step: emit an atom, reuse an identifier, or descend.
     fn enter(&mut self, node: BoxId, priority: u8, sharing: Sharing) -> Result<(), BoxPrintError> {
+        // a bounded print stops descending once its node budget is spent
+        if let Some(budget) = self.budget.as_mut() {
+            if *budget == 0 {
+                self.values.push("...".to_owned());
+                return Ok(());
+            }
+            *budget -= 1;
+        }
         if sharing == Sharing::On
             && let Some(id) = self.table.get(&node)
         {

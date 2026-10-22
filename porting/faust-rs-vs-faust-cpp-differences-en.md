@@ -973,6 +973,39 @@ must run unchanged with Faust C++ should not pass them.
   - the `cpp`, `c`, `wasm`, `interp`, `cranelift`, `cpp-vec0` and `cpp-vec1`
     impulse lanes on the `ondemand_*` corpus.
 
+### DIFF-BEH-025 — `-svg` folds shared sub-diagrams
+
+- Status: `reference-fix` (drawings only; generated code unchanged).
+- The pinned C++ (`8eebea429`, 2.84.3) folds only named sub-diagrams into
+  files of their own and expands a shared unnamed one at every use, so a
+  recursion with shared subproblems draws its expanded tree:
+  `cheb(n,x) = 2*x*cheb(n-1,x) - cheb(n-2,x)` at `n = 23` writes 431 MB in
+  7.1 s, and the drawing grows like Fibonacci. faust-rs did the same (373 MB
+  in 1.3 s), and also expanded a second use of a folded *named* diagram, which
+  C++ always links.
+- faust-rs now follows upstream `master-dev` #1290 (`6789c5da8`) and its label
+  fix `068fb9a80`: a sub-diagram with more than one parent in the box DAG is
+  folded like a named one, every use of a folded diagram is a link to its one
+  file, its label is its own expression printed within a 1024-node budget
+  (`boxes::box_pp_bounded`, C++ `mBoxName`), and its file is
+  `diagram-<hex>.svg` (`diagram.svg`, `diagram-2.svg`, ... under `faustprobe
+  --svg`). `box_complexity` is memoized per drawing and saturates at 10^9.
+- Compatibility impact:
+  - `cheb(23)`: 192 KB, 23 files; `cheb(100)`: 808 KB in 0.01 s. Over the
+    133 impulse-test programs, 1.28 GB in 14 058 files becomes 191 MB in
+    17 536 files; every program still draws.
+  - Drawings of programs with shared sub-diagrams have more, smaller files
+    than before and than the pinned C++; folded names and labels differ from
+    C++'s, whose own printer formats numbers differently.
+- Evidence:
+  - [`svg-shared-node-folding-port-plan-2026-10-22-en.md`](svg-shared-node-folding-port-plan-2026-10-22-en.md);
+  - `crates/draw` tests (`a_shared_node_without_a_name_is_folded_once_and_linked_at_each_use`,
+    `a_named_diagram_used_twice_is_drawn_once`,
+    `a_fibonacci_shaped_dag_draws_in_linear_size`),
+    `crates/boxes/tests/shared_dags.rs`,
+    `crates/cranelift-ffi/tests/svg_probe.rs`
+    (`a_recursion_with_shared_subproblems_draws_in_linear_size`).
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-006 — headers and libraries of foreign functions in C and C++

@@ -21,6 +21,7 @@ use tree_ffi
 
 ## boxes
 const CRATE_NAME
+const MAX_BOX_COMPLEXITY
 enum BoxMatch
 enum BoxPrintError
 enum FloatSize
@@ -141,21 +142,25 @@ fn BoxBuilder::with_local_def
 fn BoxBuilder::with_rec_def
 fn BoxBuilder::write_read_table
 fn BoxBuilder::xor
+fn BoxComplexity::new
+fn BoxComplexity::of
 fn FloatSize::foreign_name_count
 fn FloatSize::num_suffix
 fn SharedBoxProgram::render
 fn box_complexity
 fn box_pp
+fn box_pp_bounded
 fn box_pp_shared
 fn crate_id
 fn dump_box
 fn format_real
 fn match_box
 struct BoxBuilder
+struct BoxComplexity
 struct SharedBoxProgram
 type BoxId
 use builder::BoxBuilder
-use complexity::box_complexity
+use complexity
 use dump::dump_box
 use matcher
 use print
@@ -1216,7 +1221,11 @@ fn BlockSchema::new
 fn CableSchema::new
 fn ConnectorSchema::new
 fn CutSchema::new
+fn DrawMemo::complexity
+fn DrawMemo::new
+fn DrawMemo::take_prepared
 fn FileNames::assign
+fn FileNames::assign_expression
 fn FileNames::new
 fn InverterSchema::new
 fn Orientation::sign
@@ -1272,6 +1281,7 @@ struct CutSchema
 struct DecorateSchema
 struct Diagram
 struct DrawConfig
+struct DrawMemo
 struct EnlargedSchema
 struct FileNames
 struct FoldState

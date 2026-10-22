@@ -1362,6 +1362,13 @@ feedbackNetwork.svg,feedbackNetwork
   `faust-rs -svg` and the C++ compiler suffix each name with a tree index or
   an address instead (`decoder-000034e8.svg`, `layer-98768.svg`), which moves
   with anything evaluated before.
+- **Shared sub-diagrams.** A sub-diagram used in several places (a
+  recursion with shared subproblems, a constant computed once and used twice)
+  is folded even without a name, as in upstream Faust (#1290): its file is
+  `diagram.svg`, `diagram-2.svg`, ..., and its label, in the index too, is its
+  own expression (`_,0.35355338f : *`). Every use is a link to that one file,
+  so the drawing grows with the program, not with its expansion:
+  `cheb(n,x) = 2*x*cheb(n-1,x) - cheb(n-2,x)` at `n = 100` draws 808 KB.
 - **The index** is on stdout: a `file,name` CSV row per diagram, root first,
   the name quoted when it holds a comma. With `--format json`, one document:
   `schema_version`, `dsp`, `eval` (under `--eval`), `svg_dir`, and

@@ -178,10 +178,10 @@ pub fn draw_diagrams(
 
     use device::SvgDevice;
     use schema::TraitCollector;
-    use translate::{FileNames, FoldState, generate_folded_inside, make_top_schema};
+    use translate::{DrawMemo, FileNames, FoldState, generate_folded_inside, make_top_schema};
 
-    let folding =
-        config.fold_threshold > 0 && boxes::box_complexity(arena, root) > config.fold_threshold;
+    let mut memo = DrawMemo::new(arena, root);
+    let folding = config.fold_threshold > 0 && memo.complexity(arena, root) > config.fold_threshold;
 
     // Queue: (box_id, diagram_name, back_link_file)
     let mut pending: VecDeque<(boxes::BoxId, String, String)> = VecDeque::new();
@@ -208,9 +208,13 @@ pub fn draw_diagrams(
             folding,
             fold_complexity: config.fold_complexity,
             files: &mut files,
+            memo: &mut memo,
         };
 
-        let inner = generate_folded_inside(arena, box_id, config, &mut state);
+        let inner = match state.memo.take_prepared(box_id) {
+            Some(prepared) => prepared,
+            None => generate_folded_inside(arena, box_id, config, &mut state),
+        };
         let mut top = make_top_schema(inner, &shown, &back_link);
         top.place(0.0, 0.0, Orientation::LeftRight);
 
@@ -340,18 +344,126 @@ mod tests {
     fn definition_names_disambiguate_in_drawing_order_without_case() {
         let diagrams = draw(0);
         let files: Vec<&str> = diagrams.iter().map(|d| d.file.as_str()).collect();
+        // `+` is in both `voice` diagrams: shared, it is folded once, under
+        // its expression, while `voice` is prepared, hence before `voice-2`
         assert_eq!(
             files,
-            ["process.svg", "voice.svg", "voice-2.svg", "Voice-3.svg"]
+            [
+                "process.svg",
+                "voice.svg",
+                "diagram.svg",
+                "voice-2.svg",
+                "Voice-3.svg"
+            ]
         );
         let names: Vec<&str> = diagrams.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, ["the title", "voice", "voice", "Voice"]);
+        assert_eq!(names, ["the title", "voice", "+", "voice", "Voice"]);
         // the links of the root name the files that were written
         let root = String::from_utf8(diagrams[0].svg.clone()).unwrap();
-        for file in &files[1..] {
+        for file in ["voice.svg", "voice-2.svg", "Voice-3.svg"] {
             assert!(root.contains(file), "process.svg does not link {file}");
         }
         assert!(root.contains("the title"));
+    }
+
+    fn svg(diagram: &Diagram) -> String {
+        String::from_utf8(diagram.svg.clone()).unwrap()
+    }
+
+    fn folding(file_naming: FileNaming) -> DrawConfig {
+        DrawConfig {
+            fold_threshold: 1,
+            fold_complexity: 2,
+            file_naming,
+            ..DrawConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_shared_node_without_a_name_is_folded_once_and_linked_at_each_use() {
+        // `s = 1, 2 : +` twice, named by nothing
+        let mut arena = TreeArena::new();
+        let mut b = BoxBuilder::new(&mut arena);
+        let (one, two) = (b.int(1), b.int(2));
+        let pair = b.par(one, two);
+        let add = b.add();
+        let s = b.seq(pair, add);
+        let root = b.par(s, s);
+        let none = HashMap::new();
+        let config = folding(FileNaming::DefinitionName);
+        let diagrams = draw_diagrams(&arena, root, "process", "process", &config, &none).unwrap();
+        let files: Vec<&str> = diagrams.iter().map(|d| d.file.as_str()).collect();
+        assert_eq!(files, ["process.svg", "diagram.svg"]);
+        assert_eq!(diagrams[1].name, "1,2 : +");
+        let top = svg(&diagrams[0]);
+        assert!(top.contains("\"diagram.svg\""), "{top}");
+        // folded, not expanded: the constants are drawn in diagram.svg only
+        assert!(!top.contains(">1<") && !top.contains(">2<"), "{top}");
+        assert!(svg(&diagrams[1]).contains(">2<"));
+
+        // the C++ scheme names it `diagram-<hex>`, not after the expression
+        let identity = folding(FileNaming::BoxIdentity);
+        let diagrams = draw_diagrams(&arena, root, "process", "process", &identity, &none).unwrap();
+        assert!(
+            diagrams[1].file.starts_with("diagram-"),
+            "{}",
+            diagrams[1].file
+        );
+    }
+
+    #[test]
+    fn a_named_diagram_used_twice_is_drawn_once() {
+        // C++ links every use of a scheduled diagram; Rust used to expand the
+        // second one in place
+        let mut arena = TreeArena::new();
+        let mut b = BoxBuilder::new(&mut arena);
+        let (one, two) = (b.int(1), b.int(2));
+        let pair = b.par(one, two);
+        let add = b.add();
+        let s = b.seq(pair, add);
+        let delay = b.delay1();
+        let late = b.seq(s, delay);
+        let root = b.par(s, late);
+        let names = HashMap::from([(s, "voice".to_owned())]);
+        let config = folding(FileNaming::DefinitionName);
+        let diagrams = draw_diagrams(&arena, root, "process", "process", &config, &names).unwrap();
+        let files: Vec<&str> = diagrams.iter().map(|d| d.file.as_str()).collect();
+        assert_eq!(files, ["process.svg", "voice.svg"]);
+        assert!(!svg(&diagrams[0]).contains(">1<"));
+    }
+
+    #[test]
+    fn a_fibonacci_shaped_dag_draws_in_linear_size() {
+        // f(k) = f(k-1), f(k-2) : +, whose expanded tree has about 1.6^k
+        // boxes: k = 60 would be some 10^12. Constants at the bottom: with
+        // `f(1) = _` the program itself has fib(k) inputs, and so many wires
+        // are drawn whatever the folding.
+        let mut arena = TreeArena::new();
+        let mut b = BoxBuilder::new(&mut arena);
+        let mut levels = vec![b.int(1), b.int(2)];
+        for i in 2..=60 {
+            let pair = b.par(levels[i - 1], levels[i - 2]);
+            let add = b.add();
+            levels.push(b.seq(pair, add));
+        }
+        let none = HashMap::new();
+        let config = folding(FileNaming::DefinitionName);
+        let diagrams =
+            draw_diagrams(&arena, levels[60], "process", "process", &config, &none).unwrap();
+        let bytes: usize = diagrams.iter().map(|d| d.svg.len()).sum();
+        assert!(diagrams.len() < 70, "{} files", diagrams.len());
+        assert!(bytes < 1_000_000, "{bytes} bytes");
+        // every file of the drawing is linked from another one
+        for d in &diagrams[1..] {
+            let quoted = format!("\"{}\"", d.file);
+            assert!(
+                diagrams
+                    .iter()
+                    .any(|o| o.file != d.file && svg(o).contains(&quoted)),
+                "{} is linked from nowhere",
+                d.file
+            );
+        }
     }
 
     #[test]
