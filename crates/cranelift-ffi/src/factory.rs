@@ -28,8 +28,8 @@ use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_descript
 use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
     AuxFileArtifact, CompileOptionArgs, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
-    FaustwasmServiceError, GenerateAuxFilesRequest, SchedulingStrategy, SignalFirLane,
-    merge_import_search_paths,
+    FaustwasmServiceError, GenerateAuxFilesRequest, SchedulingStrategy, SignalCompileOutput,
+    SignalFirLane, merge_import_search_paths,
 };
 use ffi_common::{
     CompleteError, FaustMemoryManager, alloc_ptr_array, decode_c_argv as decode_c_argv_shared,
@@ -1297,6 +1297,42 @@ fn map_c_opt_level(level: c_int) -> CraneliftOptLevel {
         1 | 2 => CraneliftOptLevel::Speed,
         _ => CraneliftOptLevel::SpeedAndSize,
     }
+}
+
+/// The front end of a factory without its back end, for a tool that wants the
+/// evaluated program rather than code (`faustprobe --svg`): the file at `path`,
+/// or `source` named `path`, parsed, evaluated and propagated under the
+/// options and search paths of `argv`, as the file and string constructors
+/// would.
+///
+/// # Errors
+/// The one-line summary a constructor's `error_msg` would receive; its
+/// complete text and diagnostics report are published as for a constructor's
+/// failure ([`getCCompleteCraneliftDSPFactoryError`]).
+pub(crate) fn compile_signals_with_argv(
+    path: &str,
+    source: Option<&str>,
+    argv: &[String],
+) -> Result<SignalCompileOutput, String> {
+    let fail = |message: String| {
+        // SAFETY: a null buffer is accepted and only the record is written.
+        unsafe { write_error(std::ptr::null_mut(), &message) };
+        message
+    };
+    let (compiler, _, _) = compiler_from_argv(argv).map_err(fail)?;
+    let output = match source {
+        None => {
+            let path = Path::new(path);
+            compiler.compile_file_to_signals(path, &collect_search_paths_for_file(path, argv))
+        }
+        Some(source) => {
+            let search_paths = parse_ffi_compile_args(argv)
+                .map(|parsed| parsed.search_paths)
+                .unwrap_or_default();
+            compiler.compile_source_to_signals_with_search_paths(path, source, &search_paths)
+        }
+    };
+    output.map_err(|error| fail(summary_of(&error)))
 }
 
 /// Builds import search paths for file compilation: the `-I` args first, then

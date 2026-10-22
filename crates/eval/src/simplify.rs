@@ -443,6 +443,28 @@ pub(crate) fn box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeI
     box_simplification_in(arena, box_id, &mut FoldCache::default())
 }
 
+/// Gives the simplified form of each named box the box's name, when the
+/// simplification made a new tree that has none yet: the name transfer of C++
+/// `boxSimplification`, for [`crate::simplify_diagram`].
+pub(crate) fn transfer_simplified_names(
+    arena: &mut TreeArena,
+    def_names: &mut std::collections::HashMap<TreeId, String>,
+) {
+    let key = arena.property_key(SIMPLIFIED_BOX_PROPERTY);
+    let mut named: Vec<(TreeId, String)> = def_names
+        .iter()
+        .map(|(id, name)| (*id, name.clone()))
+        .collect();
+    named.sort_unstable();
+    for (id, name) in named {
+        if let Some(simplified) = arena.node_property(id, key)
+            && simplified != id
+        {
+            def_names.entry(simplified).or_insert(name);
+        }
+    }
+}
+
 /// [`box_simplification`] with the caches of one evaluation pass.
 pub(crate) fn box_simplification_in(
     arena: &mut TreeArena,

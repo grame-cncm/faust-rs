@@ -20,6 +20,7 @@
 //! | [`freqresp`] | `--freqresp` |
 //! | [`train`] | `--train`, `--fd-check` |
 //! | [`determinism`] | the second process of `--check determinism` |
+//! | [`svg`] | `--svg` |
 
 use std::process::ExitCode;
 use std::thread;
@@ -37,6 +38,7 @@ mod poly;
 mod render;
 mod report;
 mod setup;
+mod svg;
 mod train;
 mod verify;
 mod writes;
@@ -88,6 +90,9 @@ fn run(mut args: Args) -> Result<(), String> {
                 .to_owned(),
         );
     }
+    if args.svg.is_some() {
+        return svg::run_svg(&args);
+    }
     if args.nvoices > 0 {
         return poly::run_poly(&args);
     }
@@ -111,8 +116,15 @@ fn run(mut args: Args) -> Result<(), String> {
 fn main() -> ExitCode {
     // `-pn NAME` is two short flags to Clap: the `faust-rs` single-dash
     // spellings are rewritten to their long flags first, by `faust-rs`'s own
-    // table.
-    let args = Args::parse_from(compiler::normalize_legacy_args(std::env::args()));
+    // table. `-sd`, which `faust-rs` does not take, is the probe's own.
+    let args = std::env::args().map(|arg| {
+        if arg == "-sd" {
+            "--simplify-diagrams".to_owned()
+        } else {
+            arg
+        }
+    });
+    let args = Args::parse_from(compiler::normalize_legacy_args(args));
     // Cranelift JIT plus the faust-rs front end recurse deeply; run on a large
     // stack, as `impulse-cranelift` and the differential tests do.
     let error_format = args.error_format;

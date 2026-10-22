@@ -35,6 +35,9 @@
 /// What opens the environment, on the file's first line.
 const OPENER: &str = "__faustprobe_env = environment{ ";
 
+/// What the member holding expression `k` is called, followed by `k`.
+const MEMBER: &str = "__faustprobe_eval";
+
 /// A file wrapped for the evaluation of some expressions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvalProgram {
@@ -81,6 +84,15 @@ impl EvalProgram {
         &self.exprs
     }
 
+    /// The expression a member of the environment stands for, given the
+    /// member's name (`__faustprobe_eval0`): what a drawing labels it with
+    /// rather than the wrapper's name.
+    #[must_use]
+    pub fn member_expr(&self, member: &str) -> Option<&str> {
+        let k: usize = member.strip_prefix(MEMBER)?.parse().ok()?;
+        self.exprs.get(k).map(String::as_str)
+    }
+
     /// Lines of the file as wrapped (at least one: the opener's).
     fn file_lines(&self) -> usize {
         self.file.lines().count().max(1)
@@ -97,7 +109,7 @@ impl EvalProgram {
     fn environment(&self) -> String {
         let mut source = format!("{OPENER}{}\n", self.file);
         for (k, expr) in self.exprs.iter().enumerate() {
-            source.push_str(&format!("__faustprobe_eval{k} =\n{expr}\n;\n"));
+            source.push_str(&format!("{MEMBER}{k} =\n{expr}\n;\n"));
         }
         source.push_str("};\n");
         source
@@ -108,7 +120,7 @@ impl EvalProgram {
     #[must_use]
     pub fn source(&self) -> String {
         let members: Vec<String> = (0..self.exprs.len())
-            .map(|k| format!("__faustprobe_env.__faustprobe_eval{k}"))
+            .map(|k| format!("__faustprobe_env.{MEMBER}{k}"))
             .collect();
         format!("{}process = {};\n", self.environment(), members.join(", "))
     }
@@ -119,7 +131,7 @@ impl EvalProgram {
     #[must_use]
     pub fn arity_source(&self) -> String {
         let members: Vec<String> = (0..self.exprs.len())
-            .map(|k| format!("outputs(__faustprobe_env.__faustprobe_eval{k})"))
+            .map(|k| format!("outputs(__faustprobe_env.{MEMBER}{k})"))
             .collect();
         format!("{}process = {};\n", self.environment(), members.join(", "))
     }

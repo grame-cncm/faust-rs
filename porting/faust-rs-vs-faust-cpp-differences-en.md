@@ -237,7 +237,12 @@ must run unchanged with Faust C++ should not pass them.
   of the `compute` calls against real time (`--time`), a compile failure as
   the compiler's diagnostics-v2 JSON report (`--error-format json`), and the
   frequency response of a program checked to be linear and time-invariant
-  (`--freqresp`). The `faust-rs` options that choose the program or shape its
+  (`--freqresp`), and the block diagrams of the probed program (`--svg DIR`,
+  draw-only: written into `DIR` alone, named by definition with a `-2`, `-3`
+  suffix for a repeated name instead of the C++ address suffix, an index on
+  stdout; the C++ drawing options under `faust-rs`'s spellings, `-sd`
+  simplifying the drawing only, not the compiled program;
+  `crates/cranelift-ffi/tests/svg_probe.rs`). The `faust-rs` options that choose the program or shape its
   code are `faust-rs`'s own declaration, `compiler::CompileOptionArgs`,
   shared with the two impulse runners, and forwarded under their `faust-rs`
   spellings; `-ec`, `-os` and `-mem0` are refused

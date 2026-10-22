@@ -53,10 +53,12 @@
 //!   (`--in file:PATH`).
 //! - [`train`] — the gradient-descent host loop and finite-difference gradient
 //!   check (`--train`, `--fd-check`).
+//! - [`diagram`] — the block diagrams of the probed program (`--svg`).
 
 pub mod audio_file;
 pub mod audio_out;
 pub mod compare;
+pub mod diagram;
 pub mod engine;
 pub mod eval;
 pub mod freqresp;

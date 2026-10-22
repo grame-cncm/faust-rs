@@ -191,6 +191,7 @@ pub(crate) fn run_source_mode(
                     max_name_size: cli.max_name_size,
                     fold_threshold: cli.fold,
                     fold_complexity: cli.fold_complexity,
+                    file_naming: draw::FileNaming::BoxIdentity,
                 };
                 if let Err(e) = draw::draw_schema(
                     &out.parse.state.arena,

@@ -34,6 +34,12 @@ fn compile_error(error_msg: &[c_char; 4096]) -> String {
     let summary = unsafe { CStr::from_ptr(error_msg.as_ptr()) }
         .to_string_lossy()
         .into_owned();
+    compile_failure(summary)
+}
+
+/// [`compile_error`] for a failure whose summary is already a string: the
+/// complete text, recorded as the last compile failure of this thread.
+pub(crate) fn compile_failure(summary: String) -> String {
     let complete = getCCompleteCraneliftDSPFactoryError();
     let text = if complete.is_null() {
         summary

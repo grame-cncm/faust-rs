@@ -18,6 +18,8 @@ box_ffi = { package = "box-ffi", path = "../box-ffi", default-features = false }
 clap.workspace = true
 codegen = { path = "../codegen" }
 compiler = { path = "../compiler" }
+draw = { path = "../draw" }
+eval = { path = "../eval" }
 fir = { path = "../fir" }
 ffi-common = { path = "../ffi-common" }
 serde_json = "1"

@@ -858,6 +858,7 @@ fn EvalProgram::explain
 fn EvalProgram::expr_line
 fn EvalProgram::exprs
 fn EvalProgram::labels
+fn EvalProgram::member_expr
 fn EvalProgram::new
 fn EvalProgram::source
 fn Factory::compile
@@ -946,6 +947,7 @@ fn cartesian
 fn compare
 fn csv_field
 fn dominant_frequency
+fn draw_program
 fn extract_paths
 fn factory_status
 fn fade_out
@@ -980,6 +982,7 @@ mod audio_file
 mod audio_out
 mod cache
 mod compare
+mod diagram
 mod engine
 mod eval
 mod factory
@@ -1009,6 +1012,7 @@ struct Control
 struct ControlMap
 struct CraneliftDspFactory
 struct CraneliftDspInstance
+struct DiagramOptions
 struct Disagreement
 struct EvalProgram
 struct Factory
@@ -1041,6 +1045,7 @@ struct Write
 type FaustFloat
 type Frame
 type RenderLimit
+use draw
 use factory
 use ffi_common::MetaGlue
 use ffi_common::UIGlue
@@ -1205,11 +1210,14 @@ const D_LETTER
 const D_VERT
 const D_WIRE
 enum DrawError
+enum FileNaming
 enum Orientation
 fn BlockSchema::new
 fn CableSchema::new
 fn ConnectorSchema::new
 fn CutSchema::new
+fn FileNames::assign
+fn FileNames::new
 fn InverterSchema::new
 fn Orientation::sign
 fn Point::new
@@ -1222,6 +1230,7 @@ fn TraitCollector::add_trait
 fn TraitCollector::draw
 fn TraitCollector::new
 fn crate_id
+fn draw_diagrams
 fn draw_schema
 fn draw_schema_to_memory
 fn generate_folded_inside
@@ -1261,8 +1270,10 @@ struct CableSchema
 struct ConnectorSchema
 struct CutSchema
 struct DecorateSchema
+struct Diagram
 struct DrawConfig
 struct EnlargedSchema
+struct FileNames
 struct FoldState
 struct InverterSchema
 struct MergeSchema
@@ -1282,6 +1293,7 @@ trait DrawDevice
 trait Schema
 use error::DrawError
 use schema
+use translate::FileNaming
 
 ## eval
 const CRATE_NAME
@@ -1339,6 +1351,7 @@ fn eval_box
 fn eval_process
 fn make_pattern_matcher
 fn rank_similar_names
+fn simplify_diagram
 fn unambiguous_suggestion
 mod suggestions
 struct Automaton

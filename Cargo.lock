@@ -435,6 +435,8 @@ dependencies = [
  "clap",
  "codegen",
  "compiler",
+ "draw",
+ "eval",
  "ffi-common",
  "fir",
  "foreign-call",

@@ -279,6 +279,30 @@ pub fn eval_process(arena: &mut TreeArena, definitions: TreeId) -> Result<TreeId
     Ok(eval(arena, definitions, &EvalRequest::default())?.0)
 }
 
+/// The simplified form of an evaluated block diagram: every sub-diagram that
+/// computes a constant replaced by that constant, which is what `-sd`
+/// (`--simplify-diagrams`) draws.
+///
+/// C++ applies it to the process inside `evalprocess` when
+/// `gSimplifyDiagrams` is set, so the simplified diagram is also the one
+/// compiled; here it is a separate step the caller takes, and the drawing
+/// tools take it only for what they draw. As C++ `boxSimplification` does,
+/// a sub-diagram rewritten into a new tree passes its definition name
+/// (`def_names`, the evaluator's [`EvalStats::def_names`]) on to that tree,
+/// unless the tree already has one; the names are visited in tree order, so
+/// the result does not depend on the map's iteration order.
+///
+/// Mapping status: `adapted` (C++ `boxSimplification`, applied by the caller).
+pub fn simplify_diagram(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+    def_names: &mut std::collections::HashMap<TreeId, String>,
+) -> TreeId {
+    let simplified = box_simplification(arena, box_id);
+    transfer_simplified_names(arena, def_names);
+    simplified
+}
+
 /// Everything one evaluation run may vary, in one named place.
 ///
 /// Before 2026-08-18 this crate exposed nine entry points spanning two names

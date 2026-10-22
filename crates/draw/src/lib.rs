@@ -9,7 +9,7 @@
 //! # Architecture
 //!
 //! ```text
-//! draw_schema(arena, root, name, out_dir, config, def_names)
+//! draw_diagrams(arena, root, name, title, config, def_names)
 //!   for each queued diagram (root, then any folded-out sub-diagrams):
 //!     └── translate::generate_folded_inside(arena, box_id, config, &mut fold_state)
 //!           └── schemas::{Block,Seq,Par,…}  → Box<dyn Schema>   (recursive; folds
@@ -52,6 +52,7 @@ pub use schema::{
     COLOR_INV, COLOR_LINK, COLOR_NORMAL, COLOR_NUM, COLOR_SLOT, COLOR_UI, D_HORZ, D_LETTER, D_VERT,
     D_WIRE, Orientation, Placement, Point, Schema, Trait, TraitCollector,
 };
+pub use translate::FileNaming;
 
 pub const CRATE_NAME: &str = "draw";
 
@@ -117,6 +118,10 @@ pub struct DrawConfig {
     ///
     /// C++ global: `gFoldComplexity` (default 2). CLI: `-fc N` / `--fold-complexity N`.
     pub fold_complexity: usize,
+
+    /// How the files are named: by box identity, as C++ does (the default),
+    /// or by definition name, stable from one run to the next.
+    pub file_naming: FileNaming,
 }
 
 impl Default for DrawConfig {
@@ -128,11 +133,103 @@ impl Default for DrawConfig {
             max_name_size: 40,
             fold_threshold: 25,
             fold_complexity: 2,
+            file_naming: FileNaming::BoxIdentity,
         }
     }
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
+
+/// One SVG file of a drawing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagram {
+    /// What the diagram is: the root's title, or the definition name of a
+    /// folded sub-diagram.
+    pub name: String,
+    /// Its file name, relative to the drawing's directory.
+    pub file: String,
+    /// The SVG document.
+    pub svg: Vec<u8>,
+}
+
+/// Generate the SVG block diagram(s) of `root` into memory, root first, then
+/// the folded sub-diagrams in the order they were scheduled.
+///
+/// `name` names the root's file (under `config.file_naming`) and `title` is
+/// written above it; [`draw_schema`] and [`draw_schema_to_memory`] pass the
+/// same string for both. A caller drawing an expression rather than a
+/// definition gives the expression as the title and a stable name such as
+/// `process` for the file.
+///
+/// # Errors
+/// Returns [`DrawError`] if rendering fails.
+///
+/// C++ reference: `drawschema.cpp:149` — `drawSchema` / `writeSchemaFile`.
+pub fn draw_diagrams(
+    arena: &tlib::TreeArena,
+    root: boxes::BoxId,
+    name: &str,
+    title: &str,
+    config: &DrawConfig,
+    def_names: &std::collections::HashMap<boxes::BoxId, String>,
+) -> Result<Vec<Diagram>, DrawError> {
+    use std::collections::{HashSet, VecDeque};
+    use std::io::Cursor;
+
+    use device::SvgDevice;
+    use schema::TraitCollector;
+    use translate::{FileNames, FoldState, generate_folded_inside, make_top_schema};
+
+    let folding =
+        config.fold_threshold > 0 && boxes::box_complexity(arena, root) > config.fold_threshold;
+
+    // Queue: (box_id, diagram_name, back_link_file)
+    let mut pending: VecDeque<(boxes::BoxId, String, String)> = VecDeque::new();
+    let mut drawn: HashSet<boxes::BoxId> = HashSet::new();
+    let mut files = FileNames::new(config.file_naming);
+    let mut diagrams = Vec::new();
+
+    pending.push_back((root, name.to_owned(), String::new()));
+    drawn.insert(root);
+
+    while let Some((box_id, diagram_name, back_link)) = pending.pop_front() {
+        let file_name = files.assign(box_id, &diagram_name);
+        let shown = if diagrams.is_empty() {
+            title.to_owned()
+        } else {
+            diagram_name
+        };
+
+        let mut state = FoldState {
+            def_names,
+            pending: &mut pending,
+            drawn: &mut drawn,
+            current_file: file_name.clone(),
+            folding,
+            fold_complexity: config.fold_complexity,
+            files: &mut files,
+        };
+
+        let inner = generate_folded_inside(arena, box_id, config, &mut state);
+        let mut top = make_top_schema(inner, &shown, &back_link);
+        top.place(0.0, 0.0, Orientation::LeftRight);
+
+        let mut buf = Cursor::new(Vec::new());
+        let mut dev = SvgDevice::new(&mut buf, top.width(), top.height(), config)?;
+        top.draw(&mut dev)?;
+        let mut collector = TraitCollector::new();
+        top.collect_traits(&mut collector);
+        collector.draw(&mut dev)?;
+        dev.finish().map(|_| ())?;
+        diagrams.push(Diagram {
+            name: shown,
+            file: file_name,
+            svg: buf.into_inner(),
+        });
+    }
+
+    Ok(diagrams)
+}
 
 /// Generate SVG block-diagram file(s) into memory and return them as a
 /// `(filename, bytes)` vector.
@@ -155,50 +252,10 @@ pub fn draw_schema_to_memory(
     config: &DrawConfig,
     def_names: &std::collections::HashMap<boxes::BoxId, String>,
 ) -> Result<Vec<(String, Vec<u8>)>, DrawError> {
-    use std::collections::{HashSet, VecDeque};
-    use std::io::Cursor;
-
-    use device::SvgDevice;
-    use schema::TraitCollector;
-    use translate::{FoldState, generate_folded_inside, make_top_schema};
-
-    let folding =
-        config.fold_threshold > 0 && boxes::box_complexity(arena, root) > config.fold_threshold;
-
-    let mut pending: VecDeque<(boxes::BoxId, String, String)> = VecDeque::new();
-    let mut drawn: HashSet<boxes::BoxId> = HashSet::new();
-    let mut artifacts: Vec<(String, Vec<u8>)> = Vec::new();
-
-    pending.push_back((root, name.to_owned(), String::new()));
-    drawn.insert(root);
-
-    while let Some((box_id, diagram_name, back_link)) = pending.pop_front() {
-        let file_name = translate::legal_file_name(&diagram_name, box_id);
-
-        let mut state = FoldState {
-            def_names,
-            pending: &mut pending,
-            drawn: &mut drawn,
-            current_file: file_name.clone(),
-            folding,
-            fold_complexity: config.fold_complexity,
-        };
-
-        let inner = generate_folded_inside(arena, box_id, config, &mut state);
-        let mut top = make_top_schema(inner, &diagram_name, &back_link);
-        top.place(0.0, 0.0, Orientation::LeftRight);
-
-        let mut buf = Cursor::new(Vec::new());
-        let mut dev = SvgDevice::new(&mut buf, top.width(), top.height(), config)?;
-        top.draw(&mut dev)?;
-        let mut collector = TraitCollector::new();
-        top.collect_traits(&mut collector);
-        collector.draw(&mut dev)?;
-        dev.finish().map(|_| ())?;
-        artifacts.push((file_name, buf.into_inner()));
-    }
-
-    Ok(artifacts)
+    Ok(draw_diagrams(arena, root, name, name, config, def_names)?
+        .into_iter()
+        .map(|diagram| (diagram.file, diagram.svg))
+        .collect())
 }
 
 /// Generate SVG block-diagram file(s) from a box expression.
@@ -224,47 +281,96 @@ pub fn draw_schema(
     config: &DrawConfig,
     def_names: &std::collections::HashMap<boxes::BoxId, String>,
 ) -> Result<(), DrawError> {
-    use std::collections::{HashSet, VecDeque};
+    for diagram in draw_diagrams(arena, root, name, name, config, def_names)? {
+        std::fs::write(out_dir.join(&diagram.file), &diagram.svg).map_err(DrawError::Io)?;
+    }
+    Ok(())
+}
 
-    use device::SvgDevice;
-    use schema::TraitCollector;
-    use translate::{FoldState, generate_folded_inside, make_top_schema};
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
 
-    let folding =
-        config.fold_threshold > 0 && boxes::box_complexity(arena, root) > config.fold_threshold;
+    use boxes::{BoxBuilder, BoxId};
+    use tlib::TreeArena;
 
-    // Queue: (box_id, diagram_name, back_link_file)
-    let mut pending: VecDeque<(boxes::BoxId, String, String)> = VecDeque::new();
-    let mut drawn: HashSet<boxes::BoxId> = HashSet::new();
+    use super::*;
 
-    pending.push_back((root, name.to_owned(), String::new()));
-    drawn.insert(root);
-
-    while let Some((box_id, diagram_name, back_link)) = pending.pop_front() {
-        let file_name = translate::legal_file_name(&diagram_name, box_id);
-        let file_path = out_dir.join(&file_name);
-
-        let mut state = FoldState {
-            def_names,
-            pending: &mut pending,
-            drawn: &mut drawn,
-            current_file: file_name.clone(),
-            folding,
-            fold_complexity: config.fold_complexity,
-        };
-
-        let inner = generate_folded_inside(arena, box_id, config, &mut state);
-        let mut top = make_top_schema(inner, &diagram_name, &back_link);
-        top.place(0.0, 0.0, Orientation::LeftRight);
-
-        let file = std::fs::File::create(&file_path).map_err(DrawError::Io)?;
-        let mut dev = SvgDevice::new(file, top.width(), top.height(), config)?;
-        top.draw(&mut dev)?;
-        let mut collector = TraitCollector::new();
-        top.collect_traits(&mut collector);
-        collector.draw(&mut dev)?;
-        dev.finish().map(|_| ())?;
+    /// `process = (voice, voice'), Voice`, three distinct sub-diagrams sharing
+    /// one name up to case, built after `padding` unrelated nodes so that
+    /// every box index moves with it.
+    fn program(padding: i32) -> (TreeArena, BoxId, HashMap<BoxId, String>) {
+        let mut arena = TreeArena::new();
+        let mut b = BoxBuilder::new(&mut arena);
+        for k in 0..padding {
+            let _ = b.int(1000 + k);
+        }
+        let (w1, w2, add) = (b.wire(), b.wire(), b.add());
+        let pair = b.par(w1, w2);
+        let voice = b.seq(pair, add);
+        let one = b.int(1);
+        let wire = b.wire();
+        let pair1 = b.par(wire, one);
+        let add1 = b.add();
+        let voice2 = b.seq(pair1, add1);
+        let delay = b.delay1();
+        let voice3 = b.seq(voice, delay);
+        let left = b.par(voice, voice2);
+        let root = b.par(left, voice3);
+        let def_names = HashMap::from([
+            (voice, "voice".to_owned()),
+            (voice2, "voice".to_owned()),
+            (voice3, "Voice".to_owned()),
+        ]);
+        (arena, root, def_names)
     }
 
-    Ok(())
+    fn draw(padding: i32) -> Vec<Diagram> {
+        let (arena, root, def_names) = program(padding);
+        let config = DrawConfig {
+            fold_threshold: 1,
+            fold_complexity: 1,
+            file_naming: FileNaming::DefinitionName,
+            ..DrawConfig::default()
+        };
+        draw_diagrams(&arena, root, "process", "the title", &config, &def_names).unwrap()
+    }
+
+    #[test]
+    fn definition_names_disambiguate_in_drawing_order_without_case() {
+        let diagrams = draw(0);
+        let files: Vec<&str> = diagrams.iter().map(|d| d.file.as_str()).collect();
+        assert_eq!(
+            files,
+            ["process.svg", "voice.svg", "voice-2.svg", "Voice-3.svg"]
+        );
+        let names: Vec<&str> = diagrams.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["the title", "voice", "voice", "Voice"]);
+        // the links of the root name the files that were written
+        let root = String::from_utf8(diagrams[0].svg.clone()).unwrap();
+        for file in &files[1..] {
+            assert!(root.contains(file), "process.svg does not link {file}");
+        }
+        assert!(root.contains("the title"));
+    }
+
+    #[test]
+    fn definition_names_do_not_move_with_box_indices() {
+        // the same program built after other nodes: every index differs, the
+        // files and their contents do not
+        assert_eq!(draw(0), draw(37));
+    }
+
+    #[test]
+    fn box_identity_names_keep_the_cpp_scheme() {
+        let (arena, root, def_names) = program(0);
+        let config = DrawConfig {
+            fold_threshold: 1,
+            fold_complexity: 1,
+            ..DrawConfig::default()
+        };
+        let files = draw_schema_to_memory(&arena, root, "process", &config, &def_names).unwrap();
+        assert_eq!(files[0].0, "process.svg");
+        assert!(files[1].0.starts_with("voice-") && files[1].0.len() == "voice-".len() + 12);
+    }
 }

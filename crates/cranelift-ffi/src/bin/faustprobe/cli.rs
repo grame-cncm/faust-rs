@@ -450,6 +450,96 @@ pub(crate) struct Args {
     #[arg(long = "error-format", value_enum, default_value_t = ErrorFormat::Human)]
     pub(crate) error_format: ErrorFormat,
 
+    /// Draw the block diagrams of the program into DIR, created if needed,
+    /// and exit: nothing is compiled to code or rendered, so the flags of a
+    /// render are refused. Prints the index of what was written, a `file,name`
+    /// CSV row per diagram (a JSON document with `--format json`).
+    ///
+    /// The program is the one the other modes probe: FILE's `process`, or its
+    /// `-pn` definition, or under `--eval` the expressions, drawn as one
+    /// diagram titled with their text in `process.svg`. A folded sub-diagram
+    /// is named by its definition, `feedbackNetwork.svg`, then
+    /// `feedbackNetwork-2.svg` for a second distinct diagram of the same name,
+    /// in drawing order: the same input gives the same files and contents on
+    /// every run. Files already in DIR are overwritten, never removed: give
+    /// each figure a directory of its own.
+    #[arg(
+        long = "svg",
+        value_name = "DIR",
+        help_heading = "Block diagrams",
+        conflicts_with_all = [
+            "render", "sr", "block", "opt_level", "sets", "set_a", "set_b", "clamp",
+            "input", "skip", "every", "list_params", "bargraphs", "quiet", "precision",
+            "out", "compare", "reference", "tolerance", "rel_tolerance",
+            "compare_outputs", "checks", "fail_above", "sweeps", "reduce", "f0", "ats",
+            "notes", "chords", "nvoices", "effect", "voice_stop_level", "train",
+            "loss_lane", "grad_lane", "optimizer", "lr", "blocks", "reset_per_block",
+            "fd_check", "fd_step", "fd_tolerance", "train_verbose", "time", "freqresp",
+            "settle", "linearity_tolerance",
+        ]
+    )]
+    pub(crate) svg: Option<String>,
+
+    /// Fold out into a file of its own every named sub-diagram of a diagram
+    /// whose complexity exceeds N; 0 draws everything in one file (default
+    /// 25, as `-f N`).
+    #[arg(
+        long = "fold",
+        value_name = "N",
+        requires = "svg",
+        help_heading = "Block diagrams"
+    )]
+    pub(crate) fold: Option<usize>,
+
+    /// Smallest complexity of a sub-diagram worth a file of its own (default
+    /// 2, as `-fc N`).
+    #[arg(
+        long = "fold-complexity",
+        value_name = "N",
+        requires = "svg",
+        help_heading = "Block diagrams"
+    )]
+    pub(crate) fold_complexity: Option<usize>,
+
+    /// Longest label, longer ones keeping their first and last thirds around
+    /// `...` (default 40, as `-mns N`).
+    #[arg(
+        long = "max-name-size",
+        value_name = "N",
+        requires = "svg",
+        help_heading = "Block diagrams"
+    )]
+    pub(crate) max_name_size: Option<usize>,
+
+    /// Draw every constant sub-diagram as its value (`-sd`): the diagram
+    /// only, the program is not changed.
+    #[arg(
+        long = "simplify-diagrams",
+        requires = "svg",
+        help_heading = "Block diagrams"
+    )]
+    pub(crate) simplify_diagrams: bool,
+
+    /// SVG sized by its viewBox alone, to scale with its container (`-sc`).
+    #[arg(long = "scaled-svg", requires = "svg", help_heading = "Block diagrams")]
+    pub(crate) scaled_svg: bool,
+
+    /// A drop shadow under the boxes (`-blur`).
+    #[arg(
+        long = "shadow-blur",
+        requires = "svg",
+        help_heading = "Block diagrams"
+    )]
+    pub(crate) shadow_blur: bool,
+
+    /// A frame around route boxes (`-drf`).
+    #[arg(
+        long = "draw-route-frame",
+        requires = "svg",
+        help_heading = "Block diagrams"
+    )]
+    pub(crate) draw_route_frame: bool,
+
     /// The options of `faust-rs` that choose the program or shape its code,
     /// `faust-rs`'s own declaration (`-double`, `-pn`, `-vec`, `-ss`, ...):
     /// the command line goes through `faust-rs`'s
@@ -534,6 +624,7 @@ pub(crate) fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
         ("--eval", !args.evals.is_empty()),
         ("--compare/--ref/--check", verification_requested(args)),
         ("--freqresp", args.freqresp.is_some()),
+        ("--svg", args.svg.is_some()),
     ]
     .into_iter()
     .filter_map(|(flag, given)| given.then_some(flag))

@@ -118,6 +118,16 @@ Options:
   -h, --help
           Print help (see more with '--help')
 
+Block diagrams:
+      --svg <DIR>            Draw the block diagrams of the program into DIR, created if needed, and exit: nothing is compiled to code or rendered, so the flags of a render are refused. Prints the index of what was written, a `file,name` CSV row per diagram (a JSON document with `--format json`)
+      --fold <N>             Fold out into a file of its own every named sub-diagram of a diagram whose complexity exceeds N; 0 draws everything in one file (default 25, as `-f N`)
+      --fold-complexity <N>  Smallest complexity of a sub-diagram worth a file of its own (default 2, as `-fc N`)
+      --max-name-size <N>    Longest label, longer ones keeping their first and last thirds around `...` (default 40, as `-mns N`)
+      --simplify-diagrams    Draw every constant sub-diagram as its value (`-sd`): the diagram only, the program is not changed
+      --scaled-svg           SVG sized by its viewBox alone, to scale with its container (`-sc`)
+      --shadow-blur          A drop shadow under the boxes (`-blur`)
+      --draw-route-frame     A frame around route boxes (`-drf`)
+
 Compiler options (as faust-rs):
       --process-name <NAME>          Specify the top-level DSP entry-point name instead of `process` (`-pn <name>`, `--process-name <name>`) [default: process]
       --double                       Use double-precision (64-bit) floating-point for internal DSP computation

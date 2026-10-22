@@ -31,6 +31,7 @@ mod factory;
 mod poly_probe;
 mod probe;
 
+pub(crate) use factory::compile_failure;
 pub use factory::{CompileFailure, Factory, last_compile_failure};
 pub use poly_probe::{PolyProbe, PolyRenderSpec, PolyTarget, PolyWrite};
 pub use probe::Probe;

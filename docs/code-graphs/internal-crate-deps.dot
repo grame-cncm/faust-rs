@@ -63,6 +63,8 @@ digraph workspace_crates {
     "cranelift-ffi" -> "box-ffi";
     "cranelift-ffi" -> "codegen";
     "cranelift-ffi" -> "compiler";
+    "cranelift-ffi" -> "draw";
+    "cranelift-ffi" -> "eval";
     "cranelift-ffi" -> "ffi-common";
     "cranelift-ffi" -> "fir";
     "cranelift-ffi" -> "foreign-call";

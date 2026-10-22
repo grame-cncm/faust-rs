@@ -1322,3 +1322,88 @@ the document. A magnitude of `-inf` is `null`. (For the few hours between the
 introduction of `--freqresp` and that of its sweep, `linearity` and `outputs`
 sat directly under `freqresp`.)
 
+
+## 17. Block diagrams: `--svg`
+
+`--svg DIR` draws the block diagrams of the program into `DIR`, created if
+needed, and exits. The drawing is faust-rs's own (the `draw` crate, the port
+of the C++ `-svg`), on the program the other modes probe: `-I`, `-pn NAME` and
+`--eval` choose it exactly as they do for a render, so a figure and a
+measurement are of the same thing.
+
+```text
+$ faustprobe -I .. --svg figs/fdn fdn.dsp
+file,name
+process.svg,process
+encoder.svg,encoder
+inDomain.svg,inDomain
+decoder.svg,decoder
+encoder-2.svg,encoder
+...
+feedbackNetwork.svg,feedbackNetwork
+```
+
+- **Draw-only.** Nothing is compiled to code and nothing is rendered, so the
+  flags of a render (`--set`, `-n`, `--in`, `--sweep`, `--freqresp`,
+  `--train`, `--compare`, ...) are refused rather than ignored. A figure is a
+  question about structure, and the index and a render's rows would compete
+  for stdout.
+- **Only in `DIR`.** Nothing is written next to the source, unlike
+  `faust-rs -svg`, which makes `<name>-svg/` in the working directory. Files
+  already in `DIR` are overwritten, never removed: give each figure a
+  directory of its own, or a diagram left by an earlier run stays beside the
+  new ones.
+- **Stable names.** A folded sub-diagram is named by its definition,
+  `feedbackNetwork.svg`, then `feedbackNetwork-2.svg` for a second distinct
+  diagram of the same name (the same function applied to other arguments), in
+  drawing order. Names are compared without case, so two files never differ by
+  case alone. The same input gives the same files and the same bytes on every
+  run, and an edit that does not change what is drawn does not rename them;
+  `faust-rs -svg` and the C++ compiler suffix each name with a tree index or
+  an address instead (`decoder-000034e8.svg`, `layer-98768.svg`), which moves
+  with anything evaluated before.
+- **The index** is on stdout: a `file,name` CSV row per diagram, root first,
+  the name quoted when it holds a comma. With `--format json`, one document:
+  `schema_version`, `dsp`, `eval` (under `--eval`), `svg_dir`, and
+  `diagrams[]` with `file` and `name`.
+
+The root is `process.svg`, or `NAME.svg` under `-pn NAME`. Under `--eval` the
+root is the expressions, drawn as one diagram titled with their text, in
+`process.svg`; a `.lib` works as for a render, its definitions unprefixed:
+
+```text
+$ faustprobe -I .. --svg figs/parallel --eval 'sc.parallel(7, 4, mk)' texture.dsp
+file,name
+process.svg,"sc.parallel(7, 4, mk)"
+harmonics.svg,harmonics
+harmonics-2.svg,harmonics
+...
+```
+
+An expression that does not compile fails as with any `--eval`, located in
+`<eval k>`, and nothing is written.
+
+### Drawing options
+
+The C++ compiler's, under `faust-rs`'s spellings (the single-dash forms are
+accepted too):
+
+| flag | C++ | default | effect |
+|---|---|---|---|
+| `--fold N` | `-f N` | 25 | fold out every named sub-diagram of a diagram whose complexity exceeds N into a file of its own; `0` draws everything in one file |
+| `--fold-complexity N` | `-fc N` | 2 | smallest complexity worth a file of its own |
+| `--max-name-size N` | `-mns N` | 40 | longest label; a longer one keeps its first and last thirds around `...` |
+| `--simplify-diagrams` | `-sd` | off | draw every constant sub-diagram as its value (`_, (1 <: _, _ : +) : *` draws `_, 2 : *`) |
+| `--scaled-svg` | `-sc` | off | size the SVG by its viewBox alone, to scale with its container |
+| `--shadow-blur` | `-blur` | off | a drop shadow under the boxes |
+| `--draw-route-frame` | `-drf` | off | a frame around route boxes |
+
+`-sd` changes the drawing only: unlike the C++ option, the program compiled by
+the other modes is not simplified (it would compute the same values). A
+sub-diagram the simplification rewrites keeps its definition name, as in C++.
+Each option without `--svg` is refused.
+
+A sub-diagram built by a factory, a function applied to arguments, is labelled
+with the function's name (`feedbackNetwork`, `matrix`): the C++ compiler
+labels the same boxes with a truncated print of the applied closure
+(`feedbackNetwo...ER5[nil]]]}`) or `diagram_13`.

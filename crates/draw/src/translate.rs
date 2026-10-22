@@ -49,6 +49,86 @@ pub struct FoldState<'a> {
     pub folding: bool,
     /// Per-expression complexity threshold (`gFoldComplexity`).
     pub fold_complexity: usize,
+    /// The file of every diagram scheduled so far, which a link names.
+    pub files: &'a mut FileNames,
+}
+
+/// How the files of a drawing are named.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileNaming {
+    /// C++ `legalFileName`: up to 16 alphanumerics of the name and the box's
+    /// identity in hex (`decoder-000034e8.svg`; `process.svg` for a root named
+    /// `process`). Unique, but the suffix is a tree index, which moves
+    /// whenever anything evaluated before the box changes, a library edit
+    /// included (C++ uses the tree's address, which moves on every run).
+    #[default]
+    BoxIdentity,
+    /// The name alone (`feedbackNetwork.svg`), then `feedbackNetwork-2.svg`
+    /// for the second distinct diagram of that name, and so on in drawing
+    /// order. Names are compared without case, so two files never differ by
+    /// case alone on a case-insensitive file system. The same program gives
+    /// the same files, whatever was compiled before it.
+    DefinitionName,
+}
+
+/// The file of each diagram of one drawing, assigned when the diagram is
+/// first scheduled, so that a link and the file it points to agree.
+#[derive(Debug, Default)]
+pub struct FileNames {
+    naming: FileNaming,
+    files: HashMap<BoxId, String>,
+    /// Per stem, lowercased: how many diagrams carry it.
+    stems: HashMap<String, usize>,
+}
+
+impl FileNames {
+    /// An empty assignment under `naming`.
+    #[must_use]
+    pub fn new(naming: FileNaming) -> Self {
+        Self {
+            naming,
+            ..Self::default()
+        }
+    }
+
+    /// The file of diagram `b`, named `name`: the one it was given, or a new
+    /// one.
+    pub fn assign(&mut self, b: BoxId, name: &str) -> String {
+        if let Some(file) = self.files.get(&b) {
+            return file.clone();
+        }
+        let file = match self.naming {
+            FileNaming::BoxIdentity => legal_file_name(name, b),
+            FileNaming::DefinitionName => {
+                let stem = definition_stem(name);
+                // a stem has no `-`, so a suffixed name never meets a plain one
+                let count = self.stems.entry(stem.to_ascii_lowercase()).or_insert(0);
+                *count += 1;
+                if *count == 1 {
+                    format!("{stem}.svg")
+                } else {
+                    format!("{stem}-{count}.svg")
+                }
+            }
+        };
+        self.files.insert(b, file.clone());
+        file
+    }
+}
+
+/// The stem of [`FileNaming::DefinitionName`]: the name's ASCII alphanumerics
+/// and underscores, at most 64, or `diagram` when none is left.
+fn definition_stem(name: &str) -> String {
+    let stem: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(64)
+        .collect();
+    if stem.is_empty() {
+        "diagram".to_owned()
+    } else {
+        stem
+    }
 }
 
 // ─── Top-level entries ─────────────────────────────────────────────────────────
@@ -93,7 +173,7 @@ fn generate_diagram_schema(
         state.drawn.insert(b);
         let back = state.current_file.clone();
         state.pending.push_back((b, def_name.clone(), back));
-        let link = legal_file_name(def_name, b);
+        let link = state.files.assign(b, def_name);
         let inner = generate_inside(arena, b, config);
         let label = truncate_name(def_name.clone(), config.max_name_size);
         return make_block(inner.inputs(), inner.outputs(), label, COLOR_LINK, link);
