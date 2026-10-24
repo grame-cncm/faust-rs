@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --check all --points tests/output/dsp/points.csv tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --points cannot be combined with --compare, --ref or --check, which look at one render
+

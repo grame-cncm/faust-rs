@@ -17,7 +17,7 @@ use cranelift_ffi::probe::schedule::Schedule;
 use crate::cli::{Args, Format, refuse, verification_requested};
 use crate::determinism;
 use crate::report::{json_number, non_finite_name};
-use crate::setup::{assignments, compile_program, compiler_args};
+use crate::setup::{assignments, compile_program, compiler_args, sweep_flag};
 use crate::writes::{Clamped, check_value};
 
 /// An invariant `--check` verifies on the render.
@@ -232,7 +232,7 @@ impl<'a> Verification<'a> {
         if requested {
             refuse(
                 &[
-                    ("--sweep", sweeping),
+                    (sweep_flag(args), sweeping),
                     ("--format ir", args.format == Format::Ir),
                 ],
                 |flag| {

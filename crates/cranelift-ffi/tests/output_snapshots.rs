@@ -1481,6 +1481,18 @@ fn hand_written() -> Vec<Case> {
             ],
         ),
         case(
+            "check_with_points",
+            &[
+                "--double",
+                "--quiet",
+                "--check",
+                "all",
+                "--points",
+                "tests/output/dsp/points.csv",
+                "tests/output/dsp/filt.dsp",
+            ],
+        ),
+        case(
             "compare_with_at",
             &[
                 "--double",
