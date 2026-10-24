@@ -705,8 +705,8 @@ Points pratiques:
   mutables, les soundfiles et les fonctions étrangères non reconnues;
 - les lectures de tables read-only utilisent une pente par différence finie
   symétrique, pas une dérivée analytique du contenu de table;
-- les formules non lisses ne sont pas régularisées automatiquement; la dérivée
-  actuelle de `abs` peut produire `NaN` en zéro;
+- les formules non lisses ne sont pas régularisées automatiquement, sauf `abs`,
+  dont la dérivée est le signe, nul en zéro;
 - les gros patchs expérimentaux doivent être réduits en petits cas validables
   avant d'être considérés comme des exemples de référence.
 

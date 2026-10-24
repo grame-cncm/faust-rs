@@ -429,9 +429,12 @@ is itself matched as an explicit seed before node dispatch):
 At these boundaries, a zero tangent means "no implemented forward rule", not a
 general mathematical assertion. The primal signal is preserved.
 
-Rules at non-differentiable points retain their emitted formula. For example,
-the current derivative of `abs(x)` is `x / abs(x)`, which is undefined and may
-produce `NaN` at `x = 0`.
+Rules at non-differentiable points retain their emitted formula, with one
+exception: the derivative of `abs(x)` is `sign(x)`, taken as 0 at `x = 0` (the
+value of a central difference). It was `x / abs(x)` until 2026-10-24, which is
+`0 / 0` there: one `abs` of a value that is 0 at run time made every tangent
+`NaN`, whatever the seed. `sqrt`, `log` and a division by a value that is 0
+still give an infinite factor there, and `NaN` when the tangent is 0.
 
 ## 7. Demonstration DSP Examples
 

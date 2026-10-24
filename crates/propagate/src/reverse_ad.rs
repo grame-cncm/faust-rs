@@ -601,7 +601,6 @@ impl<'a> ReverseADTransform<'a> {
             RadUnaryMathRule::Exp => b.exp(x),
             RadUnaryMathRule::Sqrt => b.sqrt(x),
             RadUnaryMathRule::Tan => b.tan(x),
-            RadUnaryMathRule::Abs => b.abs(x),
             _ => x,
         };
         let contrib = rad_unary_contribution(&mut b, rule, x, primal, y_bar);

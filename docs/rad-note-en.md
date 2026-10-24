@@ -180,14 +180,14 @@ same closed-form derivatives as FAD:
 | `log(x)` | `1 / x` |
 | `log10(x)` | `1 / (x · ln 10)` |
 | `sqrt(x)` | `1 / (2 · √x)` |
-| `abs(x)` | `x / \|x\|` |
+| `abs(x)` | `sign(x)`, 0 at `x = 0` |
 | `acos(x)` | `-1 / √(1 - x²)` |
 | `asin(x)` | `1 / √(1 - x²)` |
 | `atan(x)` | `1 / (1 + x²)` |
 
-At non-differentiable points the emitted formula is not regularized. In
-particular, the current `abs` rule can produce `NaN` at `x = 0` because it uses
-`x / |x|`.
+At non-differentiable points the emitted formula is not regularized, except
+for `abs`, whose rule is the sign with `sign(0) = 0` (the value of a central
+difference; the former `x / |x|` was `NaN` at 0 whatever the cotangent).
 
 ### 3.4 Binary math
 

@@ -65,6 +65,12 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Additional adapted behavior: differentiating a read-only table index uses a
   symmetric finite-difference slope. This is a documented derivative model,
   not C++ semantic parity.
+- Implemented correction (2026-10-24, shared with `rad`): the derivative of
+  `abs(x)` is `sign(x)` with `sign(0) = 0`, the value of a central difference.
+  It was `x / abs(x)`, `0 / 0` at a value that is 0 at run time, which made
+  every tangent `NaN` whatever the seed (the faust-elements string models, a
+  silent delay line). Pinned by `abs_at_zero_has_a_zero_derivative_in_fad_and_rad`
+  in `crates/compiler/tests/rad_runtime.rs`.
 - Implemented correction at `f18a50c8`: bargraphs forward the wrapped signal's
   tangents while retaining the meter on the rebuilt primal; see the
   [2026-09-19 review](fad-clock-domains-explanation-and-review-2026-09-19-en.md).
@@ -106,6 +112,9 @@ verified Rust extension must not be presented as a proof of C++ parity.
   finite difference, `BlockReverseAD`) in `crates/compiler/tests/rad_runtime.rs`.
   The gap was first recorded in the
   [2026-09-19 review, §10](fad-clock-domains-explanation-and-review-2026-09-19-en.md#10-what-these-results-do-not-establish).
+- Implemented correction (2026-10-24): the `abs` rule is the sign, 0 at 0, as
+  under `fad` (DIFF-SRC-001), in the symbolic sweep and in `BlockReverseAD`
+  (one shared formula, `signals::ad_rules`).
 - Compatibility impact: the source form and `BlockReverseAD` semantics have no
   pinned C++ source/backend oracle. Validation uses symbolic identities,
   FAD/RAD agreement, finite differences, and optimized/unoptimized runtime

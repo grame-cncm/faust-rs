@@ -128,13 +128,15 @@
 //! | `log(x)` | `1 / x` | `(1 / x) * x'` |
 //! | `log10(x)` | `1 / (x · ln 10)` | `(1 / (x * log(10))) * x'` |
 //! | `sqrt(x)` | `1 / (2 · √x)` | `(1 / (2 * sqrt(x))) * x'` |
-//! | `abs(x)` | `x / abs(x)` (sign) | `(x / abs(x)) * x'` |
+//! | `abs(x)` | `sign(x)`, 0 at 0 | `select2(x > 0, select2(x < 0, 0, -x'), x')` |
 //! | `acos(x)` | `−1 / √(1 − x²)` | `(-1 / sqrt(1 - x²)) * x'` |
 //! | `asin(x)` | `1 / √(1 − x²)` | `(1 / sqrt(1 - x²)) * x'` |
 //! | `atan(x)` | `1 / (1 + x²)` | `(1 / (1 + x²)) * x'` |
 //!
-//! Note: `abs` is not differentiable at `x = 0`; the expression `x/|x|`
-//! has undefined behaviour there and produces `NaN` or `±inf` at runtime.
+//! Note: `abs` is not differentiable at `x = 0`; the rule takes the
+//! subgradient 0 there, the value of a central difference. The former
+//! `(x / abs(x)) * x'` was `0 / 0`, NaN, at 0, for every seed: one `abs` of a
+//! value that is 0 at run time (a silent delay line) made every tangent NaN.
 //!
 //! ## Binary math (`pow`, `min`, `max`)
 //!
@@ -998,9 +1000,13 @@ impl<'a> ForwardADTransform<'a> {
                 x,
                 |b, primal_x| b.abs(primal_x),
                 |b, primal_x, tangent_x| {
-                    let denom = b.abs(primal_x);
-                    let sign = b.div(primal_x, denom);
-                    b.mul(sign, tangent_x)
+                    // sign(x) * x' with sign(0) = 0 (see the module table)
+                    let zero = b.real(0.0);
+                    let positive = b.gt(primal_x, zero);
+                    let negative = b.lt(primal_x, zero);
+                    let minus = b.sub(zero, tangent_x);
+                    let below = b.select2(negative, zero, minus);
+                    b.select2(positive, below, tangent_x)
                 },
             ),
             SigMatch::Acos(x) => self.unary_chain(

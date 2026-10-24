@@ -46,7 +46,6 @@ use crate::signal_fir::placement::Bucket;
 use crate::signal_fir::recursion::RecursionState;
 use crate::signal_fir::{ControlRateMode, ProcessingApi};
 use crate::signal_prepare::SimpleSigType;
-use signals::ad_rules::RadFormulaBuilder;
 
 /// Monotonic counters for all generated variable names.
 #[derive(Default)]
@@ -302,9 +301,7 @@ impl<'a> SignalToFirLower<'a> {
         // more per sample of the block. The dead value was eliminated, the
         // update was not: the primal drifted from the second block on.
         //
-        // `abs` reads the operand, which is taped, and its own output, which
-        // is not: `|x|` is rebuilt here from the taped operand rather than
-        // loaded, for the same reason.
+        // `abs` reads only the operand, which is taped: its rule is the sign.
         let (x_fir, taped_primal) = match rule {
             RadUnaryMathRule::Exp
             | RadUnaryMathRule::Exp10
@@ -318,7 +315,6 @@ impl<'a> SignalToFirLower<'a> {
         let mut b = FirRadFormulaBuilder::new(self, real_ty.clone());
         let primal = match (rule, taped_primal) {
             (_, Some(primal)) => primal,
-            (RadUnaryMathRule::Abs, None) => b.abs(x_fir),
             (_, None) => x_fir,
         };
         let x_adj = rad_unary_contribution(&mut b, rule, x_fir, primal, y_bar);

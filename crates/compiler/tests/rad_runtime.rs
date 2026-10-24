@@ -2921,3 +2921,37 @@ fn rad_adjoint_passes_through_a_bargraph_in_a_recursive_body() {
         },
     );
 }
+
+/// `abs` at a value that is 0 at run time: its derivative is taken as 0 (the
+/// central difference's value), in `fad`, in the symbolic `rad` and in the
+/// block reverse AD of a recursion. The former rule, `x / |x|`, was 0 / 0
+/// there and made every tangent NaN. `d/dx (x + |x - 0.5|)` at `x = 0.5` is 1;
+/// through `+ ~ *(0.5)` the block reverse AD gives each frame `n` of a block
+/// of `N` what it adds to the outputs from `n` to the block's end,
+/// `sum_{k<N-n} 2^-k = 2 - 2^-(N-1-n)`.
+#[test]
+fn abs_at_zero_has_a_zero_derivative_in_fad_and_rad() {
+    let frames = 8;
+    let cases = [
+        ("abs_zero_fad", "fad(x + abs(x - 0.5), x)", false),
+        ("abs_zero_rad", "rad(x + abs(x - 0.5), x)", false),
+        (
+            "abs_zero_rad_rec",
+            "rad(x + abs(x - 0.5) : + ~ *(0.5), x)",
+            true,
+        ),
+    ];
+    for (stem, process, recursive) in cases {
+        let source = format!("x = hslider(\"x\", 0.5, 0, 1, 0.01);\nprocess = {process};\n");
+        let outputs = run_interp_temp_source(stem, &source, frames);
+        let grad = &outputs[1];
+        for (n, &value) in grad.iter().enumerate() {
+            let expected = if recursive {
+                2.0 - 0.5_f32.powi(i32::try_from(frames - 1 - n).expect("frame index"))
+            } else {
+                1.0
+            };
+            assert_close(value, expected, 1e-6, &format!("{stem} frame {n}"));
+        }
+    }
+}

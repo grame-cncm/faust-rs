@@ -270,8 +270,15 @@ pub fn rad_unary_contribution<B: RadFormulaBuilder>(
             b.div(y_bar, denom)
         }
         RadUnaryMathRule::Abs => {
-            let num = b.mul(y_bar, x);
-            b.div(num, primal)
+            // sign(x) * y_bar, with sign(0) = 0: `x / |x|` is 0 / 0 there,
+            // NaN even when y_bar is 0, and 0 is the central difference's
+            // value (the subgradient of `|x|` at 0 that it picks)
+            let zero = b.zero();
+            let positive = b.gt(x, zero);
+            let negative = b.lt(x, zero);
+            let minus = b.sub(zero, y_bar);
+            let below = b.select_nonzero(negative, minus, zero);
+            b.select_nonzero(positive, y_bar, below)
         }
         RadUnaryMathRule::Acos => {
             let one = b.one();
@@ -801,6 +808,19 @@ mod tests {
                 "tan'({x}): got {got}, expected {expected}, rel {rel}"
             );
         }
+    }
+
+    /// The `abs` contribution is `sign(x) * y_bar` with `sign(0) = 0`: the
+    /// former `y_bar * x / |x|` was NaN at 0 whatever `y_bar`, 0 included.
+    #[test]
+    fn ad_rules_abs_contribution_is_the_sign_and_zero_at_zero() {
+        let mut b = F64Builder;
+        for (x, expected) in [(-2.0, -3.0), (0.0, 0.0), (-0.0, 0.0), (5.0e-300, 3.0)] {
+            let got = rad_unary_contribution(&mut b, RadUnaryMathRule::Abs, x, f64::abs(x), 3.0);
+            assert_eq!(got, expected, "abs'({x}) * 3");
+        }
+        let got = rad_unary_contribution(&mut b, RadUnaryMathRule::Abs, 0.0, 0.0, 0.0);
+        assert_eq!(got, 0.0, "a zero cotangent through abs(0) stays zero");
     }
 
     /// The symbolic `tan` contribution reads the primal and never calls `cos`.

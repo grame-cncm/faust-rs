@@ -335,8 +335,9 @@ cargo run --release -p compiler --example rad_vs_fad_perf
   a zero gradient, as under FAD. A table read on the primal path, such as an
   oscillator in the excitation, is supported in both sweeps
   (`rad-note-en.md` §3.6).
-- **Non-smooth points.** Rules are not automatically regularized; for example,
-  the current `abs` derivative uses `x / abs(x)` and may produce `NaN` at zero.
+- **Non-smooth points.** Rules are not automatically regularized, except
+  `abs`, whose derivative is the sign, 0 at zero; `sqrt`, `log` and a
+  division at zero still give an infinite factor.
 
 ## Source pointers
 

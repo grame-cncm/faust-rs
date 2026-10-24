@@ -639,8 +639,8 @@ Keep these points in mind:
   foreign functions;
 - read-only table lookup uses a symmetric finite-difference slope, not an
   analytic derivative of the table contents;
-- non-smooth formulas are not regularized automatically; the current `abs`
-  derivative may produce `NaN` at zero;
+- non-smooth formulas are not regularized automatically, except `abs`, whose
+  derivative is the sign, 0 at zero;
 - large experimental patches should be reduced to small, testable cases before
   being treated as reference examples.
 
