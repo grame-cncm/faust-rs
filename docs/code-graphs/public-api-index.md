@@ -1152,9 +1152,12 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `struct` | `Grid` | `crates/cranelift-ffi/src/probe/train.rs:161` |
 | `fn` | `Grid::best_assignments` | `crates/cranelift-ffi/src/probe/train.rs:175` |
 | `struct` | `FdCheck` | `crates/cranelift-ffi/src/probe/train.rs:186` |
-| `fn` | `train` | `crates/cranelift-ffi/src/probe/train.rs:328` |
-| `fn` | `grid` | `crates/cranelift-ffi/src/probe/train.rs:459` |
-| `fn` | `fd_check` | `crates/cranelift-ffi/src/probe/train.rs:541` |
+| `enum` | `FdScheme` | `crates/cranelift-ffi/src/probe/train.rs:215` |
+| `fn` | `FdScheme::within` | `crates/cranelift-ffi/src/probe/train.rs:229` |
+| `fn` | `FdScheme::name` | `crates/cranelift-ffi/src/probe/train.rs:243` |
+| `fn` | `train` | `crates/cranelift-ffi/src/probe/train.rs:371` |
+| `fn` | `grid` | `crates/cranelift-ffi/src/probe/train.rs:502` |
+| `fn` | `fd_check` | `crates/cranelift-ffi/src/probe/train.rs:588` |
 | `type` | `FaustFloat` | `crates/cranelift-ffi/src/types.rs:34` |
 | `use` | `ffi_common::UIGlue` | `crates/cranelift-ffi/src/types.rs:37` |
 | `use` | `ffi_common::MetaGlue` | `crates/cranelift-ffi/src/types.rs:40` |

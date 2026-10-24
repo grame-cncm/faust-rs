@@ -187,23 +187,66 @@ pub struct FdCheck {
     pub path: String,
     /// The gradient lane summed over the block.
     pub rad: f64,
-    /// The reference: the central differences of the summed loss lane at the
-    /// step and at half of it, extrapolated to a zero step (Richardson),
-    /// `(4 D(h/2) - D(h)) / 3`.
+    /// The reference: the differences of the summed loss lane ([`FdScheme`])
+    /// at the step and at half of it, extrapolated to a zero step
+    /// (Richardson), `(4 D(h/2) - D(h)) / 3`.
     ///
     /// A central difference is off by the loss's third derivative times
     /// `h^2 / 6`, which does not shrink with the gradient: at the end of a
     /// descent, where the gradient is small by construction, that error is
     /// all that is left, and the plain difference reports it as the
     /// gradient's. The extrapolation cancels the `h^2` term and leaves one in
-    /// `h^4`.
+    /// `h^4`. A one-sided difference is off by `h^2 / 3` times the third
+    /// derivative; the extrapolation leaves one in `h^3`.
     pub fd: f64,
-    /// The plain central difference at the step, `D(h)`: what `fd` was before
+    /// The plain difference at the step, `D(h)`: what `fd` was before
     /// the extrapolation. By how much the two differ is the error the plain
     /// difference had.
     pub fd_plain: f64,
     /// `|rad - fd| / max(|fd|, 1)`.
     pub relative_error: f64,
+    /// Where the differences took their points: around the value, or on one
+    /// side of it when the value is within `2 h` of a bound of its range.
+    pub scheme: FdScheme,
+}
+
+/// The points of one control's finite differences ([`fd_check`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FdScheme {
+    /// `(f(x + h) - f(x - h)) / 2h`.
+    Central,
+    /// `(-3 f(x) + 4 f(x + h) - f(x + 2h)) / 2h`, at the lower bound.
+    Forward,
+    /// `(3 f(x) - 4 f(x - h) + f(x - 2h)) / 2h`, at the upper bound.
+    Backward,
+}
+
+impl FdScheme {
+    /// The scheme whose points `x`, `x ± h`, `x ± 2h` stay in `[min, max]`:
+    /// central when `x ± h` does, else one-sided, away from the bound;
+    /// `None` when the range is too narrow for either.
+    #[must_use]
+    pub fn within(x: f64, h: f64, min: f64, max: f64) -> Option<Self> {
+        if x - h >= min && x + h <= max {
+            Some(Self::Central)
+        } else if x + 2.0 * h <= max {
+            Some(Self::Forward)
+        } else if x - 2.0 * h >= min {
+            Some(Self::Backward)
+        } else {
+            None
+        }
+    }
+
+    /// The name printed and written to JSON.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Central => "central",
+            Self::Forward => "forward",
+            Self::Backward => "backward",
+        }
+    }
 }
 
 /// A trained control: its path and the range it is kept in.
@@ -529,15 +572,19 @@ pub fn grid(
     })
 }
 
-/// Checks every gradient lane of `spec` against central finite differences
-/// of the loss lane, with steps `h` and `h / 2` on each control in turn,
+/// Checks every gradient lane of `spec` against finite differences of the
+/// loss lane, with steps `h` and `h / 2` on each control in turn,
 /// extrapolated (see [`FdCheck::fd`]), on the first block of the excitation: at `at`, one value per trained control, or when
 /// `None` at the controls' starting values (their widgets' initial values,
 /// or what `spec.sets` gives them). Every evaluation runs on a fresh instance
 /// so that the state is the same each time.
 ///
-/// The differences step across a bound when the point is on one: the program
-/// computes there as anywhere, the range being the host's business.
+/// The differences never set a control outside its range: a value the
+/// program never sees otherwise can take it anywhere (a table read at a
+/// negative index, a cliff past a bound). Within `h` of a bound, they are
+/// taken on the other side, by the one-sided formula of the same order
+/// ([`FdScheme`]) and the same extrapolation; a range narrower than that on
+/// both sides is an error that names it.
 pub fn fd_check(
     factory: &Rc<Factory>,
     sample_rate: i32,
@@ -581,15 +628,30 @@ pub fn fd_check(
         .iter()
         .enumerate()
         .map(|(k, param)| {
-            let difference = |step: f64| -> Result<f64, String> {
-                let mut plus = init.clone();
-                plus[k] += step;
-                let mut minus = init.clone();
-                minus[k] -= step;
-                Ok(
-                    (evaluate(&plus)?[spec.loss_lane] - evaluate(&minus)?[spec.loss_lane])
-                        / (2.0 * step),
+            let scheme = FdScheme::within(init[k], h, param.min, param.max).ok_or_else(|| {
+                format!(
+                    "--fd-check: {} = {} has no finite difference of step {h} inside \
+                     its range [{}, {}]: give a smaller --fd-step",
+                    param.path, init[k], param.min, param.max
                 )
+            })?;
+            // the loss lane with control k moved by `offset`
+            let loss_at = |offset: f64| -> Result<f64, String> {
+                let mut values = init.clone();
+                values[k] += offset;
+                Ok(evaluate(&values)?[spec.loss_lane])
+            };
+            let at_x = base[spec.loss_lane];
+            let difference = |step: f64| -> Result<f64, String> {
+                Ok(match scheme {
+                    FdScheme::Central => (loss_at(step)? - loss_at(-step)?) / (2.0 * step),
+                    FdScheme::Forward => {
+                        (-3.0 * at_x + 4.0 * loss_at(step)? - loss_at(2.0 * step)?) / (2.0 * step)
+                    }
+                    FdScheme::Backward => {
+                        (3.0 * at_x - 4.0 * loss_at(-step)? + loss_at(-2.0 * step)?) / (2.0 * step)
+                    }
+                })
             };
             let fd_plain = difference(h)?;
             let fd = (4.0 * difference(h / 2.0)? - fd_plain) / 3.0;
@@ -600,6 +662,7 @@ pub fn fd_check(
                 fd,
                 fd_plain,
                 relative_error: (rad - fd).abs() / fd.abs().max(1.0),
+                scheme,
             })
         })
         .collect()
@@ -648,6 +711,17 @@ mod tests {
             Factory::compile_with_args(&path.to_string_lossy(), &dirs, &[], true, 0)
                 .expect("compile"),
         ))
+    }
+
+    /// The factory of a test-local program, written to a temporary file.
+    fn source_factory(name: &str, source: &str) -> Rc<Factory> {
+        let dir = std::env::temp_dir().join(format!("faustprobe-train-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temporary directory");
+        let path = dir.join(format!("{name}.dsp"));
+        std::fs::write(&path, source).expect("write the program");
+        let factory = Factory::compile(&path.to_string_lossy(), &[], true, 0).expect("compile");
+        let _ = std::fs::remove_file(&path);
+        Rc::new(factory)
     }
 
     /// The corpus programs expand deeply at compile time: 64 MiB of stack,
@@ -817,5 +891,52 @@ mod tests {
                     .contains("nope")
             );
         });
+    }
+
+    /// A loss with a cliff just outside each range, the controls on their
+    /// bounds: `a` at its minimum, `b` at its maximum. A central difference
+    /// would read the cliff; the one-sided ones stay inside, are named, and
+    /// match the exact tangents of `exp` (second order, extrapolated).
+    #[test]
+    fn fd_check_at_a_bound_stays_inside_the_range() {
+        let factory = source_factory(
+            "fd_bounds",
+            r#"
+a = hslider("a", 0, 0, 1, 0.001);
+b = hslider("b", 1, 0, 1, 0.001);
+loss = exp(a) + exp(b) + 1.0e6 * ((a < 0) + (b > 1));
+process = fad(loss, (a, b));
+"#,
+        );
+        let mut s = spec(&["a", "b"], 16, 0, 0.01, 1);
+        s.input = InputMode::Zero;
+        let checks = fd_check(&factory, 44_100, &s, 1e-3, None).expect("fd-check");
+        let schemes: Vec<FdScheme> = checks.iter().map(|c| c.scheme).collect();
+        assert_eq!(schemes, [FdScheme::Forward, FdScheme::Backward]);
+        for check in &checks {
+            assert!(check.relative_error < 1e-7, "{check:?}");
+        }
+        // inside the range, the central difference as before
+        s.sets = vec![("a".to_owned(), 0.5), ("b".to_owned(), 0.5)];
+        let checks = fd_check(&factory, 44_100, &s, 1e-3, None).expect("fd-check");
+        assert!(checks.iter().all(|c| c.scheme == FdScheme::Central));
+    }
+
+    /// A range narrower than two steps on both sides of the value has no
+    /// difference inside it: refused, with the range and the remedy.
+    #[test]
+    fn fd_check_refuses_a_range_narrower_than_its_step() {
+        let factory = source_factory(
+            "fd_narrow",
+            r#"
+a = hslider("a", 0.0005, 0, 0.001, 0.0001);
+process = fad(a * a, a);
+"#,
+        );
+        let mut s = spec(&["a"], 16, 0, 0.01, 1);
+        s.input = InputMode::Zero;
+        let error = fd_check(&factory, 44_100, &s, 1e-3, None).expect_err("too narrow");
+        assert!(error.contains("--fd-step"), "{error}");
+        assert!(fd_check(&factory, 44_100, &s, 1e-4, None).is_ok());
     }
 }

@@ -15,14 +15,16 @@ exit=1
             "fd_plain": 476.52180226776153,
             "path": "/ddsp_rad_host_block_resonator/a1",
             "rad": 476.5236991011332,
-            "relative_error": 4.4577815685479953e-13
+            "relative_error": 4.4577815685479953e-13,
+            "scheme": "central"
           },
           {
             "fd": 335.87214490673983,
             "fd_plain": 335.87323858868956,
             "path": "/ddsp_rad_host_block_resonator/a2",
             "rad": 335.8721449065594,
-            "relative_error": 5.371717011968985e-13
+            "relative_error": 5.371717011968985e-13,
+            "scheme": "central"
           }
         ],
         "passes": false,

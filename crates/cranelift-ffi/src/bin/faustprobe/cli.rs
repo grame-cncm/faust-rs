@@ -406,7 +406,9 @@ pub(crate) struct Args {
     /// Check the gradient lanes of the `--train` controls against central
     /// finite differences of the loss lane, on one block from a fresh
     /// instance per evaluation. Fails when a relative error exceeds
-    /// `--fd-tolerance`.
+    /// `--fd-tolerance`. A control is never set outside its range: within
+    /// `--fd-step` of a bound the differences are one-sided, away from it,
+    /// and the line says so.
     ///
     /// `--fd-check` alone, or `--fd-check=start`, checks at the descent's
     /// starting point, before it (or instead of it, with `--blocks 0`);

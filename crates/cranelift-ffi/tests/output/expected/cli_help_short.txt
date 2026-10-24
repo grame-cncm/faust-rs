@@ -106,7 +106,7 @@ Options:
       --reset-per-block
           Start every `--train` block from a cleared state and from frame 0 of the excitation: one pass over the same response per block, an offline calibration with one epoch per block (with `--in file:` the response is the file). Without it the blocks are the successive stretches of one stream and the state carries over
       --fd-check[=<WHERE>]
-          Check the gradient lanes of the `--train` controls against central finite differences of the loss lane, on one block from a fresh instance per evaluation. Fails when a relative error exceeds `--fd-tolerance` [possible values: start, end, both]
+          Check the gradient lanes of the `--train` controls against central finite differences of the loss lane, on one block from a fresh instance per evaluation. Fails when a relative error exceeds `--fd-tolerance`. A control is never set outside its range: within `--fd-step` of a bound the differences are one-sided, away from it, and the line says so [possible values: start, end, both]
       --fd-step <FD_STEP>
           Step of the finite differences [default: 0.001]
       --fd-tolerance <FD_TOLERANCE>

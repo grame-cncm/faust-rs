@@ -1051,10 +1051,25 @@ notation, the gradient being small by then:
 ```
 
 The check at the end fails the command after the rows and the trained values
-were printed. On a bound, the differences step across it: the program
-computes there as anywhere, the range being the host's business.
+were printed.
 
-*The reference.* `fd` is the central difference at `--fd-step` (default
+*On a bound.* The differences never set a control outside its range: a value
+the program never sees otherwise can take it anywhere, and a table read at
+`int(x * N)` with `x` just below its minimum reads before the table (the
+faust-elements `signature` at 0 crashed the probe that way). Within
+`--fd-step` of a bound they are one-sided, away from it, with the formula of
+the same order, `(-3 f(x) + 4 f(x + h) - f(x + 2h)) / 2h` at the lower bound
+and its mirror at the upper one, and the same extrapolation; the line names
+it:
+
+```text
+# fd-check /probe_signature/unit/signature: rad 0.000000 fd 0.000000 relative error 0.00e0 (forward, at a bound)
+```
+
+A range narrower than two steps on both sides of the value is refused with
+the range and the remedy, a smaller `--fd-step`.
+
+*The reference.* `fd` is the central difference (one-sided on a bound) at `--fd-step` (default
 1e-3) and at half of it, extrapolated to a zero step, `(4 D(h/2) - D(h)) / 3`.
 A plain central difference is off by the loss's third derivative times `h^2 /
 6`, an error that does not shrink with the gradient: on the resonator above it
@@ -1109,7 +1124,8 @@ took.
 one document: `schema_version`, `dsp`, `sr`, and `train` with `options` (the
 optimiser, `lr`, `block`, `blocks`, `reset_per_block`), `clamped`, `grid`
 (`points[]` with `set` and `loss`, `best`), `fd_check` (`start` and `end`:
-`checks[]` with `path`, `rad`, `fd`, `fd_plain`, `relative_error`; `worst_relative_error`,
+`checks[]` with `path`, `rad`, `fd`, `fd_plain`, `relative_error`, `scheme`:
+`"central"`, `"forward"` or `"backward"`; `worst_relative_error`,
 `tolerance`, `passes`), `rows[]` (`block`, `loss`, `values`, and `grads`
 always, thinned by `--every`), `trained[]` (`path`, `value`, `min`, `max`,
 `blocks_on_lower`, `blocks_on_upper`, `ends_on`: `"lower"`, `"upper"` or

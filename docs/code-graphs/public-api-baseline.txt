@@ -833,6 +833,7 @@ enum Bound
 enum ControlKind
 enum Descriptor
 enum Event
+enum FdScheme
 enum InputMode
 enum KeyConversion
 enum Optimizer
@@ -872,6 +873,8 @@ fn Factory::compile_from_string
 fn Factory::compile_from_string_with_args
 fn Factory::compile_with_args
 fn Factory::sha_key
+fn FdScheme::name
+fn FdScheme::within
 fn Grid::best_assignments
 fn Grid::frequencies
 fn Grid::parse

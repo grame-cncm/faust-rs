@@ -10,7 +10,9 @@ use std::rc::Rc;
 use cranelift_ffi::probe::engine::{Factory, Probe};
 use cranelift_ffi::probe::number::NumberFormat;
 use cranelift_ffi::probe::timing::BlockTimer;
-use cranelift_ffi::probe::train::{self, BoundStats, FdCheck, Optimizer, TrainSpec, Trained};
+use cranelift_ffi::probe::train::{
+    self, BoundStats, FdCheck, FdScheme, Optimizer, TrainSpec, Trained,
+};
 
 use crate::cli::{Args, FdWhere, Format, OptimizerKind, Protocol, refuse, verification_requested};
 use crate::report::{document, json_number, print_json, three_digits, time_lines, timing_json};
@@ -59,14 +61,19 @@ pub(crate) fn fd_check_report(
     for check in checks {
         // at the end of a descent the gradient is small, which is the point:
         // six decimals would print it as zero
+        // a one-sided difference is named: the value is on a bound
+        let side = match check.scheme {
+            FdScheme::Central => String::new(),
+            scheme => format!(" ({}, at a bound)", scheme.name()),
+        };
         lines.push(if place == "start" {
             format!(
-                "# fd-check {}: rad {:.6} fd {:.6} relative error {:.2e}",
+                "# fd-check {}: rad {:.6} fd {:.6} relative error {:.2e}{side}",
                 check.path, check.rad, check.fd, check.relative_error
             )
         } else {
             format!(
-                "# fd-check{tag} {}: rad {:.6e} fd {:.6e} relative error {:.2e}",
+                "# fd-check{tag} {}: rad {:.6e} fd {:.6e} relative error {:.2e}{side}",
                 check.path, check.rad, check.fd, check.relative_error
             )
         });
@@ -94,6 +101,7 @@ pub(crate) fn fd_check_report(
             "fd": json_number(check.fd),
             "fd_plain": json_number(check.fd_plain),
             "relative_error": json_number(check.relative_error),
+            "scheme": check.scheme.name(),
         })).collect::<Vec<_>>(),
     });
     let failure = (!passes).then(|| {

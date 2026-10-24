@@ -257,6 +257,14 @@ must run unchanged with Faust C++ should not pass them.
   impulse-test`. Evidence:
   [`docs/faustprobe-user-guide-en.md`](../docs/faustprobe-user-guide-en.md),
   [`faustprobe-generic-test-tool-design-2026-08-14-en.md`](faustprobe-generic-test-tool-design-2026-08-14-en.md).
+  `--fd-check` never sets a control outside its range: within `--fd-step` of
+  a bound its differences are one-sided (second order, extrapolated), named
+  in the line and as `scheme` in the JSON, and a range narrower than two
+  steps is refused (2026-10-24; before, they stepped across the bound, and a
+  table read at `int(x * N)` with `x` below its minimum crashed the probe on
+  faust-elements). Regression coverage: `fd_check_at_a_bound_stays_inside_the_range`
+  and `fd_check_refuses_a_range_narrower_than_its_step` in
+  `crates/cranelift-ffi/src/probe/train.rs`.
   Comparisons at zero absolute and relative tolerance require bit identity,
   including signed zeros. `--check determinism` runs its second compilation
   and render in a separate process so equal FIR keys cannot reuse the first
