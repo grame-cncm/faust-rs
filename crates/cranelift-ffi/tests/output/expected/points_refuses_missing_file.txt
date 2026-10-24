@@ -1,0 +1,7 @@
+$ faustprobe --double --points tests/output/dsp/no_such_points.csv tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --points tests/output/dsp/no_such_points.csv: No such file or directory (os error 2)
+

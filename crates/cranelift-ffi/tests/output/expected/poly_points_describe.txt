@@ -1,0 +1,9 @@
+$ faustprobe --double --nvoices 2 -n 4410 --note 60:100@0..2205 --points tests/output/dsp/poly_points.csv --describe loudness,attack,decay,sustain:0.03..0.05,centroid tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+bright,loudness,attack,decay:30,sustain:0.03..0.05,centroid
+0.1,-15.562177738426822,0.01,0.06,-0.22185647110802975,396.07263162799126
+0.9,-14.472962281455779,0.01,0.06,-0.23372538825838518,639.7270053451384
+
+--- stderr
+

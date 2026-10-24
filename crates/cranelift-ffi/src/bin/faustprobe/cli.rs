@@ -236,6 +236,16 @@ pub(crate) struct Args {
     #[arg(long = "sweep", value_name = "PATH=V1,V2,...")]
     pub(crate) sweeps: Vec<String>,
 
+    /// Sweep the points of a CSV file rather than a cartesian product.
+    ///
+    /// The first line that is neither empty nor a `#` comment names the
+    /// controls (paths or fragments, as `--set` takes them), each following
+    /// line is one point: presets, random patches. One compilation for every
+    /// point; each renders from a cleared instance, as with `--sweep`, and
+    /// gives a row headed by the controls, in the file's order.
+    #[arg(long = "points", value_name = "FILE", conflicts_with = "sweeps")]
+    pub(crate) points: Option<String>,
+
     /// Reduce each render to one number per channel: rms, peak, energy, dc, f0,
     /// `sfdr` or `thd`.
     ///
@@ -253,6 +263,40 @@ pub(crate) struct Args {
     /// fundamental — a bright pluck, a filtered saw — is misread without it.
     #[arg(long = "f0", value_name = "HZ")]
     pub(crate) f0: Option<f64>,
+
+    /// Describe each render: `loudness`, `attack`, `decay[:DB]`,
+    /// `sustain:A..B`, `centroid[:A..B]`, `width[:A..B]`, separated by commas.
+    ///
+    /// Computed on the window (after `--skip`), times in seconds from its
+    /// first frame, on the mid (the mean of the outputs), in envelope frames
+    /// of `--describe-hop`: `loudness` is the loudest frame (dBFS), `attack`
+    /// the start of the first frame at 90 % of its amplitude, `decay:DB` (default 30) the time from it down DB dB
+    /// (`NaN` when not reached), `sustain:A..B` the level of the frames within
+    /// `[A, B)` s against it (dB), `centroid` the spectral centroid (Hz, Hann
+    /// window, hop of half a transform), `width` side against mid energy of two
+    /// outputs (dB). A sweep's rows get one column per descriptor, named as
+    /// written here (`decay` is `decay:30`); a single render a `# describe`
+    /// line; JSON a `describe` object.
+    #[arg(long = "describe", value_name = "LIST")]
+    pub(crate) describe: Option<String>,
+
+    /// Envelope frame of `--describe`, seconds.
+    #[arg(
+        long = "describe-hop",
+        value_name = "SECONDS",
+        default_value_t = 0.01,
+        requires = "describe"
+    )]
+    pub(crate) describe_hop: f64,
+
+    /// Transform length of `--describe centroid`, a power of two.
+    #[arg(
+        long = "describe-fft",
+        value_name = "N",
+        default_value_t = 2048,
+        requires = "describe"
+    )]
+    pub(crate) describe_fft: usize,
 
     /// Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable).
     ///
@@ -471,7 +515,8 @@ pub(crate) struct Args {
             "render", "sr", "block", "opt_level", "sets", "set_a", "set_b", "clamp",
             "input", "skip", "every", "list_params", "bargraphs", "quiet", "precision",
             "out", "compare", "reference", "tolerance", "rel_tolerance",
-            "compare_outputs", "checks", "fail_above", "sweeps", "reduce", "f0", "ats",
+            "compare_outputs", "checks", "fail_above", "sweeps", "points", "reduce", "f0",
+            "describe", "describe_hop", "describe_fft", "ats",
             "notes", "chords", "nvoices", "effect", "voice_stop_level", "train",
             "loss_lane", "grad_lane", "optimizer", "lr", "blocks", "reset_per_block",
             "fd_check", "fd_step", "fd_tolerance", "train_verbose", "time", "freqresp",
@@ -609,7 +654,9 @@ pub(crate) fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
         ("--set", !args.sets.is_empty()),
         ("--format", args.format != Format::Ir),
         ("--sweep", !args.sweeps.is_empty()),
+        ("--points", args.points.is_some()),
         ("--reduce", args.reduce.is_some()),
+        ("--describe", args.describe.is_some()),
         ("--at", !args.ats.is_empty()),
         (
             "--note/--chord",

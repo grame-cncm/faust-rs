@@ -125,6 +125,65 @@ pub fn parse_axis(text: &str) -> Result<Axis, String> {
     })
 }
 
+/// Parse the text of a `--points` file: a sweep given point by point rather
+/// than as a cartesian product (presets, random patches).
+///
+/// The first line that is neither empty nor a `#` comment names the
+/// controls, separated by commas; every following one holds a point, one
+/// number per control. Returns the controls as axes (each with its column's
+/// values, in row order, for the range checks) and the points.
+///
+/// # Errors
+/// A header with an empty or repeated name, a row with another number of
+/// fields or a field that is not a number (with its line), no row at all.
+pub fn parse_points(text: &str) -> Result<(Vec<Axis>, Vec<Point>), String> {
+    let mut lines = text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line.trim()))
+        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'));
+    let (_, header) = lines
+        .next()
+        .ok_or_else(|| "no header line naming the controls".to_owned())?;
+    let mut axes: Vec<Axis> = Vec::new();
+    for name in header.split(',').map(str::trim) {
+        if name.is_empty() {
+            return Err(format!("empty control name in the header `{header}`"));
+        }
+        if axes.iter().any(|axis| axis.path == name) {
+            return Err(format!("`{name}` is named twice in the header"));
+        }
+        axes.push(Axis {
+            path: name.to_owned(),
+            values: Vec::new(),
+        });
+    }
+    let mut points = Vec::new();
+    for (number, line) in lines {
+        let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+        if fields.len() != axes.len() {
+            return Err(format!(
+                "line {number}: {} field(s) for {} control(s)",
+                fields.len(),
+                axes.len()
+            ));
+        }
+        let mut assignments = Vec::with_capacity(axes.len());
+        for (axis, field) in axes.iter_mut().zip(fields) {
+            let value = field
+                .parse::<f64>()
+                .map_err(|_| format!("line {number}: `{field}` is not a number"))?;
+            axis.values.push(value);
+            assignments.push((axis.path.clone(), value));
+        }
+        points.push(Point { assignments });
+    }
+    if points.is_empty() {
+        return Err("no point after the header".to_owned());
+    }
+    Ok((axes, points))
+}
+
 /// Parse a reduction name.
 ///
 /// # Errors
@@ -190,6 +249,35 @@ mod tests {
     #[test]
     fn accepts_a_single_value_axis() {
         assert_eq!(parse_axis("cutoff=440").unwrap().values.len(), 1);
+    }
+
+    #[test]
+    fn points_keep_their_rows() {
+        let text = "# presets\ncutoff, q\n\n100, 0.5\n# a comment\n2000,4\n";
+        let (axes, points) = parse_points(text).unwrap();
+        assert_eq!(axes.len(), 2);
+        assert_eq!(axes[1].values, [0.5, 4.0]);
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].assignments[0], ("cutoff".to_owned(), 2000.0));
+    }
+
+    #[test]
+    fn rejects_malformed_points() {
+        for text in [
+            "",
+            "# only a comment",
+            "a,b",
+            "a,,b\n1,2,3",
+            "a,a\n1,2",
+            "a,b\n1",
+            "a,b\n1,x",
+        ] {
+            assert!(parse_points(text).is_err(), "`{text}` accepted");
+        }
+        assert_eq!(
+            parse_points("a,b\n1,2\n3").unwrap_err(),
+            "line 3: 1 field(s) for 2 control(s)"
+        );
     }
 
     #[test]

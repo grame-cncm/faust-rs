@@ -237,7 +237,12 @@ must run unchanged with Faust C++ should not pass them.
   of the `compute` calls against real time (`--time`), a compile failure as
   the compiler's diagnostics-v2 JSON report (`--error-format json`), and the
   frequency response of a program checked to be linear and time-invariant
-  (`--freqresp`), and the block diagrams of the probed program (`--svg DIR`,
+  (`--freqresp`), sweeps given point by point from a CSV file (`--points`)
+  and sweeps of a polyphonic instrument, each point from a reset instrument
+  (`PolyProbe::reset`), what a render sounds like as a few descriptors
+  defined in the user guide (`--describe`: loudness, attack, decay, sustain,
+  spectral centroid, stereo width; `crates/cranelift-ffi/tests/describe_probe.rs`),
+  and the block diagrams of the probed program (`--svg DIR`,
   draw-only: written into `DIR` alone, named by definition with a `-2`, `-3`
   suffix for a repeated name instead of the C++ address suffix, an index on
   stdout; the C++ drawing options under `faust-rs`'s spellings, `-sd`

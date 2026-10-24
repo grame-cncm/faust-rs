@@ -450,6 +450,23 @@ impl PolyProbe {
         self.state.active_count()
     }
 
+    /// Back to the state of a freshly compiled instrument: every voice and the
+    /// effect at their declared defaults with their state cleared
+    /// ([`Probe::reset`]), and every voice free.
+    ///
+    /// A sweep renders each point from here, as the scalar sweep resets its
+    /// `Probe`: a voice still releasing from one point would otherwise sound
+    /// in the next, and its allocation date decide which voice a note takes.
+    pub fn reset(&mut self) {
+        for voice in &self.voices {
+            voice.probe.reset();
+        }
+        if let Some(effect) = &self.effect {
+            effect.reset();
+        }
+        self.state = poly::PolyState::new(self.voices.len());
+    }
+
     /// Whether an effect DSP (explicit or inline-extracted) is chained after
     /// the mix.
     #[must_use]

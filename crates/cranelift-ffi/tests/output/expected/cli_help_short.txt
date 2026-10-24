@@ -65,10 +65,18 @@ Options:
           Output format for rendered frames [default: csv] [possible values: csv, ir, json]
       --sweep <PATH=V1,V2,...>
           Sweep a control over several values, as `PATH=V1,V2,...` (repeatable)
+      --points <FILE>
+          Sweep the points of a CSV file rather than a cartesian product
       --reduce <R>
           Reduce each render to one number per channel: rms, peak, energy, dc, f0, `sfdr` or `thd`
       --f0 <HZ>
           Fundamental in Hz for `--reduce sfdr` / `--reduce thd`
+      --describe <LIST>
+          Describe each render: `loudness`, `attack`, `decay[:DB]`, `sustain:A..B`, `centroid[:A..B]`, `width[:A..B]`, separated by commas
+      --describe-hop <SECONDS>
+          Envelope frame of `--describe`, seconds [default: 0.01]
+      --describe-fft <N>
+          Transform length of `--describe centroid`, a power of two [default: 2048]
       --at <FRAME> <PATH=VALUE>
           Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable)
       --note <PITCH[:VEL]@ON[..OFF]>

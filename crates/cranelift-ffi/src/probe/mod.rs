@@ -42,6 +42,8 @@
 //! - [`schedule`] — frame-scheduled parameter changes and note events.
 //! - [`sweep`] — parameter sweeps and the reductions applied to each point.
 //! - [`spectrum`] — the radix-2 FFT behind the `f0` reduction.
+//! - [`describe`] — what a render sounds like: loudness, envelope times,
+//!   centroid, width (`--describe`); FFI-free.
 //! - [`number`] — the text of a number: round-trip at the program's width.
 //! - [`eval`] — `--eval`: expressions evaluated in a file's scope.
 //! - [`compare`] — two renders compared, first differing frame first; FFI-free.
@@ -58,6 +60,7 @@
 pub mod audio_file;
 pub mod audio_out;
 pub mod compare;
+pub mod describe;
 pub mod diagram;
 pub mod engine;
 pub mod eval;

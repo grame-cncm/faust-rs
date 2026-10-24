@@ -1,0 +1,10 @@
+$ faustprobe --double --in sine:1000 -n 8192 --sweep cutoff=500,2000 --describe loudness,centroid,decay:10 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,loudness,centroid,decay:10
+500,-13.16734661477514,999.999989494145,NaN
+2000,-7.869588693465957,1000.0000001514137,NaN
+
+--- stderr
+# note: decay:10 is NaN at 2 of 2 point(s): not reached before the window ends (or the window is silent)
+

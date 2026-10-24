@@ -1,0 +1,7 @@
+$ faustprobe --double --describe loudness --freqresp 4 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --describe cannot be combined with --freqresp: the response is the reduction
+

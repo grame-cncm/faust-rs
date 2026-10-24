@@ -1,0 +1,12 @@
+$ faustprobe --double --describe-hop 0.02 tests/output/dsp/gain.dsp
+exit=2
+--- stdout
+
+--- stderr
+error: the following required arguments were not provided:
+  --describe <LIST>
+
+Usage: faustprobe --describe <LIST> --double --describe-hop <SECONDS> <FILE>
+
+For more information, try '--help'.
+

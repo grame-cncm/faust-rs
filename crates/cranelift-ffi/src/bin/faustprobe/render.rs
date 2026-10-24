@@ -20,18 +20,18 @@ use cranelift_ffi::probe::number::NumberFormat;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::RenderStats;
 use cranelift_ffi::probe::schedule::Schedule;
-use cranelift_ffi::probe::spectrum::{dominant_frequency, sfdr_db, thd_db};
-use cranelift_ffi::probe::sweep::{Axis, Point, Reduction, cartesian, parse_reduction};
+use cranelift_ffi::probe::sweep::{Axis, Point};
 
 use crate::cli::{Args, Format, refuse};
 use crate::failure::{failure_context, render_failure};
+use crate::measure::{Measured, Measures};
 use crate::report::{
     Sink, TotalTiming, channel_lines, channels_json, describe_program, document, json_number,
     print_controls, print_json, render_time_lines, silence_notes, timing_json, window_json,
 };
 use crate::setup::{
     Compiled, assignments, build_schedule, compile_timed, number_format, output_labels,
-    parse_input_at, sweep_axes,
+    parse_input_at, sweep_flag, sweep_points,
 };
 use crate::verify::{Subject, Verdict, Verification};
 use crate::writes::{Clamped, Clamps, applied, check_value, prime, written};
@@ -60,7 +60,8 @@ pub(crate) fn run_render(args: &Args, impulse_test: bool) -> Result<(), String> 
 /// What a run will do, validated before any render.
 struct Plan<'a> {
     axes: Vec<Axis>,
-    reduction: Option<Reduction>,
+    /// `--reduce` and `--describe`.
+    measures: Measures,
     schedule: Schedule,
     /// `--set` and, under `--compare`, the values of FILE alone.
     fixed: Vec<(&'a str, f64)>,
@@ -89,8 +90,13 @@ impl<'a> Plan<'a> {
         probe: &Probe,
         impulse_test: bool,
     ) -> Result<Self, String> {
-        let axes = sweep_axes(args)?;
-        let reduction = args.reduce.as_deref().map(parse_reduction).transpose()?;
+        let (axes, points) = sweep_points(args)?;
+        let measures = Measures::prepare(
+            args,
+            probe.outputs(),
+            args.render.saturating_sub(args.skip),
+            probe.sample_rate(),
+        )?;
         let schedule = build_schedule(args)?;
         if schedule.needs_poly() {
             return Err("--note/--chord require --nvoices > 0".to_owned());
@@ -104,9 +110,10 @@ impl<'a> Plan<'a> {
             for path in schedule.param_paths() {
                 if let Some(axis) = axes.iter().find(|a| a.path == path) {
                     return Err(format!(
-                        "--at writes `{}`, which --sweep is also driving; \
+                        "--at writes `{}`, which {} is also driving; \
                          the scheduled write would override the swept value",
-                        axis.path
+                        axis.path,
+                        sweep_flag(args)
                     ));
                 }
             }
@@ -164,11 +171,10 @@ impl<'a> Plan<'a> {
             time: args.time,
         };
 
-        let points = cartesian(&axes);
         if args.out.is_some() {
             refuse(
                 &[
-                    ("--sweep", sweeping),
+                    (sweep_flag(args), sweeping),
                     ("--format ir", args.format == Format::Ir),
                     ("--every", args.every != 1),
                 ],
@@ -181,12 +187,18 @@ impl<'a> Plan<'a> {
         }
         // `.ir` describes exactly one render and cannot hold a sweep at all.
         if sweeping && args.format == Format::Ir {
-            return Err("--sweep cannot be combined with --format ir".to_owned());
+            return Err(format!(
+                "{} cannot be combined with --format ir",
+                sweep_flag(args)
+            ));
+        }
+        if args.describe.is_some() && args.format == Format::Ir {
+            return Err("--describe cannot be combined with --format ir".to_owned());
         }
         Ok(Self {
             sweep_csv: sweeping && args.format == Format::Csv,
             axes,
-            reduction,
+            measures,
             schedule,
             fixed,
             clamps,
@@ -211,6 +223,8 @@ struct Rendered<'r> {
     clamps: Vec<&'r Clamped>,
     /// What the program's bargraphs show at the end of this render.
     bargraphs: Vec<(String, f64)>,
+    /// Its `--reduce` and `--describe` values.
+    measured: Measured,
     /// Whether the frames were dumped on stdout.
     dumping: bool,
 }
@@ -248,6 +262,8 @@ impl Run<'_> {
 
         let mut runs: Vec<serde_json::Value> = Vec::new();
         let mut silent_points = 0usize;
+        // every point's values, for the notes after a sweep's rows
+        let mut measured: Vec<Measured> = Vec::new();
         // `--time` over the renders that have no statistics block of their
         // own to carry it: a sweep's rows, an `.ir` text
         let mut total_timing = TotalTiming::default();
@@ -276,6 +292,7 @@ impl Run<'_> {
                 }
                 Format::Csv => self.statistics(&rendered, &verdict),
             }
+            measured.push(rendered.measured);
         }
 
         // A sweep's rows and an `.ir` text: one account for all the renders.
@@ -289,12 +306,15 @@ impl Run<'_> {
                 annotate.say(format!("# note: {note} (at every sweep point)"));
             }
         }
+        if plan.sweep_csv {
+            annotate.say_all(plan.measures.sweep_notes(&measured));
+        }
         if args.format == Format::Json {
             let mut document = document(args);
             document.insert("frames".to_owned(), serde_json::json!(args.render));
             document.insert(
                 "reduce".to_owned(),
-                serde_json::json!(plan.reduction.map(|r| r.to_string())),
+                serde_json::json!(plan.measures.reduction.map(|r| r.to_string())),
             );
             document.insert("runs".to_owned(), serde_json::Value::Array(runs));
             let labels = self
@@ -311,20 +331,12 @@ impl Run<'_> {
     }
 
     /// The header of a sweep's rows: the swept controls, then per output the
-    /// reduction or the three statistics, then the bargraphs.
+    /// reduction or the three statistics, then the descriptors and the
+    /// bargraphs.
     fn sweep_header(&self) -> Vec<String> {
         let plan = &self.plan;
         let mut header: Vec<String> = plan.axes.iter().map(|a| a.path.clone()).collect();
-        for ch in 0..self.probe.outputs() {
-            match plan.reduction {
-                Some(r) => header.push(format!("{r}_out{ch}")),
-                None => {
-                    header.push(format!("peak_out{ch}"));
-                    header.push(format!("rms_out{ch}"));
-                    header.push(format!("dc_out{ch}"));
-                }
-            }
-        }
+        header.extend(plan.measures.header(self.probe.outputs()));
         if self.args.bargraphs {
             header.extend(plan.bargraph_paths.iter().cloned());
         }
@@ -401,12 +413,9 @@ impl Run<'_> {
             self.print_frames_header();
         }
 
-        // `f0` needs the samples, so collect them only when it is asked for.
-        let want_samples = plan.verification.requested
-            || matches!(
-                plan.reduction,
-                Some(Reduction::F0 | Reduction::Sfdr | Reduction::Thd)
-            );
+        // a spectral reduction and the descriptors need the samples: collect
+        // them only when one is asked for
+        let want_samples = plan.verification.requested || plan.measures.needs_samples();
         let mut collected: Vec<Vec<f64>> = if want_samples {
             vec![Vec::new(); probe.outputs()]
         } else {
@@ -457,12 +466,14 @@ impl Run<'_> {
         } else {
             Vec::new()
         };
+        let measured = plan.measures.measure(&stats, &collected);
         Ok(Rendered {
             stats,
             collected,
             notes,
             clamps: plan.clamps.of_point(point),
             bargraphs: probe.bargraphs(),
+            measured,
             dumping,
         })
     }
@@ -499,18 +510,6 @@ impl Run<'_> {
             .judge(&subject, &render, |frame| self.context(point, frame))
     }
 
-    /// One channel of this render, reduced to the number of `--reduce`.
-    fn reduced(&self, r: Reduction, rendered: &Rendered<'_>, ch: usize) -> f64 {
-        reduce_channel(
-            r,
-            &rendered.stats,
-            ch,
-            &rendered.collected,
-            self.probe.sample_rate(),
-            self.args.f0,
-        )
-    }
-
     /// One render, as an entry of the JSON document's `runs`.
     fn json_run(
         &self,
@@ -537,15 +536,16 @@ impl Run<'_> {
         }
         entry.extend(verdict.json);
         entry.insert("window".to_owned(), window_json(stats));
-        if let Some(r) = self.plan.reduction {
-            let values: Vec<serde_json::Value> = (0..self.probe.outputs())
-                .map(|ch| json_number(self.reduced(r, rendered, ch)))
-                .collect();
-            entry.insert(r.to_string(), serde_json::Value::Array(values));
+        let measures = &self.plan.measures;
+        if let Some((name, values)) = measures.reduced_json(&rendered.measured) {
+            entry.insert(name, values);
         } else {
             // Without an explicit reduction, report the full statistics
             // rather than nothing: a sweep with no numbers is useless.
             entry.insert("channels".to_owned(), channels_json(stats));
+        }
+        if let Some(described) = measures.described_json(&rendered.measured) {
+            entry.insert("describe".to_owned(), described);
         }
         if !rendered.bargraphs.is_empty() {
             let mut shown = serde_json::Map::new();
@@ -569,24 +569,7 @@ impl Run<'_> {
             .into_iter()
             .map(|(_, value)| format!("{value}"))
             .collect();
-        for ch in 0..self.probe.outputs() {
-            match self.plan.reduction {
-                Some(r) => {
-                    let value = self.reduced(r, rendered, ch);
-                    // a peak is a sample's magnitude; the others are computed
-                    row.push(if r == Reduction::Peak {
-                        fmt.sample(value)
-                    } else {
-                        fmt.computed(value)
-                    });
-                }
-                None => {
-                    row.push(fmt.sample(stats.channels[ch].peak));
-                    row.push(fmt.computed(stats.channels[ch].rms));
-                    row.push(fmt.computed(stats.channels[ch].dc));
-                }
-            }
-        }
+        row.extend(self.plan.measures.row(&rendered.measured, stats, fmt));
         if self.args.bargraphs {
             row.extend(rendered.bargraphs.iter().map(|(_, v)| fmt.sample(*v)));
         }
@@ -610,6 +593,7 @@ impl Run<'_> {
         ));
         sink.say_all(&self.plan.legend);
         sink.say_all(channel_lines(stats, fmt));
+        sink.say_all(self.plan.measures.lines(&rendered.measured, fmt));
         for (path, value) in &rendered.bargraphs {
             sink.say(format!("# bargraph {path}={}", fmt.sample(*value)));
         }
@@ -619,29 +603,5 @@ impl Run<'_> {
         if let Some(timing) = &stats.timing {
             sink.say_all(render_time_lines(self.compiled.seconds, timing));
         }
-    }
-}
-
-/// One channel of a rendered window, reduced to a single number.
-///
-/// Shared by the JSON and CSV sweep paths so the two cannot report different
-/// numbers for the same render.
-fn reduce_channel(
-    r: Reduction,
-    stats: &RenderStats,
-    ch: usize,
-    collected: &[Vec<f64>],
-    sample_rate: i32,
-    f0: Option<f64>,
-) -> f64 {
-    let sr = f64::from(sample_rate);
-    match r {
-        Reduction::Rms => stats.channels[ch].rms,
-        Reduction::Peak => stats.channels[ch].peak,
-        Reduction::Energy => stats.channels[ch].rms.powi(2) * stats.window_len as f64,
-        Reduction::Dc => stats.channels[ch].dc,
-        Reduction::F0 => dominant_frequency(&collected[ch], sr),
-        Reduction::Sfdr => sfdr_db(&collected[ch], sr, f0.unwrap_or(0.0)),
-        Reduction::Thd => thd_db(&collected[ch], sr, f0.unwrap_or(0.0)),
     }
 }

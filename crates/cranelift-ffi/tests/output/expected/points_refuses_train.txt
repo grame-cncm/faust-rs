@@ -1,0 +1,7 @@
+$ faustprobe --double --points tests/output/dsp/points.csv --train cutoff tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --points cannot be combined with --train / --fd-check
+

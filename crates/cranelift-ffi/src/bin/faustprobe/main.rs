@@ -16,6 +16,7 @@
 //! | [`failure`] | a render that went wrong, and the context it is explained with |
 //! | [`verify`] | `--compare`, `--ref`, `--check` |
 //! | [`render`] | the plain render and the sweep |
+//! | [`measure`] | `--reduce` and `--describe` on a render |
 //! | [`poly`] | `--nvoices` |
 //! | [`freqresp`] | `--freqresp` |
 //! | [`train`] | `--train`, `--fd-check` |
@@ -34,6 +35,7 @@ mod cli;
 mod determinism;
 mod failure;
 mod freqresp;
+mod measure;
 mod poly;
 mod render;
 mod report;

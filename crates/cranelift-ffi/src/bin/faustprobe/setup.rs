@@ -11,7 +11,7 @@ use cranelift_ffi::probe::eval::EvalProgram;
 use cranelift_ffi::probe::number::{NumberFormat, Precision};
 use cranelift_ffi::probe::render::InputMode;
 use cranelift_ffi::probe::schedule::{Schedule, parse_at, parse_chord, parse_note};
-use cranelift_ffi::probe::sweep::{Axis, parse_axis};
+use cranelift_ffi::probe::sweep::{Axis, Point, cartesian, parse_axis, parse_points};
 
 use crate::cli::Args;
 
@@ -53,6 +53,34 @@ pub(crate) fn assignments<'a>(
 /// The axes of `--sweep`, in the order given.
 pub(crate) fn sweep_axes(args: &Args) -> Result<Vec<Axis>, String> {
     args.sweeps.iter().map(|a| parse_axis(a)).collect()
+}
+
+/// The flag a run's points come from, for its messages.
+pub(crate) fn sweep_flag(args: &Args) -> &'static str {
+    if args.points.is_some() {
+        "--points"
+    } else {
+        "--sweep"
+    }
+}
+
+/// What a run renders: the controls it sweeps, as axes (each with every
+/// value it takes, for the range checks), and its points. The points of
+/// `--points FILE`, else the cartesian product of the `--sweep` axes (one
+/// empty point without a sweep).
+pub(crate) fn sweep_points(args: &Args) -> Result<(Vec<Axis>, Vec<Point>), String> {
+    match &args.points {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|error| format!("--points {path}: {error}"))?;
+            parse_points(&text).map_err(|error| format!("--points {path}: {error}"))
+        }
+        None => {
+            let axes = sweep_axes(args)?;
+            let points = cartesian(&axes);
+            Ok((axes, points))
+        }
+    }
 }
 
 /// Parse an `--in` value into an excitation mode.

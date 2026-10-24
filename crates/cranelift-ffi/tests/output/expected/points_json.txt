@@ -1,0 +1,49 @@
+$ faustprobe --double --in sine:1000 -n 4096 --points tests/output/dsp/points.csv --format json --reduce peak tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 4096,
+  "reduce": "peak",
+  "runs": [
+    {
+      "bargraphs": {
+        "/filt/level": 0.2643272203545358
+      },
+      "peak": [
+        0.49670307744754677,
+        0.9414496830111926
+      ],
+      "set": {
+        "cutoff": 500.0,
+        "q": 1.0
+      },
+      "window": {
+        "frames": 4096,
+        "start": 0
+      }
+    },
+    {
+      "bargraphs": {
+        "/filt/level": 1.2871453952784342
+      },
+      "peak": [
+        1.4762388589053006,
+        0.44538856087567724
+      ],
+      "set": {
+        "cutoff": 2000.0,
+        "q": 4.0
+      },
+      "window": {
+        "frames": 4096,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

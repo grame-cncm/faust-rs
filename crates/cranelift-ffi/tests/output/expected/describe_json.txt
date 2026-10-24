@@ -1,0 +1,50 @@
+$ faustprobe --double --in sine:440 -n 8192 --format json --describe loudness,decay:6,sustain:0.1..0.15,centroid:0.02..0.18,width:0..0.1 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 8192,
+  "reduce": null,
+  "runs": [
+    {
+      "bargraphs": {
+        "/filt/level": 0.8951982740474946
+      },
+      "channels": [
+        {
+          "dc": 0.003193655175839077,
+          "peak": 1.0889181944690227,
+          "peak_at": 83,
+          "rms": 0.7686739857401892,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": -0.0006702088183754436,
+          "peak": 0.4023213226506685,
+          "peak_at": 57,
+          "rms": 0.2843639657104449,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "describe": {
+        "centroid:0.02..0.18": 440.00000228743653,
+        "decay:6": null,
+        "loudness": -7.897304076938035,
+        "sustain:0.1..0.15": -0.08751865230239009,
+        "width:0..0.1": 0.4778729038270555
+      },
+      "set": {},
+      "window": {
+        "frames": 8192,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

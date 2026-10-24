@@ -1,0 +1,12 @@
+$ faustprobe --double --in sine:440 -n 8192 --quiet --describe loudness,attack,decay,centroid,width tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# frames=8192 sr=44100 window=0..8192 (8192 frames)
+# out0: peak=1.0889181944690227 rms=0.7686739857401892 dc=0.003193655175839077 finite=yes peak_at=83
+# out1: peak=0.4023213226506685 rms=0.2843639657104449 dc=-0.0006702088183754436 finite=yes peak_at=57
+# describe loudness=-7.897304076938035 attack=0.0 decay:30=NaN centroid=440.000003147165 width=0.473350302998341
+# note: decay:30 is NaN: not reached before the window ends (or the window is silent)
+# bargraph /filt/level=0.8951982740474946
+
+--- stderr
+

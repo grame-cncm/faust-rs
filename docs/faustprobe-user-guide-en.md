@@ -553,6 +553,94 @@ With `--format csv` a sweep prints one row per point, as above. With
 `--format json` it prints the full structure, including the window each point
 used. `--format ir` cannot hold a sweep and is rejected.
 
+### A list of points: `--points FILE`
+
+A cartesian product is the wrong shape for presets or random patches.
+`--points FILE` reads the points from a CSV file: the first line that is
+neither empty nor a `#` comment names the controls (paths or fragments, as
+`--set` takes them), and each following line is one point. Everything else is
+a sweep's: one compilation, every point from a cleared instance, one row per
+point headed by the controls in the file's order, every value checked against
+its range before the first render (`--clamp` to accept and report). It cannot
+be combined with `--sweep`, `--train` or `--freqresp`.
+
+```
+$ cat points.csv
+# two cutoffs, two resonances
+cutoff,q
+500,1
+2000,4
+$ faustprobe --double --in sine:1000 -n 4096 --points points.csv --reduce rms filt.dsp
+cutoff,q,rms_out0,rms_out1
+500,1,0.19702361563033663,0.6323246724172475
+2000,4,0.9274345242605067,0.3146324951847318
+```
+
+### Describing a render: `--describe`
+
+When two implementations of one sound cannot be compared sample by sample (a
+port against its original, a model against a recording), or when a sweep
+should say what a control does to the *sound*, `--describe LIST` measures each
+render with a few descriptors, separated by commas:
+
+| Descriptor | Value |
+|---|---|
+| `loudness` | the loudest envelope frame, `10 log10(e_peak)` dBFS (`-inf` when silent) |
+| `attack` | start of the first frame reaching `0.81 e_peak` (90 % in amplitude), s |
+| `decay[:DB]` | from the loudest frame to the first later one at or below `e_peak - DB` dB, s; `decay` is `decay:30`; `NaN` when the window ends first |
+| `sustain:A..B` | mean energy of the frames lying wholly within `[A, B)` s, against the loudest, dB |
+| `centroid[:A..B]` | spectral centroid over `[A, B)` s (default: the window), Hz |
+| `width[:A..B]` | `10 log10(Σ(x0-x1)²) - 10 log10(Σ(x0+x1)²)` over `[A, B)` s, dB; two outputs only |
+
+The definitions, which every number depends on:
+
+- Everything reads the **window** (the frames after `--skip`), and every time
+  is in seconds from its first frame: start the note there.
+- The signal is the **mid**, the mean of the outputs, except for `width`.
+- The **envelope** is the mean of `mid²` over frames of `--describe-hop`
+  seconds (default 0.01, rounded to whole samples) from the window's start; a
+  last partial frame is left out. Times are whole frames: resolution one hop,
+  and `attack=0` means "within the first frame".
+- `centroid` sums the power spectra of `--describe-fft` samples (default 2048,
+  a power of two), periodic Hann window, hop of half a transform, over bins 2
+  to `N/2 - 1` (DC, the bin beside it and Nyquist out).
+- A value that does not exist is not replaced by a number: a decay not
+  reached is `NaN` (not the length of the window), a silent window has a
+  loudness of `-inf`, two identical outputs a width of `-inf`. CSV prints
+  `NaN`/`-inf`, JSON `null`; a `# note:` says why.
+
+A single render prints a `# describe` line after the channels; a sweep's rows
+get one column per descriptor, named in its canonical spelling (`decay:30`,
+`sustain:0.8..1`), after the reduction when `--reduce` is given and instead of
+the three statistics otherwise; JSON runs get a `describe` object.
+
+```
+$ faustprobe --double --in sine:1000 -n 8192 --sweep cutoff=500,2000 --describe loudness,centroid,decay:10 filt.dsp
+cutoff,loudness,centroid,decay:10
+500,-13.16734661477514,999.999989494145,NaN
+2000,-7.869588693465957,1000.0000001514137,NaN
+# note: decay:10 is NaN at 2 of 2 point(s): not reached before the window ends (or the window is silent)
+```
+
+What cannot be measured is refused before any render: `width` on a program
+that does not have two outputs, a stretch beyond the window or holding no
+whole frame, a `centroid` stretch shorter than one transform. `--describe` is
+not taken by `--freqresp`, `--train` or the impulse-test protocol.
+
+These are the descriptors of the `faust-elements` sound atlas
+(`scripts/gen_atlas.mjs`, `describe()`), with its hop, window and bands. Its
+first 124 points, rendered with `--points` in single precision as the page's
+wasm renders them (voice and body as one program, `process = e.process :
+e.effect`, at the atlas's gain of 0.7, `--at 32000 gate=0`), reproduce the 671
+values the atlas stores to their four digits; a decay not reached is the one
+deliberate difference (the script reports the end of the render). Through
+`--nvoices` the velocity is a MIDI one, 89/127 for 0.7, and the levels move by
+a few hundredths of a dB. Spectral
+flatness and harmonicity, which that script also computes, are not here: the
+first depends on a floor and a band more than on the sound, the second needs
+a fundamental and a tolerance that are the study's choices. Compute them from
+`--out` renders.
+
 ## 8. Measuring aliasing and distortion
 
 `sfdr` and `thd` answer opposite questions about the same spectrum.
@@ -599,6 +687,10 @@ steady stretch.
 A `--reduce` returns one scalar per channel. That covers every property that can
 gate a build: level, offset, dominant frequency, aliasing, distortion, and any
 of them across a parameter sweep.
+
+`--describe` (§7) adds a few numbers per render that are not per channel:
+level, envelope times, brightness, width, the measures of what a sound is
+rather than of what a channel holds.
 
 What it does not cover is anything needing a *vector*. Comparing a hundred
 partials against a predicted curve, or tracking each of their decay slopes over
@@ -699,6 +791,23 @@ was fixed every voice was given silence, and `--in` was accepted under
 `--nvoices` and meant nothing. For an instrument without inputs, the usual
 case, nothing changes; a silent render of one that has some under `--in zero`
 says so.
+
+**Sweeps.** `--sweep`, `--points`, `--reduce` and `--describe` work as for a
+scalar program (§7). Every point renders from a reset instrument: every voice
+and the effect at their declared defaults with their state cleared, every
+voice free, then `--set`, the point's values, and the notes of the schedule
+played again. A point therefore renders what the same command with `--set`
+renders alone, whatever the points before it, and one compilation serves them
+all: a JIT of `faust-elements` costs about 1.2 s, its 124 atlas points render
+in 4 s in all.
+
+```
+$ faustprobe --nvoices 1 --sr 32000 -n 64000 --note 57:89@0..32000 --points presets.csv \
+    --describe loudness,attack,decay,sustain:0.8..1,centroid:0.05..1,width:0..1 -I dsp dsp/elements_poly.dsp
+```
+
+`--out` and `--every` are refused with a sweep, and so is an `--at` that
+writes a swept control, as on the scalar path.
 
 **Statistics and failures are those of a scalar render.** The header line adds
 the voices (`# frames=300 sr=44100 nvoices=1 active_voices=1 window=0..300 (300

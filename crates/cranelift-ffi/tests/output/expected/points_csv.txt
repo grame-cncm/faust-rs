@@ -1,0 +1,9 @@
+$ faustprobe --double --in sine:1000 -n 4096 --points tests/output/dsp/points.csv --reduce rms tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,q,rms_out0,rms_out1
+500,1,0.19702361563033663,0.6323246724172475
+2000,4,0.9274345242605067,0.3146324951847318
+
+--- stderr
+

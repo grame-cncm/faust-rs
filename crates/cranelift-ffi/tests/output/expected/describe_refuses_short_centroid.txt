@@ -1,0 +1,7 @@
+$ faustprobe --double -n 1000 --describe centroid tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `centroid` covers 1000 samples, fewer than one transform of 2048 (--describe-fft)
+

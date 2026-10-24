@@ -110,6 +110,8 @@ fn refuse_flags(args: &Args) -> Result<(), String> {
     refuse(
         &[
             ("--reduce", args.reduce.is_some()),
+            ("--describe", args.describe.is_some()),
+            ("--points", args.points.is_some()),
             ("--at", !args.ats.is_empty()),
             ("--bargraphs", args.bargraphs),
             (

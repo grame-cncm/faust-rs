@@ -1,0 +1,7 @@
+$ faustprobe --double --describe width tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `width` compares two outputs; this program has 1
+

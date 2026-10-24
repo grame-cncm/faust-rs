@@ -1,0 +1,7 @@
+$ faustprobe --double --format ir --describe loudness tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --describe cannot be combined with --format ir
+

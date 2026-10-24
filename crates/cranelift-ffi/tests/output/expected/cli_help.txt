@@ -137,6 +137,11 @@ Options:
           
           Repeating the flag takes the cartesian product, with the last axis varying fastest. Every point renders from a cleared instance, so one configuration cannot contaminate the next.
 
+      --points <FILE>
+          Sweep the points of a CSV file rather than a cartesian product.
+          
+          The first line that is neither empty nor a `#` comment names the controls (paths or fragments, as `--set` takes them), each following line is one point: presets, random patches. One compilation for every point; each renders from a cleared instance, as with `--sweep`, and gives a row headed by the controls, in the file's order.
+
       --reduce <R>
           Reduce each render to one number per channel: rms, peak, energy, dc, f0, `sfdr` or `thd`.
           
@@ -146,6 +151,21 @@ Options:
           Fundamental in Hz for `--reduce sfdr` / `--reduce thd`.
           
           Pins what the estimator would otherwise guess. Worth setting whenever the fundamental is known: a signal whose loudest partial is not the fundamental — a bright pluck, a filtered saw — is misread without it.
+
+      --describe <LIST>
+          Describe each render: `loudness`, `attack`, `decay[:DB]`, `sustain:A..B`, `centroid[:A..B]`, `width[:A..B]`, separated by commas.
+          
+          Computed on the window (after `--skip`), times in seconds from its first frame, on the mid (the mean of the outputs), in envelope frames of `--describe-hop`: `loudness` is the loudest frame (dBFS), `attack` the start of the first frame at 90 % of its amplitude, `decay:DB` (default 30) the time from it down DB dB (`NaN` when not reached), `sustain:A..B` the level of the frames within `[A, B)` s against it (dB), `centroid` the spectral centroid (Hz, Hann window, hop of half a transform), `width` side against mid energy of two outputs (dB). A sweep's rows get one column per descriptor, named as written here (`decay` is `decay:30`); a single render a `# describe` line; JSON a `describe` object.
+
+      --describe-hop <SECONDS>
+          Envelope frame of `--describe`, seconds
+          
+          [default: 0.01]
+
+      --describe-fft <N>
+          Transform length of `--describe centroid`, a power of two
+          
+          [default: 2048]
 
       --at <FRAME> <PATH=VALUE>
           Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable).

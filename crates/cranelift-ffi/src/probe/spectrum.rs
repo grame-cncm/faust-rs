@@ -1,4 +1,5 @@
-//! Minimal spectral analysis for the `f0`, `sfdr` and `thd` reductions.
+//! Minimal spectral analysis for the `f0`, `sfdr` and `thd` reductions, and
+//! the transform of `--describe centroid`.
 //!
 //! A radix-2 FFT written here rather than pulled in as a dependency: the tool
 //! needs one transform for one reduction, and a test binary is a poor reason
@@ -13,7 +14,7 @@
 //! harmonics" measurement meaningless.
 
 /// In-place iterative radix-2 FFT. `re`/`im` must have the same power-of-two length.
-fn fft(re: &mut [f64], im: &mut [f64]) {
+pub(crate) fn fft(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();
     debug_assert!(n.is_power_of_two());
     debug_assert_eq!(n, im.len());

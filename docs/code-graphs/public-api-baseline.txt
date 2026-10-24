@@ -831,6 +831,7 @@ const fn
 enum Allocation
 enum Bound
 enum ControlKind
+enum Descriptor
 enum Event
 enum InputMode
 enum KeyConversion
@@ -890,6 +891,7 @@ fn PolyProbe::is_double
 fn PolyProbe::key_off
 fn PolyProbe::key_on
 fn PolyProbe::render
+fn PolyProbe::reset
 fn PolyProbe::set_all
 fn PolyProbe::voice_controls
 fn PolyProbe::voice_count
@@ -949,8 +951,10 @@ fn Write::in_range
 fn Write::range_error
 fn cache_status
 fn cartesian
+fn check
 fn compare
 fn csv_field
+fn describe
 fn dominant_frequency
 fn draw_program
 fn extract_paths
@@ -972,7 +976,9 @@ fn normalize
 fn parse_at
 fn parse_axis
 fn parse_chord
+fn parse_descriptors
 fn parse_note
+fn parse_points
 fn parse_reduction
 fn read_channels
 fn response
@@ -987,6 +993,7 @@ mod audio_file
 mod audio_out
 mod cache
 mod compare
+mod describe
 mod diagram
 mod engine
 mod eval
@@ -1017,6 +1024,7 @@ struct Control
 struct ControlMap
 struct CraneliftDspFactory
 struct CraneliftDspInstance
+struct DescribeSettings
 struct DiagramOptions
 struct Disagreement
 struct EvalProgram
@@ -1031,6 +1039,7 @@ struct PolyRenderSpec
 struct PolyState
 struct PolyWrite
 struct Probe
+struct Range
 struct RawSoundfile
 struct RenderSpec
 struct RenderStats

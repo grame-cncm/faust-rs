@@ -1,0 +1,9 @@
+$ faustprobe --double --in sine:1000 -n 8192 --sweep cutoff=500,2000 --reduce rms --describe centroid tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,rms_out0,rms_out1,centroid
+500,0.19632220267143446,0.6324870189235974,999.999989494145
+2000,0.7833637420777312,0.31487623570246803,1000.0000001514137
+
+--- stderr
+

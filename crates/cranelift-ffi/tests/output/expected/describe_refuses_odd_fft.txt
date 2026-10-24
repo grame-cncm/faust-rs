@@ -1,0 +1,7 @@
+$ faustprobe --double --describe centroid --describe-fft 1000 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --describe-fft 1000 must be a power of two of at least 8
+

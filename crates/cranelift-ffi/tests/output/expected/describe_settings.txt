@@ -1,0 +1,11 @@
+$ faustprobe --double --in sine:440 -n 8192 --quiet --describe loudness,centroid --describe-hop 0.05 --describe-fft 1024 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# frames=8192 sr=44100 window=0..8192 (8192 frames)
+# out0: peak=1.0889181944690227 rms=0.7686739857401892 dc=0.003193655175839077 finite=yes peak_at=83
+# out1: peak=0.4023213226506685 rms=0.2843639657104449 dc=-0.0006702088183754436 finite=yes peak_at=57
+# describe loudness=-7.984822729240424 centroid=440.000065821412
+# bargraph /filt/level=0.8951982740474946
+
+--- stderr
+

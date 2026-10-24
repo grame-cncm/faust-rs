@@ -1,0 +1,64 @@
+$ faustprobe --double --nvoices 2 -n 2000 --note 60:100@0..1000 --sweep bright=0.1,0.9 --format json --describe loudness,decay tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/synth.dsp",
+  "frames": 2000,
+  "nvoices": 2,
+  "reduce": null,
+  "runs": [
+    {
+      "active_voices": 0,
+      "channels": [
+        {
+          "dc": -0.0006658276801403279,
+          "peak": 0.28815428890980066,
+          "peak_at": 336,
+          "rms": 0.12464885109850375,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "describe": {
+        "decay:30": null,
+        "loudness": -15.562177738426822
+      },
+      "set": {
+        "bright": 0.1
+      },
+      "window": {
+        "frames": 2000,
+        "start": 0
+      }
+    },
+    {
+      "active_voices": 0,
+      "channels": [
+        {
+          "dc": -0.0006658276803870644,
+          "peak": 0.311138638495651,
+          "peak_at": 336,
+          "rms": 0.13965649171760988,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "describe": {
+        "decay:30": null,
+        "loudness": -14.472962281455779
+      },
+      "set": {
+        "bright": 0.9
+      },
+      "window": {
+        "frames": 2000,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --describe loudness,brightness tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: unknown descriptor `brightness`; expected loudness, attack, decay[:DB], sustain:A..B, centroid[:A..B], width[:A..B]
+

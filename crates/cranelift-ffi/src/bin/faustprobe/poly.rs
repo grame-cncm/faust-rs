@@ -2,33 +2,36 @@
 //!
 //! Apart from [`crate::render`] because the two share almost nothing below
 //! compilation: a poly render mixes N voices and an optional effect rather
-//! than driving one `Probe`. What they say of a render, and how a render
-//! fails, they share: see [`crate::report`] and [`crate::failure`].
+//! than driving one `Probe`. What they say of a render, how a render fails
+//! and what it is measured by, they share: see [`crate::report`],
+//! [`crate::failure`] and [`crate::measure`].
+//!
+//! A sweep (`--sweep`, `--points`) renders every point from a reset
+//! instrument ([`PolyProbe::reset`]): the voices and the effect cleared, every
+//! voice free, the notes of the schedule played again.
 
 use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::engine::{PolyProbe, PolyRenderSpec};
 use cranelift_ffi::probe::number::NumberFormat;
 use cranelift_ffi::probe::render::{InputMode, RenderStats};
 use cranelift_ffi::probe::schedule::Schedule;
+use cranelift_ffi::probe::sweep::{Axis, Point};
 
 use crate::cli::{Args, Format, refuse, verification_requested};
 use crate::failure::{poly_failure_context, render_failure};
+use crate::measure::{Measured, Measures};
 use crate::report::{
-    Sink, channel_lines, channels_json, document, json_number, print_controls, print_json,
-    render_time_lines, timing_json, window_json,
+    Sink, TotalTiming, channel_lines, channels_json, document, json_number, print_controls,
+    print_json, render_time_lines, timing_json, window_json,
 };
 use crate::setup::{
-    assignments, build_schedule, compiler_args, number_format, parse_input_at, timed,
+    assignments, build_schedule, compiler_args, number_format, parse_input_at, sweep_flag,
+    sweep_points, timed,
 };
 use crate::writes::{Clamped, check_poly_value};
 
 /// What operates on the scalar `Probe` only is refused.
 fn refuse_scalar_only(args: &Args) -> Result<(), String> {
-    if !args.sweeps.is_empty() || args.reduce.is_some() {
-        return Err(
-            "--sweep/--reduce operate on the scalar Probe only; use --nvoices 0".to_owned(),
-        );
-    }
     if args.format == Format::Ir {
         return Err("--format ir is scoped to the scalar impulse-test protocol".to_owned());
     }
@@ -60,12 +63,19 @@ fn refuse_scalar_only(args: &Args) -> Result<(), String> {
 /// the effect's when there is one, as it writes a scalar program's.
 pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
     refuse_scalar_only(args)?;
+    let (axes, points) = sweep_points(args)?;
+    let sweeping = !axes.is_empty();
     if args.out.is_some() {
-        // the scalar path's refusal, worded the same: `--sweep` and `--format
-        // ir` are already refused above
-        refuse(&[("--every", args.every != 1)], |flag| {
-            format!("{flag} cannot be combined with --out, which writes every frame of one render")
-        })?;
+        // the scalar path's refusal, worded the same: `--format ir` is
+        // already refused above
+        refuse(
+            &[(sweep_flag(args), sweeping), ("--every", args.every != 1)],
+            |flag| {
+                format!(
+                    "{flag} cannot be combined with --out, which writes every frame of one render"
+                )
+            },
+        )?;
     }
     let fmt = number_format(args)?;
 
@@ -109,21 +119,13 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
 
     let fixed = assignments(&args.sets)?;
     let schedule = build_schedule(args)?;
-    // Every write of the command line is checked before any render, as for a
-    // scalar program: an unknown path, a bargraph, and a value outside its
-    // control's range, which was written as it is on the voices and clamped
-    // in silence on the effect. What a note writes (its pitch's frequency,
-    // its gain, its gate) is not a widget's doing and is not checked.
-    let mut clamped: Vec<Clamped> = Vec::new();
-    for (query, value) in &fixed {
-        check_poly_value(&poly, query, *value, args.clamp, &mut clamped)?;
-    }
-    for (_, query, value) in schedule.param_writes() {
-        check_poly_value(&poly, query, value, args.clamp, &mut clamped)?;
-    }
-    for (path, value) in &fixed {
-        poly.set_all(path, *value)?;
-    }
+    let clamped = check_writes(args, &poly, &fixed, &schedule, &axes)?;
+    let measures = Measures::prepare(
+        args,
+        poly.outputs(),
+        args.render.saturating_sub(args.skip),
+        poly.sample_rate(),
+    )?;
 
     let spec = PolyRenderSpec {
         frames: args.render,
@@ -137,6 +139,23 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         limit: args.fail_above,
         time: args.time,
     };
+    if sweeping {
+        return Sweep {
+            args,
+            poly: &mut poly,
+            spec: &spec,
+            fixed: &fixed,
+            schedule: &schedule,
+            measures: &measures,
+            clamped: &clamped,
+            fmt: &fmt,
+            compile_seconds,
+        }
+        .run(&axes, &points);
+    }
+    for (path, value) in &fixed {
+        poly.set_all(path, *value)?;
+    }
     // created before anything is printed, as on the scalar path: an
     // extension it cannot write, or a raw format for several outputs, is an
     // error of the command line
@@ -159,7 +178,15 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         }
         println!();
     }
+    let mut collected: Vec<Vec<f64>> = if measures.needs_samples() {
+        vec![Vec::new(); poly.outputs()]
+    } else {
+        Vec::new()
+    };
     let stats = poly.render(&spec, |frame, samples| {
+        for (channel, value) in collected.iter_mut().zip(samples) {
+            channel.push(*value);
+        }
         if let Some(writer) = writer.as_mut() {
             writer.push(samples);
         }
@@ -193,12 +220,15 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
     }
 
     let notes = silence_notes(&stats, &schedule, &spec.input, &poly);
+    let measured = measures.measure(&stats, &collected);
     let said = Said {
         args,
         poly: &poly,
         stats: &stats,
         clamped: &clamped,
         notes: &notes,
+        measures: &measures,
+        measured: &measured,
         compile_seconds,
     };
     if args.format == Format::Json {
@@ -207,6 +237,46 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         said.lines(&fmt);
         Ok(())
     }
+}
+
+/// Every write of the command line, checked before any render as for a
+/// scalar program: an unknown path, a bargraph, and a value outside its
+/// control's range, which was written as it is on the voices and clamped in
+/// silence on the effect. What a note writes (its pitch's frequency, its
+/// gain, its gate) is not a widget's doing and is not checked. Returns the
+/// clamps `--clamp` accepted.
+fn check_writes(
+    args: &Args,
+    poly: &PolyProbe,
+    fixed: &[(&str, f64)],
+    schedule: &Schedule,
+    axes: &[Axis],
+) -> Result<Vec<Clamped>, String> {
+    let mut clamped: Vec<Clamped> = Vec::new();
+    for (query, value) in fixed {
+        check_poly_value(poly, query, *value, args.clamp, &mut clamped)?;
+    }
+    for (_, query, value) in schedule.param_writes() {
+        check_poly_value(poly, query, value, args.clamp, &mut clamped)?;
+    }
+    // as on the scalar path: a scheduled write to a swept control would
+    // override the swept value
+    for path in schedule.param_paths() {
+        if let Some(axis) = axes.iter().find(|a| a.path == path) {
+            return Err(format!(
+                "--at writes `{}`, which {} is also driving; \
+                 the scheduled write would override the swept value",
+                axis.path,
+                sweep_flag(args)
+            ));
+        }
+    }
+    for axis in axes {
+        for value in &axis.values {
+            check_poly_value(poly, &axis.path, *value, args.clamp, &mut clamped)?;
+        }
+    }
+    Ok(clamped)
 }
 
 /// A poly render is silent until a note plays: say which it is.
@@ -239,6 +309,8 @@ struct Said<'a> {
     stats: &'a RenderStats,
     clamped: &'a [Clamped],
     notes: &'a [String],
+    measures: &'a Measures,
+    measured: &'a Measured,
     compile_seconds: f64,
 }
 
@@ -254,6 +326,12 @@ impl Said<'_> {
             serde_json::json!(self.poly.active_voice_count()),
         );
         document.insert("channels".to_owned(), channels_json(stats));
+        if let Some((name, values)) = self.measures.reduced_json(self.measured) {
+            document.insert(name, values);
+        }
+        if let Some(described) = self.measures.described_json(self.measured) {
+            document.insert("describe".to_owned(), described);
+        }
         if !self.clamped.is_empty() {
             document.insert(
                 "clamped".to_owned(),
@@ -290,10 +368,191 @@ impl Said<'_> {
             stats.window_len
         ));
         sink.say_all(channel_lines(stats, fmt));
+        sink.say_all(self.measures.lines(self.measured, fmt));
         sink.say_all(self.clamped.iter().map(Clamped::line));
         sink.say_all(self.notes.iter().map(|note| format!("# note: {note}")));
         if let Some(timing) = &stats.timing {
             sink.say_all(render_time_lines(self.compile_seconds, timing));
         }
+    }
+}
+
+/// A sweep of a polyphonic instrument: one render per point, each from a
+/// reset instrument, said as rows (CSV) or as the `runs` of one document.
+struct Sweep<'a> {
+    args: &'a Args,
+    poly: &'a mut PolyProbe,
+    spec: &'a PolyRenderSpec,
+    fixed: &'a [(&'a str, f64)],
+    schedule: &'a Schedule,
+    measures: &'a Measures,
+    clamped: &'a [Clamped],
+    fmt: &'a NumberFormat,
+    compile_seconds: f64,
+}
+
+impl Sweep<'_> {
+    fn run(mut self, axes: &[Axis], points: &[Point]) -> Result<(), String> {
+        let (args, fmt) = (self.args, self.fmt);
+        let csv = args.format == Format::Csv;
+        if csv && !args.quiet {
+            let mut header: Vec<String> = axes.iter().map(|a| a.path.clone()).collect();
+            header.extend(self.measures.header(self.poly.outputs()));
+            println!("{}", header.join(","));
+        }
+        // the rows own stdout: what annotates them goes beside, once
+        let annotate = Sink::beside(true);
+        if csv {
+            annotate.say_all(self.clamped.iter().map(Clamped::line));
+        }
+        let mut runs: Vec<serde_json::Value> = Vec::new();
+        let mut measured: Vec<Measured> = Vec::new();
+        let mut silent_points = 0usize;
+        let mut total_timing = TotalTiming::default();
+        let mut last_notes = Vec::new();
+        for point in points {
+            let (stats, values) = self.render_point(point)?;
+            let notes = silence_notes(&stats, self.schedule, &self.spec.input, self.poly);
+            if !notes.is_empty() {
+                silent_points += 1;
+            }
+            total_timing.add(stats.timing.as_ref());
+            let applied = self.applied(point);
+            if csv {
+                let mut row: Vec<String> = applied.iter().map(|(_, v)| format!("{v}")).collect();
+                row.extend(self.measures.row(&values, &stats, fmt));
+                println!("{}", row.join(","));
+            } else {
+                runs.push(self.json_run(&applied, &stats, &values, &notes));
+            }
+            measured.push(values);
+            last_notes = notes;
+        }
+        if csv {
+            annotate.say_all(total_timing.lines(self.compile_seconds, points.len()));
+            if silent_points == points.len() {
+                for note in &last_notes {
+                    annotate.say(format!("# note: {note} (at every sweep point)"));
+                }
+            }
+            annotate.say_all(self.measures.sweep_notes(&measured));
+            return Ok(());
+        }
+        let mut document = document(args);
+        document.insert("nvoices".to_owned(), serde_json::json!(args.nvoices));
+        document.insert("frames".to_owned(), serde_json::json!(args.render));
+        document.insert(
+            "reduce".to_owned(),
+            serde_json::json!(self.measures.reduction.map(|r| r.to_string())),
+        );
+        if !self.clamped.is_empty() {
+            document.insert(
+                "clamped".to_owned(),
+                serde_json::Value::Array(self.clamped.iter().map(Clamped::json).collect()),
+            );
+        }
+        document.insert("runs".to_owned(), serde_json::Value::Array(runs));
+        if args.time {
+            document.insert(
+                "timing".to_owned(),
+                serde_json::json!({ "compile_s": json_number(self.compile_seconds) }),
+            );
+        }
+        print_json(document)
+    }
+
+    /// Renders one point from a reset instrument, and fails if the render
+    /// does.
+    fn render_point(&mut self, point: &Point) -> Result<(RenderStats, Measured), String> {
+        self.poly.reset();
+        for (path, value) in self.fixed {
+            self.poly.set_all(path, *value)?;
+        }
+        for (path, value) in &point.assignments {
+            self.poly.set_all(path, *value)?;
+        }
+        let mut collected: Vec<Vec<f64>> = if self.measures.needs_samples() {
+            vec![Vec::new(); self.poly.outputs()]
+        } else {
+            Vec::new()
+        };
+        let stats = self.poly.render(self.spec, |_, samples| {
+            for (channel, value) in collected.iter_mut().zip(samples) {
+                channel.push(*value);
+            }
+        })?;
+        let written: Vec<(&str, f64)> = self
+            .fixed
+            .iter()
+            .copied()
+            .chain(point.assignments.iter().map(|(p, v)| (p.as_str(), *v)))
+            .collect();
+        if let Some(failure) = render_failure(
+            &stats,
+            stats.first_non_finite(),
+            self.args.fail_above,
+            self.args.render,
+            self.fmt,
+            |frame| poly_failure_context(frame, &written, self.schedule, self.poly),
+        ) {
+            return Err(failure);
+        }
+        let measured = self.measures.measure(&stats, &collected);
+        Ok((stats, measured))
+    }
+
+    /// The values a point's render used: the requested ones, unless `--clamp`
+    /// clamped them (on the voices, or on the effect when only it has the
+    /// control).
+    fn applied(&self, point: &Point) -> Vec<(String, f64)> {
+        point
+            .assignments
+            .iter()
+            .map(|(query, value)| {
+                let applied = self
+                    .poly
+                    .check_write(query, *value)
+                    .ok()
+                    .and_then(|writes| writes.first().map(|w| w.write.applied))
+                    .unwrap_or(*value);
+                (query.clone(), applied)
+            })
+            .collect()
+    }
+
+    /// One render, as an entry of the document's `runs`.
+    fn json_run(
+        &self,
+        applied: &[(String, f64)],
+        stats: &RenderStats,
+        measured: &Measured,
+        notes: &[String],
+    ) -> serde_json::Value {
+        let mut entry = serde_json::Map::new();
+        let mut set = serde_json::Map::new();
+        for (path, value) in applied {
+            set.insert(path.clone(), json_number(*value));
+        }
+        entry.insert("set".to_owned(), serde_json::Value::Object(set));
+        if !notes.is_empty() {
+            entry.insert("notes".to_owned(), serde_json::json!(notes));
+        }
+        entry.insert("window".to_owned(), window_json(stats));
+        entry.insert(
+            "active_voices".to_owned(),
+            serde_json::json!(self.poly.active_voice_count()),
+        );
+        if let Some((name, values)) = self.measures.reduced_json(measured) {
+            entry.insert(name, values);
+        } else {
+            entry.insert("channels".to_owned(), channels_json(stats));
+        }
+        if let Some(described) = self.measures.described_json(measured) {
+            entry.insert("describe".to_owned(), described);
+        }
+        if let Some(timing) = &stats.timing {
+            entry.insert("timing".to_owned(), timing_json(timing));
+        }
+        serde_json::Value::Object(entry)
     }
 }

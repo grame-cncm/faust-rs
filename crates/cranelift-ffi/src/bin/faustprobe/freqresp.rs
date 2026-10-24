@@ -93,6 +93,14 @@ fn refuse_flags(args: &Args) -> Result<(), String> {
                 args.reduce.is_some(),
             ),
             (
+                ("--describe", "the response is the reduction"),
+                args.describe.is_some(),
+            ),
+            (
+                ("--points", "a family of curves is a --sweep"),
+                args.points.is_some(),
+            ),
+            (
                 (
                     "--at",
                     "a control that changes during the response makes the program time-varying",

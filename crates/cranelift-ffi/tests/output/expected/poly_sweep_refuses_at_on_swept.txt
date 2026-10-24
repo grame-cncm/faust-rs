@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 2 --note 60@0 --sweep bright=0.1,0.9 --at 10 bright=0.5 tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --at writes `bright`, which --sweep is also driving; the scheduled write would override the swept value
+

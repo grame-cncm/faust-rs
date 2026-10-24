@@ -1,0 +1,7 @@
+$ faustprobe --double --points tests/output/dsp/points_short.csv tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --points tests/output/dsp/points_short.csv: line 2: 1 field(s) for 2 control(s)
+

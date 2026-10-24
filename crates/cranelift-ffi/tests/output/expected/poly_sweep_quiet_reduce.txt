@@ -1,0 +1,8 @@
+$ faustprobe --double --nvoices 4 -n 2000 --quiet --note 60:100@0..1000 --sweep bright=0.1,0.2 --reduce rms tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+0.1,0.12464885109850375
+0.2,0.13220542003435626
+
+--- stderr
+

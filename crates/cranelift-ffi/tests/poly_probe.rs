@@ -238,6 +238,52 @@ fn a_render_plays_its_notes_on_their_frames_and_returns_the_scalar_statistics() 
 }
 
 #[test]
+fn a_reset_instrument_renders_what_a_fresh_one_renders() {
+    // A sweep renders each point after `reset`: the voices still releasing,
+    // their allocation dates and the controls written must all be gone.
+    use cranelift_ffi::probe::engine::PolyRenderSpec;
+    use cranelift_ffi::probe::schedule::{Schedule, parse_note};
+    let mut schedule = Schedule::new();
+    for note in ["60@0..300", "64@100..500", "67@200"] {
+        for (frame, event) in parse_note(note).unwrap() {
+            schedule.push(frame, event);
+        }
+    }
+    let spec = PolyRenderSpec {
+        frames: 1500,
+        block: 64,
+        input: cranelift_ffi::probe::render::InputMode::Zero,
+        skip: 0,
+        schedule,
+        limit: None,
+        time: false,
+    };
+    let render = |probe: &mut PolyProbe| {
+        let mut samples = Vec::new();
+        probe
+            .render(&spec, |_, frame| samples.extend_from_slice(frame))
+            .expect("render");
+        samples
+    };
+    let fresh = render(&mut compile(2));
+    let mut probe = compile(2);
+    probe.set_all("level", 0.25).unwrap();
+    let _ = render(&mut probe);
+    assert!(probe.active_voice_count() > 0);
+    probe.reset();
+    assert_eq!(probe.active_voice_count(), 0);
+    let again = render(&mut probe);
+    assert_eq!(fresh.len(), again.len());
+    assert!(
+        fresh
+            .iter()
+            .zip(&again)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "a reset instrument renders other samples"
+    );
+}
+
+#[test]
 fn a_broadcast_write_is_a_widgets_and_stays_in_its_range() {
     // `level` goes from 0 to 1. A voice used to take whatever it was given,
     // while the effect clamped: 7 is now 1 on a voice too, as `Probe::set`

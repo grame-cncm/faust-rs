@@ -1,0 +1,9 @@
+$ faustprobe --double --nvoices 2 -n 4410 --quiet --note 60:100@0..2205 --describe loudness,attack,decay,centroid tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+# frames=4410 sr=44100 nvoices=2 active_voices=0 window=0..4410 (4410 frames)
+# out0: peak=0.3087028112274832 rms=0.1308843382384107 dc=-0.00036376108530179947 finite=yes peak_at=1516
+# describe loudness=-14.601385269770887 attack=0.01 decay:30=0.06 centroid=562.3105860808826
+
+--- stderr
+
