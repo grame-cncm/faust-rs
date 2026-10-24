@@ -106,7 +106,7 @@ pub(crate) fn eval_modulation(
             inputs_number: inputs,
             modulation_circuit,
         },
-        &mut Vec::new(),
+        &mut ModulationWalk::new(),
     );
 
     if rewritten == lowered_body {
@@ -137,6 +137,50 @@ struct ModulationRewrite<'a> {
     slot: Option<TreeId>,
     inputs_number: usize,
     modulation_circuit: TreeId,
+}
+
+/// State of one label-modulation rewrite.
+///
+/// The rewritten box depends on the box and on the groups the walk has entered
+/// (the path a widget is matched with), so the memo is keyed by both: the
+/// evaluated body is a DAG, and without it a widget shared by `n` nested
+/// definitions is visited `2^n` times.
+struct ModulationWalk {
+    /// Labels of the groups entered, outermost first.
+    group_stack: Vec<String>,
+    /// Identity of `group_stack` in `contexts`; 0 is the root.
+    context: u32,
+    /// Every group stack seen, interned; the root is not stored.
+    contexts: ahash::HashMap<Vec<String>, u32>,
+    /// Rewritten box per `(box, group context)`.
+    memo: ahash::HashMap<(TreeId, u32), TreeId>,
+}
+
+impl ModulationWalk {
+    fn new() -> Self {
+        Self {
+            group_stack: Vec::new(),
+            context: 0,
+            contexts: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            memo: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+        }
+    }
+
+    /// Enters the group `label`: returns the context to restore on exit.
+    fn enter(&mut self, label: String) -> u32 {
+        self.group_stack.push(label);
+        let next = self.contexts.len() as u32 + 1;
+        let entered = *self
+            .contexts
+            .entry(self.group_stack.clone())
+            .or_insert(next);
+        std::mem::replace(&mut self.context, entered)
+    }
+
+    fn leave(&mut self, saved: u32) {
+        self.group_stack.pop();
+        self.context = saved;
+    }
 }
 
 /// Evaluates the modulation target to a plain label string.
@@ -198,89 +242,107 @@ pub(crate) fn eval_modulation_circuit(
 
 /// Recursively implants one modulation circuit into matching widgets.
 ///
-/// The traversal keeps an explicit `group_stack` of already-entered UI labels so
-/// widget matching can reconstruct the effective path seen by the user. Only
+/// The traversal keeps the stack of already-entered UI labels
+/// ([`ModulationWalk`]) so widget matching can reconstruct the effective path
+/// seen by the user, and memoizes each box per group context. Only
 /// widget/group families receive modulation-specific treatment; every other node
 /// is rebuilt structurally if any child changes.
 fn implant_modulation(
     arena: &mut TreeArena,
     expr: TreeId,
     rewrite: &ModulationRewrite<'_>,
-    group_stack: &mut Vec<String>,
+    walk: &mut ModulationWalk,
+) -> TreeId {
+    let key = (expr, walk.context);
+    if let Some(&done) = walk.memo.get(&key) {
+        return done;
+    }
+    let rewritten = implant_modulation_node(arena, expr, rewrite, walk);
+    walk.memo.insert(key, rewritten);
+    rewritten
+}
+
+/// One step of [`implant_modulation`]: the rewrite of `expr` from those of its
+/// children.
+fn implant_modulation_node(
+    arena: &mut TreeArena,
+    expr: TreeId,
+    rewrite: &ModulationRewrite<'_>,
+    walk: &mut ModulationWalk,
 ) -> TreeId {
     match match_box(arena, expr) {
         BoxMatch::Button(label) | BoxMatch::Checkbox(label) => {
-            implant_widget_if_match(arena, expr, label, rewrite, group_stack)
+            implant_widget_if_match(arena, expr, label, rewrite, &walk.group_stack)
         }
         BoxMatch::VSlider(label, cur, min, max, step) => {
             let rebuilt = {
-                let cur = implant_modulation(arena, cur, rewrite, group_stack);
-                let min = implant_modulation(arena, min, rewrite, group_stack);
-                let max = implant_modulation(arena, max, rewrite, group_stack);
-                let step = implant_modulation(arena, step, rewrite, group_stack);
+                let cur = implant_modulation(arena, cur, rewrite, walk);
+                let min = implant_modulation(arena, min, rewrite, walk);
+                let max = implant_modulation(arena, max, rewrite, walk);
+                let step = implant_modulation(arena, step, rewrite, walk);
                 let mut b = BoxBuilder::new(arena);
                 b.vslider(label, cur, min, max, step)
             };
-            implant_widget_if_match(arena, rebuilt, label, rewrite, group_stack)
+            implant_widget_if_match(arena, rebuilt, label, rewrite, &walk.group_stack)
         }
         BoxMatch::HSlider(label, cur, min, max, step) => {
             let rebuilt = {
-                let cur = implant_modulation(arena, cur, rewrite, group_stack);
-                let min = implant_modulation(arena, min, rewrite, group_stack);
-                let max = implant_modulation(arena, max, rewrite, group_stack);
-                let step = implant_modulation(arena, step, rewrite, group_stack);
+                let cur = implant_modulation(arena, cur, rewrite, walk);
+                let min = implant_modulation(arena, min, rewrite, walk);
+                let max = implant_modulation(arena, max, rewrite, walk);
+                let step = implant_modulation(arena, step, rewrite, walk);
                 let mut b = BoxBuilder::new(arena);
                 b.hslider(label, cur, min, max, step)
             };
-            implant_widget_if_match(arena, rebuilt, label, rewrite, group_stack)
+            implant_widget_if_match(arena, rebuilt, label, rewrite, &walk.group_stack)
         }
         BoxMatch::NumEntry(label, cur, min, max, step) => {
             let rebuilt = {
-                let cur = implant_modulation(arena, cur, rewrite, group_stack);
-                let min = implant_modulation(arena, min, rewrite, group_stack);
-                let max = implant_modulation(arena, max, rewrite, group_stack);
-                let step = implant_modulation(arena, step, rewrite, group_stack);
+                let cur = implant_modulation(arena, cur, rewrite, walk);
+                let min = implant_modulation(arena, min, rewrite, walk);
+                let max = implant_modulation(arena, max, rewrite, walk);
+                let step = implant_modulation(arena, step, rewrite, walk);
                 let mut b = BoxBuilder::new(arena);
                 b.num_entry(label, cur, min, max, step)
             };
-            implant_widget_if_match(arena, rebuilt, label, rewrite, group_stack)
+            implant_widget_if_match(arena, rebuilt, label, rewrite, &walk.group_stack)
         }
         BoxMatch::VBargraph(label, min, max) => {
             let rebuilt = {
-                let min = implant_modulation(arena, min, rewrite, group_stack);
-                let max = implant_modulation(arena, max, rewrite, group_stack);
+                let min = implant_modulation(arena, min, rewrite, walk);
+                let max = implant_modulation(arena, max, rewrite, walk);
                 let mut b = BoxBuilder::new(arena);
                 b.vbargraph(label, min, max)
             };
-            implant_widget_if_match(arena, rebuilt, label, rewrite, group_stack)
+            implant_widget_if_match(arena, rebuilt, label, rewrite, &walk.group_stack)
         }
         BoxMatch::HBargraph(label, min, max) => {
             let rebuilt = {
-                let min = implant_modulation(arena, min, rewrite, group_stack);
-                let max = implant_modulation(arena, max, rewrite, group_stack);
+                let min = implant_modulation(arena, min, rewrite, walk);
+                let max = implant_modulation(arena, max, rewrite, walk);
                 let mut b = BoxBuilder::new(arena);
                 b.hbargraph(label, min, max)
             };
-            implant_widget_if_match(arena, rebuilt, label, rewrite, group_stack)
+            implant_widget_if_match(arena, rebuilt, label, rewrite, &walk.group_stack)
         }
         BoxMatch::VGroup(label, inner) => {
-            group_stack.push(strip_label_node(arena, label));
-            let rewritten = implant_modulation(arena, inner, rewrite, group_stack);
-            group_stack.pop();
+            let saved = walk.enter(strip_label_node(arena, label));
+            let rewritten = implant_modulation(arena, inner, rewrite, walk);
+            walk.leave(saved);
             let mut b = BoxBuilder::new(arena);
             b.vgroup(label, rewritten)
         }
         BoxMatch::HGroup(label, inner) => {
-            group_stack.push(strip_label_node(arena, label));
-            let rewritten = implant_modulation(arena, inner, rewrite, group_stack);
-            group_stack.pop();
+            let saved = walk.enter(strip_label_node(arena, label));
+            let rewritten = implant_modulation(arena, inner, rewrite, walk);
+            walk.leave(saved);
             let mut b = BoxBuilder::new(arena);
             b.hgroup(label, rewritten)
         }
         BoxMatch::TGroup(label, inner) => {
-            group_stack.push(strip_label_node(arena, label));
-            let rewritten = implant_modulation(arena, inner, rewrite, group_stack);
-            group_stack.pop();
+            let saved = walk.enter(strip_label_node(arena, label));
+            let rewritten = implant_modulation(arena, inner, rewrite, walk);
+            walk.leave(saved);
             let mut b = BoxBuilder::new(arena);
             b.tgroup(label, rewritten)
         }
@@ -295,7 +357,7 @@ fn implant_modulation(
             let mut rebuilt = Vec::with_capacity(node.children.len());
             let mut changed = false;
             for child in node.children.as_slice().iter().copied() {
-                let rewritten = implant_modulation(arena, child, rewrite, group_stack);
+                let rewritten = implant_modulation(arena, child, rewrite, walk);
                 if rewritten != child {
                     changed = true;
                 }

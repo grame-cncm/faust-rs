@@ -1157,3 +1157,50 @@ fn a_target_without_match_warns_under_the_semantic_warnings_only() {
     let message = verbose.warnings.as_slice()[0].message.to_string();
     assert!(message.contains("`zzz`"), "{message}");
 }
+
+/// The implanter memoizes each box per group context: `f(40)` refers to the
+/// slider through `2^40` paths of the evaluated DAG, which a walk without the
+/// memo visits one by one (it took 6 s at `f(24)` and four times longer per
+/// two levels). The constant modulator replaces `g` on every path: `h` is the
+/// only control left.
+#[test]
+fn a_widget_shared_by_nested_definitions_is_modulated_in_linear_time() {
+    let source = r#"
+f(0) = hslider("g", 0.5, 0, 1, 0.01) + hslider("h", 0.5, 0, 1, 0.01);
+f(n) = sin(f(n-1)) + cos(f(n-1));
+process = ["g": 0.25 -> f(40)];
+"#;
+    let json = Compiler::new()
+        .compile_source_to_json("shared_modulation.dsp", source)
+        .expect("a shared modulated widget compiles");
+    let observed = observe(&json);
+    let addresses: Vec<&str> = observed
+        .controls
+        .iter()
+        .map(|(address, ..)| address.as_str())
+        .collect();
+    assert_eq!((observed.inputs, observed.outputs), (0, 1));
+    assert_eq!(addresses, ["/shared_modulation/h"]);
+}
+
+/// The memo key holds the group context: the same slider box under two
+/// groups is two widgets, and only the one the target names is replaced. A
+/// key without the context would reuse the rewrite of `a/g` under `b`.
+#[test]
+fn a_box_shared_by_two_groups_is_modulated_in_the_named_group_only() {
+    let source = r#"
+w = hslider("g", 0.5, 0, 1, 0.01);
+process = ["a/g": 0.25 -> hgroup("a", w), hgroup("b", w)];
+"#;
+    let json = Compiler::new()
+        .compile_source_to_json("grouped_modulation.dsp", source)
+        .expect("a grouped modulation compiles");
+    let observed = observe(&json);
+    let addresses: Vec<&str> = observed
+        .controls
+        .iter()
+        .map(|(address, ..)| address.as_str())
+        .collect();
+    assert_eq!((observed.inputs, observed.outputs), (0, 2));
+    assert_eq!(addresses, ["/b/g"]);
+}

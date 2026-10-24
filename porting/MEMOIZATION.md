@@ -78,7 +78,8 @@ updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 §2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, §2.4e
 and §2.4b updated the same day when pattern matchers became persistent, and
 §2.4b again for the size of its entries and the pinning of its stores; §2.24
-was added and §2.11 and §2.20 updated on 2026-10-16 too.
+was added and §2.11 and §2.20 updated on 2026-10-16 too; §2.27 was added on
+2026-10-24.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -1979,6 +1980,45 @@ unmemoized walk, saturation on a 90-level Fibonacci DAG, the bounded printer),
 the `draw` tests of DIFF-BEH-025, `svg_probe.rs`
 (`a_recursion_with_shared_subproblems_draws_in_linear_size`), and two
 `faustprobe --svg` runs byte-identical on `fdn.dsp` and `texture.dsp`.
+
+### 2.27 `eval`: modulation implanters, per box and group context
+
+Status: implemented 2026-10-24 (label targets); the wildcard memo dates from
+the wildcard target and is recorded here with it.
+
+Location: `crates/eval/src/modulation.rs`, `ModulationWalk` (label targets,
+`implant_modulation`) and `WildcardWalk` (`"*"` / `"group/*"`,
+`implant_wildcard`), each opened by one evaluated modulation and dropped
+with it.
+
+Cache: `HashMap<(TreeId, u32), TreeId>`, the rewritten box per box and group
+context. For a label target the context is the stack of group labels entered,
+outermost first, interned in `ModulationWalk::contexts` (0 is the root); for a
+wildcard it is `propagate::UiGroupContext::key()`.
+
+Key and lifetime: the rewrite of a box is a function of the box, of the
+modulation (target, circuit, slot: fixed for the walk) and of the groups
+entered, which decide whether a widget's path matches (rule 6). Two widgets
+of one slider box under two groups are two controls: the context is part of
+the key, and `a_box_shared_by_two_groups_is_modulated_in_the_named_group_only`
+fails (`[]` instead of `["/b/g"]`) when it is dropped. One walk only: another
+modulation has another target.
+
+Why: the C++ implanter (`BoxModulationImplanter`) is a `BoxIdentity`, memoized
+per instance, one instance per residual target path. The label walk had no
+memo and visited the evaluated DAG as a tree: `f(n) = sin(f(n-1)) +
+cos(f(n-1))` under `["g": *(0.5) -> f(n)]` took 0.10 s at n = 18, 1.49 s at
+22, 6.05 s at 24 (the unmodulated program 0.00 s), and the faust-elements
+voice under `["geometry": (!, _) -> voice]` had not finished after 10 minutes
+(module and body: 20 minutes). With the memo: 2.6 s for the voice to C++, of
+which the modulation is negligible; 226 191 entries and 161 331 hits on it
+(temporary counter, reverted), each hit a subtree walk saved; f(40) at 0.00 s.
+C++ output byte-identical at f(18).
+
+Validation: `crates/compiler/tests/modulation_corpus.rs` (the 42 fixtures
+against the frozen and the live reference,
+`a_widget_shared_by_nested_definitions_is_modulated_in_linear_time` at f(40),
+the two-group test above).
 
 ## 3. Planned Additions
 
