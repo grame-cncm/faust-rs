@@ -289,12 +289,21 @@ pub fn check_int_param(t: &SigType) -> Result<(), TypeError> {
     check_init(t)
 }
 
-/// Assert that the delay amount has a bounded, non-negative upper bound and
-/// return its C++-compatible rounded upper bound as `i32`.
+/// Assert that the delay amount has a bounded, non-negative upper bound below
+/// `INT_MAX` and return its C++-compatible rounded upper bound as `i32`.
 ///
 /// Unlike C++, faust-rs deliberately accepts an interval whose lower bound is
 /// negative when its upper bound is non-negative. Existing scalar variable-
 /// delay lowering clamps the runtime index and relies on this adapted contract.
+///
+/// Two intervals are nevertheless refused, being no bound at all:
+/// - an upper bound of `INT_MAX` or more, as C++ refuses it (`i.hi() <
+///   INT_MAX`): it is the saturated range of an integer conversion;
+/// - an interval that spans the whole integer range, `hi - lo >= 2^32 - 1`:
+///   the range the analysis gives `int(x)` for an `x` it cannot bound, possibly
+///   shifted by a constant (`int(x) - 1` is `[INT_MIN - 1, INT_MAX - 1]`). C++
+///   refuses it for its negative lower bound; the tolerance above accepted it
+///   and sized the delay line to 2^31 samples, an 8 GiB DSP structure.
 ///
 /// # C++ source
 /// `int checkDelayInterval(Type t)`
@@ -315,8 +324,26 @@ pub fn check_delay_interval(t: &SigType) -> Result<i32, TypeError> {
             itv.hi()
         )));
     }
+    if itv.hi() >= f64::from(i32::MAX) {
+        return Err(TypeError(format!(
+            "delay amount must have an upper bound below INT_MAX, got {}: the interval \
+             analysis could not bound it",
+            itv
+        )));
+    }
+    if itv.hi() - itv.lo() >= WHOLE_INT_RANGE {
+        return Err(TypeError(format!(
+            "delay amount spans the whole integer range, {}: the interval analysis could \
+             not bound it (the integer conversion of an unbounded value)",
+            itv
+        )));
+    }
     Ok(interval::saturated_int_cast(itv.hi() + 0.5))
 }
+
+/// Width of the `i32` range, `INT_MAX - INT_MIN = 2^32 - 1`: the interval of an
+/// integer conversion whose operand the analysis cannot bound.
+const WHOLE_INT_RANGE: f64 = 4_294_967_295.0;
 
 fn variability_name(v: Variability) -> &'static str {
     match v {
@@ -413,6 +440,64 @@ mod tests {
             interval::Interval::new(f64::NEG_INFINITY, f64::INFINITY, -24),
         );
         assert!(check_delay_interval(&t).is_err());
+    }
+
+    #[test]
+    fn whole_int_range_is_the_width_of_i32() {
+        assert_eq!(WHOLE_INT_RANGE, f64::from(i32::MAX) - f64::from(i32::MIN));
+    }
+
+    fn int_interval(lo: f64, hi: f64) -> SigType {
+        make_simple(
+            Nature::Int,
+            Variability::Samp,
+            Computability::Exec,
+            Vectorability::Vect,
+            Boolean::Num,
+            interval::Interval::new(lo, hi, 0),
+        )
+    }
+
+    #[test]
+    fn check_delay_interval_rejects_an_upper_bound_of_int_max_like_cpp() {
+        // `int(x)` of a non-negative unbounded `x` is [0, INT_MAX]: finite, so
+        // `is_bounded()` holds, but C++ requires `hi < INT_MAX`.
+        let err = check_delay_interval(&int_interval(0.0, f64::from(i32::MAX)))
+            .expect_err("INT_MAX is not a delay bound");
+        assert!(err.0.contains("below INT_MAX"), "{}", err.0);
+    }
+
+    #[test]
+    fn check_delay_interval_rejects_the_whole_int_range_even_shifted() {
+        // `int(x)` and `int(x) - 1` for an unbounded `x`: the second one has
+        // an upper bound below INT_MAX and a negative lower bound, which the
+        // tolerance below would accept with a 2^31-sample line.
+        let lo = f64::from(i32::MIN);
+        let hi = f64::from(i32::MAX);
+        for (l, h) in [(lo, hi), (lo - 1.0, hi - 1.0), (lo - 1000.0, hi - 1000.0)] {
+            let err = check_delay_interval(&int_interval(l, h))
+                .expect_err("the whole integer range is not a delay bound");
+            assert!(
+                err.0.contains("below INT_MAX") || err.0.contains("whole integer range"),
+                "{}",
+                err.0
+            );
+        }
+        let err = check_delay_interval(&int_interval(lo - 1.0, hi - 1.0)).unwrap_err();
+        assert!(err.0.contains("whole integer range"), "{}", err.0);
+    }
+
+    #[test]
+    fn check_delay_interval_accepts_the_largest_bound_below_int_max() {
+        assert_eq!(
+            check_delay_interval(&int_interval(0.0, f64::from(i32::MAX) - 1.0)),
+            Ok(i32::MAX - 1)
+        );
+        // A one-sided saturation stays accepted (the runtime clamp holds it).
+        assert_eq!(
+            check_delay_interval(&int_interval(f64::from(i32::MIN), 100.0)),
+            Ok(100)
+        );
     }
 
     #[test]

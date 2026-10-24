@@ -508,6 +508,66 @@ fn invalid_delay_interval_points_to_faust_and_exposes_inferred_type() {
     assert!(!first.message.contains("SIG"));
 }
 
+// A delay read at an offset that follows an oscillator (a recursion) through
+// `int()`: the interval analysis cannot bound the oscillator, so the offset is
+// typed as the whole integer range. C++ refuses it (its lower bound is
+// negative); faust-rs, which tolerates a negative lower bound, used to accept
+// it and size the line to 2^31 samples, an 8 GiB DSP structure. Reduced from
+// faust-elements' reverb.
+const UNBOUNDED_DELAY: &str = r#"
+start = 1 - 1';
+lfo = (\(y0, y1).(1.99 * select2(start, y0, 0.5) - y1, select2(start, y0, 0.5))) ~ (_, _) : !, +(0.5);
+k = int(10.0 + 80.0 * lfo);
+process = \(x).((\(wp).(x + 0.5 * (wp @ (k - 1)))) ~ _);
+"#;
+
+#[test]
+fn a_delay_bounded_only_by_the_int_range_is_rejected_like_cpp() {
+    let err = Compiler::new()
+        .compile_source_to_signals("unbounded_delay.dsp", UNBOUNDED_DELAY)
+        .expect_err("a delay whose upper bound is INT_MAX must fail type validation");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+
+    assert_eq!(first.stage, Stage::TypeInference);
+    assert_eq!(
+        first.detail_code.as_ref().map(|code| code.as_str()),
+        Some("delay-interval")
+    );
+    // `int(x) - 1` is typed [INT_MIN - 1, INT_MAX - 1]: the whole integer
+    // range, shifted. C++ refuses it for its negative lower bound.
+    assert!(
+        first.message.contains("whole integer range"),
+        "the message should say why: {}",
+        first.message
+    );
+    assert!(
+        first
+            .labels
+            .iter()
+            .any(|label| label.span.file.ends_with("unbounded_delay.dsp")),
+        "delay diagnostic should retain its Faust source"
+    );
+}
+
+#[test]
+fn the_same_delay_clamped_to_its_real_range_compiles_with_a_small_line() {
+    // The repair the diagnostic advises: bound the offset.
+    let source = UNBOUNDED_DELAY
+        .replace("k = int(", "k = min(90, max(10, int(")
+        .replace("80.0 * lfo);", "80.0 * lfo)));");
+    let cpp = Compiler::new()
+        .compile_source_to_cpp(
+            "clamped_delay.dsp",
+            &source,
+            &codegen::backends::cpp::CppOptions::default(),
+        )
+        .expect("the clamped delay compiles");
+    assert!(
+        !cpp.contains("2147483648"),
+        "the clamped delay line must not be sized to 2^31 samples"
+    );
+}
+
 #[test]
 fn compile_time_math_domain_error_is_typed_and_source_located() {
     let err = Compiler::new()

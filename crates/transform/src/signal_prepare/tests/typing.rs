@@ -70,6 +70,13 @@ fn prepare_signals_for_fir_keeps_sampling_frequency_in_delay_amounts_after_simpl
         let mut b = SigBuilder::new(&mut arena);
         let input = b.input(0);
         let sr = b.fconst(ty, name, file);
+        // As `ma.SR = min(192000.0, max(1.0, fconstant(int fSamplingFreq, ...)))`
+        // bounds it: `int()` of a bare fSamplingFreq spans the whole integer
+        // range, a delay amount C++ refuses and `check_delay_interval` too.
+        let lo = b.real(1.0);
+        let hi = b.real(192000.0);
+        let sr_lo = b.max(lo, sr);
+        let sr = b.min(hi, sr_lo);
         let half = b.real(0.5);
         let sr_real = b.float_cast(sr);
         let scaled = b.mul(half, sr_real);

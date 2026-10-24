@@ -84,7 +84,7 @@ impl InferenceRule {
     pub const fn statement(self) -> &'static str {
         match self {
             Self::DelayInterval => {
-                "a variable delay amount must have a bounded interval with a non-negative upper bound"
+                "a variable delay amount must have a bounded interval with a non-negative upper bound below INT_MAX, narrower than the whole integer range"
             }
             Self::SoundfilePartInterval => {
                 "a soundfile part selector must stay within the integer interval [0, 255]"
@@ -396,7 +396,9 @@ impl InferenceError {
     #[must_use]
     pub fn expected(&self) -> Option<&str> {
         match self {
-            Self::DelayInterval { .. } => Some("bounded interval with non-negative upper bound"),
+            Self::DelayInterval { .. } => {
+                Some("bounded interval with non-negative upper bound below INT_MAX")
+            }
             Self::SoundfilePartInterval { .. } => Some("integer interval [0, 255]"),
             Self::ClockEnvironmentPosition { .. } => Some("opaque Clocked annotation"),
             Self::MathDomain { required, .. } => Some(required),

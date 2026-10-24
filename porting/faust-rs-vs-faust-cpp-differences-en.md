@@ -1006,6 +1006,41 @@ must run unchanged with Faust C++ should not pass them.
     `crates/cranelift-ffi/tests/svg_probe.rs`
     (`a_recursion_with_shared_subproblems_draws_in_linear_size`).
 
+### DIFF-BEH-026 — a variable delay amount with a negative lower bound
+
+- Status: `adapted`.
+- C++ `checkDelayInterval` (`sigtype.cpp`) and the delay rule of
+  `sigtyperules.cpp` require a delay amount's interval to lie within
+  `[0, INT_MAX)` ("possible negative values ... used in delay expression").
+  `sigtype::check_delay_interval` accepts a negative lower bound when the
+  upper bound is non-negative; variable-delay lowering clamps the index at run
+  time. A program C++ refuses can therefore compile in Rust, for instance an
+  audio input used as an amount (`_, _ : @`, interval `[-1, 1]`).
+- Two intervals are refused nevertheless, being no bound: an upper bound of
+  `INT_MAX` or more (as C++ refuses it), and an interval spanning the whole
+  integer range, `hi - lo >= 2^32 - 1`, the range the analysis gives `int(x)`
+  for an `x` it cannot bound, possibly shifted (`int(x) - 1` is
+  `[INT_MIN - 1, INT_MAX - 1]`). Before this, such an amount was accepted and
+  sized its delay line to 2^31 samples: an 8 GiB DSP structure, which crashes
+  a C++ host that allocates it on the stack while `faustprobe` renders it.
+- Related: C++ checks delay amounts on normalized signals, where a delay of a
+  delay is folded (`x @ 100 @ (s - 100)` is `x @ (s - 100 + 100)`); faust-rs
+  does not apply the delay normal form at the top-level rate and compiles
+  `rep_67` through the tolerance above, with the numerical difference of
+  `DIFF-GAP-016`.
+- Compatibility impact: Rust accepts amounts with a negative lower bound that
+  C++ refuses; it refuses, as C++, the amounts the interval analysis could not
+  bound, with the diagnostic `delay-interval`.
+- Evidence: `sigtype` tests `check_delay_interval_rejects_an_upper_bound_of_int_max_like_cpp`,
+  `check_delay_interval_rejects_the_whole_int_range_even_shifted`,
+  `check_delay_interval_accepts_negative_lower_bound_with_nonnegative_hi`;
+  `crates/compiler/tests/diagnostic_errors.rs`
+  (`a_delay_bounded_only_by_the_int_range_is_rejected_like_cpp`,
+  `the_same_delay_clamped_to_its_real_range_compiles_with_a_small_line`),
+  `crates/transform/src/signal_prepare/tests/typing.rs`
+  (`prepare_signals_for_fir_keeps_sampling_frequency_in_delay_amounts_after_simplify`,
+  whose sample rate is bounded as `ma.SR` bounds it).
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-006 — headers and libraries of foreign functions in C and C++
