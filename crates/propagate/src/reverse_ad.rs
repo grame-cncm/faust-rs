@@ -154,10 +154,7 @@ use signals::{
     match_sig,
 };
 use smallvec::SmallVec;
-use tlib::{
-    NodeKind, TreeArena, check_de_bruijn_coherence, is_de_bruijn_closed, list_to_vec,
-    match_de_bruijn_rec, tree_to_str,
-};
+use tlib::{NodeKind, TreeArena, list_to_vec, match_de_bruijn_rec, tree_to_str};
 
 use crate::PropagateError;
 use crate::stateful_rad::{
@@ -1015,16 +1012,7 @@ pub(super) fn generate_rad_signals(
         }) => build_block_reverse_ad(arena, primals, seeds),
         Err(e) => return Err(e),
     };
-    for &sig in &result {
-        if is_de_bruijn_closed(arena, sig) {
-            check_de_bruijn_coherence(arena, sig).map_err(|e| {
-                PropagateError::DeBruijnCoherence {
-                    pass: "RAD",
-                    detail: e.to_string(),
-                }
-            })?;
-        }
-    }
+    crate::forward_ad::check_ad_outputs_coherent(arena, &result, "RAD")?;
     Ok(result)
 }
 

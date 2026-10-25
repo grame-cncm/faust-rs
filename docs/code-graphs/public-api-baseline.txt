@@ -2530,6 +2530,7 @@ fn TreeArena::with_capacities
 fn TreeArena::with_capacity
 fn TreeId::as_u32
 fn check_de_bruijn_coherence
+fn check_de_bruijn_coherence_with_memo
 fn crate_id
 fn de_bruijn_aperture
 fn de_bruijn_aperture_with_memo

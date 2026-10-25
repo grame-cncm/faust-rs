@@ -19,7 +19,7 @@
 use std::error::Error;
 use std::fmt;
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 
 use crate::{NodeKind, TreeArena, TreeId, tree_to_int};
 
@@ -253,8 +253,24 @@ pub fn is_de_bruijn_closed(arena: &TreeArena, root: TreeId) -> bool {
 /// The memoization key is `(TreeId, depth)` because the same hash-consed node can
 /// appear under different numbers of enclosing binders.
 pub fn check_de_bruijn_coherence(arena: &TreeArena, root: TreeId) -> Result<(), RecursionError> {
-    let mut memo = AHashMap::new();
-    check_coherence_at_depth(arena, root, 0, &mut memo)
+    let mut memo = AHashSet::new();
+    check_de_bruijn_coherence_with_memo(arena, root, &mut memo)
+}
+
+/// Like [`check_de_bruijn_coherence`], but accepts an external memo cache.
+///
+/// The memo holds the `(TreeId, depth)` pairs already proven coherent, and
+/// only those: a failing subtree is never recorded, so sharing one memo
+/// across the roots of a forest reports the same first error, at the same
+/// root, as checking each root with a fresh memo. Callers checking many roots
+/// that share most of their DAG (the outputs of `fad` or `rad`) walk each
+/// shared node once instead of once per root.
+pub fn check_de_bruijn_coherence_with_memo(
+    arena: &TreeArena,
+    root: TreeId,
+    memo: &mut AHashSet<(TreeId, i64)>,
+) -> Result<(), RecursionError> {
+    check_coherence_at_depth(arena, root, 0, memo)
 }
 
 /// Lifts free de Bruijn references by one level (`liftn(..., 1)`).
@@ -694,9 +710,9 @@ fn check_coherence_at_depth(
     arena: &TreeArena,
     id: TreeId,
     depth: i64,
-    memo: &mut AHashMap<(TreeId, i64), ()>,
+    memo: &mut AHashSet<(TreeId, i64)>,
 ) -> Result<(), RecursionError> {
-    if memo.contains_key(&(id, depth)) {
+    if memo.contains(&(id, depth)) {
         return Ok(());
     }
 
@@ -708,7 +724,7 @@ fn check_coherence_at_depth(
                 depth,
             });
         }
-        memo.insert((id, depth), ());
+        memo.insert((id, depth));
         return Ok(());
     }
     if is_de_bruijn_ref_tag(arena, id) {
@@ -717,7 +733,7 @@ fn check_coherence_at_depth(
 
     if let Some(body) = match_de_bruijn_rec(arena, id) {
         check_coherence_at_depth(arena, body, depth + 1, memo)?;
-        memo.insert((id, depth), ());
+        memo.insert((id, depth));
         return Ok(());
     }
 
@@ -727,7 +743,7 @@ fn check_coherence_at_depth(
     for child in children {
         check_coherence_at_depth(arena, child, depth, memo)?;
     }
-    memo.insert((id, depth), ());
+    memo.insert((id, depth));
     Ok(())
 }
 

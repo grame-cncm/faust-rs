@@ -423,9 +423,9 @@ use signals::ad_rules::{DerivativeZeroFolder, is_literal_zero};
 use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use smallvec::SmallVec;
 use tlib::{
-    NodeKind, TreeArena, TreeId, check_de_bruijn_coherence, de_bruijn_aperture_with_memo,
-    de_bruijn_rec, is_de_bruijn_closed, lift_de_bruijn, list_to_vec, match_de_bruijn_rec,
-    match_de_bruijn_ref, tree_to_str, vec_to_list,
+    NodeKind, TreeArena, TreeId, check_de_bruijn_coherence_with_memo, de_bruijn_aperture_with_memo,
+    de_bruijn_rec, lift_de_bruijn, list_to_vec, match_de_bruijn_rec, match_de_bruijn_ref,
+    tree_to_str, vec_to_list,
 };
 
 use crate::PropagateError;
@@ -1992,17 +1992,38 @@ pub(super) fn generate_fad_signals_multi(
         result.push(dual.primal);
         result.extend(dual.tangents);
     }
-    for &sig in &result {
-        if is_de_bruijn_closed(arena, sig) {
-            check_de_bruijn_coherence(arena, sig).map_err(|e| {
+    check_ad_outputs_coherent(arena, &result, "FAD")?;
+    Ok(result)
+}
+
+/// Checks the de Bruijn coherence of every closed output of an AD transform.
+///
+/// The outputs of `fad` and `rad` share most of their DAG: every tangent of
+/// a recursion reads the primal's state, and the tangents of one primal read
+/// each other's subterms. One aperture memo and one coherence memo serve the
+/// whole output list, so a shared node is walked once rather than once per
+/// output; with a fresh memo per output, the check of `fad` over an order-N
+/// IIR (2N + 2 outputs over an O(N²) DAG) was cubic. The coherence memo
+/// records successes only (see [`check_de_bruijn_coherence_with_memo`]), so
+/// the first error and the output it is reported for are unchanged.
+pub(crate) fn check_ad_outputs_coherent(
+    arena: &TreeArena,
+    outputs: &[SigId],
+    pass: &'static str,
+) -> Result<(), PropagateError> {
+    let mut apertures = AHashMap::new();
+    let mut coherent = AHashSet::new();
+    for &sig in outputs {
+        if de_bruijn_aperture_with_memo(arena, sig, &mut apertures) <= 0 {
+            check_de_bruijn_coherence_with_memo(arena, sig, &mut coherent).map_err(|e| {
                 PropagateError::DeBruijnCoherence {
-                    pass: "FAD",
+                    pass,
                     detail: e.to_string(),
                 }
             })?;
         }
     }
-    Ok(result)
+    Ok(())
 }
 
 #[cfg(test)]

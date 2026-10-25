@@ -2,10 +2,10 @@
 
 use tlib::{
     NodeKind, RecursionError, SymbolicRecursionValidationError, TreeArena,
-    check_de_bruijn_coherence, de_bruijn_aperture, de_bruijn_rec, de_bruijn_ref, de_bruijn_to_sym,
-    is_de_bruijn_closed, lift_de_bruijn, lift_de_bruijn_n, match_de_bruijn_rec,
-    match_de_bruijn_ref, match_sym_rec, match_sym_ref, sym_rec, sym_ref,
-    validate_closed_de_bruijn_tree, validate_symbolic_recursion_tree,
+    check_de_bruijn_coherence, check_de_bruijn_coherence_with_memo, de_bruijn_aperture,
+    de_bruijn_rec, de_bruijn_ref, de_bruijn_to_sym, is_de_bruijn_closed, lift_de_bruijn,
+    lift_de_bruijn_n, match_de_bruijn_rec, match_de_bruijn_ref, match_sym_rec, match_sym_ref,
+    sym_rec, sym_ref, validate_closed_de_bruijn_tree, validate_symbolic_recursion_tree,
 };
 
 #[test]
@@ -188,6 +188,51 @@ fn coherence_err_inner_ref_escapes() {
             node: escaping,
             level: 2,
             depth: 1
+        })
+    );
+}
+
+/// A memo shared across roots, as the AD passes use it for their output
+/// list, gives every root the result a fresh memo gives, the first error
+/// included: the memo holds successes only, so a node already proven coherent
+/// at a depth is skipped and an incoherent one is still reached.
+#[test]
+fn coherence_with_a_shared_memo_matches_fresh_memos_root_by_root() {
+    let mut arena = TreeArena::new();
+    let bound = de_bruijn_ref(&mut arena, 1);
+    let escaping = de_bruijn_ref(&mut arena, 2);
+    let x = arena.symbol("x");
+    let shared = pair(&mut arena, bound, x);
+    let good = de_bruijn_rec(&mut arena, shared);
+    let wider = pair(&mut arena, shared, escaping);
+    let bad = de_bruijn_rec(&mut arena, wider);
+    let good_again = pair(&mut arena, good, x);
+    // The shared body under no binder: coherent at depth 1, not at depth 0.
+    let unbound = pair(&mut arena, shared, x);
+    let roots = [good, good_again, bad, good, unbound];
+
+    let mut memo = ahash::AHashSet::new();
+    for root in roots {
+        assert_eq!(
+            check_de_bruijn_coherence_with_memo(&arena, root, &mut memo),
+            check_de_bruijn_coherence(&arena, root),
+            "root {root:?}"
+        );
+    }
+    assert_eq!(
+        check_de_bruijn_coherence_with_memo(&arena, bad, &mut memo),
+        Err(RecursionError::IncoherentDeBruijnReference {
+            node: escaping,
+            level: 2,
+            depth: 1
+        })
+    );
+    assert_eq!(
+        check_de_bruijn_coherence_with_memo(&arena, unbound, &mut memo),
+        Err(RecursionError::IncoherentDeBruijnReference {
+            node: bound,
+            level: 1,
+            depth: 0
         })
     );
 }
