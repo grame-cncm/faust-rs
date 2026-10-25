@@ -39,7 +39,7 @@ use crate::mterm::{self, Mterm, add_nums, gcd, is_num, is_zero, state_order, sub
 pub(crate) struct Aterm {
     /// Signature → mterm map.  `BTreeMap` for deterministic ordering matching
     /// C++ `std::map<Tree, mterm>`.
-    terms: BTreeMap<SigId, Mterm>,
+    pub(crate) terms: BTreeMap<SigId, Mterm>,
 }
 
 impl Aterm {
@@ -197,69 +197,11 @@ impl Aterm {
         arena: &mut TreeArena,
         types: &HashMap<SigId, SigType>,
     ) -> SigId {
-        // Orders 0..=2 are folded as in the reference; order 3 joins last.
-        const STATE: usize = 3;
-        const ORDERS: usize = STATE + 1;
-        let zero = SigBuilder::new(arena).int(0);
-        let mut p = [zero; ORDERS]; // positive terms by order
-        let mut n = [zero; ORDERS]; // negative terms (made positive) by order
-
-        // Collect mterms — clone to avoid arena borrow conflicts during tree building.
-        let mterms: Vec<Mterm> = self.terms.values().cloned().collect();
-
-        for m in &mterms {
-            if m.is_negative(arena) {
-                // negative_mode=true: invert sign for the tree
-                let t = m.normalized_tree(arena, types, false, true);
-                let ord = state_order(arena, types, t) as usize;
-                n[ord] = simplifying_add(arena, n[ord], t);
-            } else {
-                let t = m.normalized_tree(arena, types, false, false);
-                let ord = state_order(arena, types, t) as usize;
-                p[ord] = simplifying_add(arena, p[ord], t);
-            }
+        let mut folds = SumFolds::empty(arena);
+        for m in self.terms.values() {
+            folds.push(arena, types, m);
         }
-
-        // Initial SUM = P[0] - N[0] (constant-order terms).
-        //
-        // C++ starts with `subNums(P[0], N[0])`. Some Rust constant-order terms
-        // are not numeric literals after the current pass (for example
-        // normalized UI-constant expressions), so retain the generic fallback
-        // for those while keeping the numeric path canonical. In particular,
-        // `0 - 0` must remain a positive zero rather than becoming `-1 * 0`.
-        let (mut sign, mut sum) = if is_num(arena, p[0]) && is_num(arena, n[0]) {
-            (true, sub_nums(arena, p[0], n[0]))
-        } else {
-            add_terms_with_sign(arena, true, p[0], false, n[0])
-        };
-
-        // Fold from highest to lowest order, the state terms excepted.
-        // C++: loop from order=3 down to 1; here from Samp (2) down to 1.
-        for order in (1..STATE).rev() {
-            let (s, r) = add_terms_with_sign(arena, false, n[order], sign, sum);
-            sign = s;
-            sum = r;
-
-            let (s, r) = add_terms_with_sign(arena, true, p[order], sign, sum);
-            sign = s;
-            sum = r;
-        }
-
-        // The state terms join last, as the right operand (SUM first).
-        let (s, r) = add_terms_with_sign(arena, sign, sum, false, n[STATE]);
-        sign = s;
-        sum = r;
-        let (s, r) = add_terms_with_sign(arena, sign, sum, true, p[STATE]);
-        sign = s;
-        sum = r;
-
-        if !sign {
-            // Result is negative: wrap in -1 * SUM.
-            let minus_one = SigBuilder::new(arena).int(-1);
-            sum = SigBuilder::new(arena).mul(minus_one, sum);
-        }
-
-        sum
+        folds.combine(arena)
     }
 
     /// Return the greatest common divisor of any two mterms.
@@ -341,6 +283,114 @@ impl Aterm {
         let mul = SigBuilder::new(arena).mul(d_tree, q_tree);
         a.add_sig(arena, types, mul);
         a
+    }
+}
+
+/// The bucket folds of [`Aterm::normalized_tree`], before their combination.
+///
+/// Terms are folded in map order into a positive and a negative bucket per
+/// [`state_order`] (0 = Konst, 1 = Block, 2 = Samp, 3 = depends on state),
+/// each term joining its bucket with [`simplifying_add`]. Keeping the folds
+/// apart from [`SumFolds::combine`] lets a sum extended by terms that come
+/// after all of its own in map order continue the folds instead of redoing
+/// them (`crate::sum_chain`): the same operations in the same order, so the
+/// same nodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SumFolds {
+    /// Positive terms by order.
+    pub(crate) p: [SigId; SumFolds::ORDERS],
+    /// Negative terms, made positive, by order.
+    pub(crate) n: [SigId; SumFolds::ORDERS],
+}
+
+impl SumFolds {
+    /// Orders 0..=2 are folded as in the reference; order 3 joins last.
+    const STATE: usize = 3;
+    pub(crate) const ORDERS: usize = Self::STATE + 1;
+
+    /// Every bucket empty (the integer 0).
+    pub(crate) fn empty(arena: &mut TreeArena) -> Self {
+        let zero = SigBuilder::new(arena).int(0);
+        Self {
+            p: [zero; Self::ORDERS],
+            n: [zero; Self::ORDERS],
+        }
+    }
+
+    /// Fold one term into its bucket and return its tree.
+    pub(crate) fn push(
+        &mut self,
+        arena: &mut TreeArena,
+        types: &HashMap<SigId, SigType>,
+        m: &Mterm,
+    ) -> SigId {
+        if m.is_negative(arena) {
+            // negative_mode=true: invert sign for the tree
+            let t = m.normalized_tree(arena, types, false, true);
+            let ord = state_order(arena, types, t) as usize;
+            self.n[ord] = simplifying_add(arena, self.n[ord], t);
+            t
+        } else {
+            let t = m.normalized_tree(arena, types, false, false);
+            let ord = state_order(arena, types, t) as usize;
+            self.p[ord] = simplifying_add(arena, self.p[ord], t);
+            t
+        }
+    }
+
+    /// Combine the buckets into the sum, as [`Aterm::normalized_tree`]
+    /// returns it.
+    ///
+    /// The constant bucket at order 0 forms the initial sum; the buckets of
+    /// orders 2 and 1 are folded onto it from highest to lowest, each term
+    /// joining as the left operand, using [`add_terms_with_sign`]; the terms
+    /// that depend on state join last, as the right operand. A negative
+    /// result is wrapped as `-1 * SUM`.
+    pub(crate) fn combine(&self, arena: &mut TreeArena) -> SigId {
+        let (sign, sum) = self.combine_signed(arena);
+        if sign {
+            sum
+        } else {
+            // Result is negative: wrap in -1 * SUM.
+            let minus_one = SigBuilder::new(arena).int(-1);
+            SigBuilder::new(arena).mul(minus_one, sum)
+        }
+    }
+
+    /// [`SumFolds::combine`] without the final `-1 *` wrap: the sign of the
+    /// sum, and its magnitude.
+    pub(crate) fn combine_signed(&self, arena: &mut TreeArena) -> (bool, SigId) {
+        let (p, n) = (&self.p, &self.n);
+        // Initial SUM = P[0] - N[0] (constant-order terms).
+        //
+        // C++ starts with `subNums(P[0], N[0])`. Some Rust constant-order terms
+        // are not numeric literals after the current pass (for example
+        // normalized UI-constant expressions), so retain the generic fallback
+        // for those while keeping the numeric path canonical. In particular,
+        // `0 - 0` must remain a positive zero rather than becoming `-1 * 0`.
+        let (mut sign, mut sum) = if is_num(arena, p[0]) && is_num(arena, n[0]) {
+            (true, sub_nums(arena, p[0], n[0]))
+        } else {
+            add_terms_with_sign(arena, true, p[0], false, n[0])
+        };
+
+        // Fold from highest to lowest order, the state terms excepted.
+        // C++: loop from order=3 down to 1; here from Samp (2) down to 1.
+        for order in (1..Self::STATE).rev() {
+            let (s, r) = add_terms_with_sign(arena, false, n[order], sign, sum);
+            sign = s;
+            sum = r;
+
+            let (s, r) = add_terms_with_sign(arena, true, p[order], sign, sum);
+            sign = s;
+            sum = r;
+        }
+
+        // The state terms join last, as the right operand (SUM first).
+        let (s, r) = add_terms_with_sign(arena, sign, sum, false, n[Self::STATE]);
+        sign = s;
+        sum = r;
+        add_terms_with_sign(arena, sign, sum, true, p[Self::STATE])
     }
 }
 
@@ -467,7 +517,7 @@ impl DivisorPairs {
 /// [`same_magnitude`](crate::mterm::same_magnitude) of two coefficients
 /// implies equal keys (`i32 → f64` is exact and `abs` maps `-0.0` to `0.0`),
 /// so the buckets miss no pair it accepts.
-fn magnitude_key(arena: &TreeArena, coef: SigId) -> Option<u64> {
+pub(crate) fn magnitude_key(arena: &TreeArena, coef: SigId) -> Option<u64> {
     let magnitude = match match_sig(arena, coef) {
         SigMatch::Int(n) => f64::from(n).abs(),
         SigMatch::Real(r) => r.abs(),

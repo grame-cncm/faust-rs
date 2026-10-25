@@ -742,51 +742,62 @@ sous `fad`, totaux de bloc pour l'IIR sous `rad`.
 
 ## 14. Quelle taille de FIR ou d'IIR compile
 
-Mesuré le 2026-09-23 avec `faustprobe --double --block 256 -n 48000 --time`
+Mesuré le 2026-10-25 avec `faustprobe --double --block 256 -n 48000 --time`
 (Cranelift, un portable Apple), les coefficients comme graines curseurs, le
-faisceau complet de lanes primal et dérivées en sorties. Les gradients ont
-été vérifiés par différences finies sur des lanes prises au hasard jusqu'à
-l'ordre 256 (`--fd-check` avec un `--grad-lane` explicite, `--train`
-attribuant les lanes dans l'ordre de sa liste).
+faisceau complet de lanes primal et dérivées en sorties. *avant* est
+`main-dev` en `22999fe5`. *après* ajoute le mémo partagé de la vérification
+de Bruijn et la normalisation incrémentale des longues sommes
+([plan](../porting/long-fir-iir-compile-cost-plan-2026-10-25-en.md)), qui
+laissent le code généré inchangé. Le temps de compilation inclut le JIT
+Cranelift, qui domine les plus gros programmes : l'IIR d'ordre 256 en `fad`
+compile vers C++ en 12 s. Les chiffres du 2026-09-23 de la première version
+de cette section ont été mesurés avec un code plus ancien (4096 taps : 281 s).
 
 FIR de N taps (`fi.fir`, N graines) :
 
-| N | fad compile | fad calcul | rad compile | rad calcul | mémoire |
+| N | fad compile avant → après | fad calcul | rad compile avant → après | rad calcul | mémoire (rad) |
 |---|---|---|---|---|---|
-| 64 | 24 ms | 428× temps réel | 30 ms | 61× | 25 Mo |
-| 256 | 0,2 s | 37× | 0,2 s | 9,6× | 70 Mo |
-| 1024 | 5,6 s | 6× | 5,4 s | 1,4× | 0,6 à 0,7 Go |
-| 4096 | 281 s | 1,1× | 265 s | 0,16× | 5 à 9 Go |
+| 64 | 20 → 20 ms | 390× temps réel | 40 → 30 ms | 58× | 25 Mo |
+| 256 | 0,10 → 0,07 s | 34× | 0,18 → 0,12 s | 10× | 62 Mo |
+| 1024 | 0,99 → 0,55 s | 5,4× | 1,8 → 1,1 s | 1,9× | 0,34 Go |
+| 4096 | 15,7 → 8,1 s | 1,06× | 36 → 23 s | 0,30× | 1,9 Go |
 
 IIR forme directe d'ordre N (`fi.iir`, 2N + 1 graines) :
 
-| N | fad compile | fad calcul | rad compile | rad calcul |
+| N | fad compile avant → après | fad calcul | rad compile avant → après | rad calcul |
 |---|---|---|---|---|
-| 16 | 69 ms | 103× | 19 ms | 131× |
-| 64 | 2,5 s | 1,4× | 0,13 s | 16× |
-| 256 | 198 s | 0,05× | 0,8 s | 4,3× |
+| 16 | 90 → 80 ms | 90× | 30 → 20 ms | 114× |
+| 64 | 2,1 → 1,6 s | 1,6× | 80 → 80 ms | 21× |
+| 256 | 162 → 110 s | 0,04× | 0,53 → 0,39 s | 4,8× |
 
 Cascade de K biquads (`fi.tf2`, 5K graines) :
 
-| K | fad compile | fad calcul | rad compile | rad calcul |
+| K | fad compile avant → après | fad calcul | rad compile avant → après | rad calcul |
 |---|---|---|---|---|
-| 16 | 1,05 s | 3,5× | 42 ms | 64× |
-| 64 | 189 s | 0,11× | 0,21 s | 10× |
-| 256 | abandon après 900 s | | 2,6 s | 2,1× |
+| 16 | 1,2 → 1,1 s | 4× | 40 → 40 ms | 65× |
+| 64 | 310 → 319 s | 0,1× | 0,23 → 0,19 s | 10× |
+| 256 | plus de 600 s | | 3,3 → 2,4 s | 2,0× |
 
 Ce qu'on peut en dire :
 
-- **FIR : quelques centaines de taps confortablement, un millier au prix
-  de 5 s de compilation, 4096 est la limite pratique** (des minutes et des
-  gigaoctets, encore temps réel en `fad`). Le coût est quadratique : chaque
-  lane de dérivée est elle-même un FIR de N taps, le graphe a N² nœuds.
-  Au-delà, il faudrait un FIR comme tableau de coefficients avec une boucle,
-  ce que ni Faust ni les règles d'AD n'ont aujourd'hui.
+- **FIR : un millier de taps en une demi-seconde, 4096 en 8 s en `fad`**,
+  encore en temps réel. Ce n'est pas la dérivée qui coûte : la lane de
+  `Σ cᵢ·x@i` par rapport à `c_k` est `x@k`, un nœud, et la sortie est
+  linéaire en N. Ce qui était quadratique, c'est la normalisation de la
+  somme `:>`. Chaque somme partielle était normalisée en entier, comme dans
+  la référence C++, qui met 12,5 s pour le FIR *simple* de 1024 taps. Elle
+  est désormais incrémentale. Deux coûts quadratiques restent : le faisceau
+  dense de tangentes de `fad` (N tangentes sur chacun des N nœuds de la
+  somme, 6,9 s de propagation à 8192 taps) et l'évaluation du motif de liste
+  récursif de `fi.fir` (2,1 s à 8192 taps, sans AD).
 - **IIR : en `rad`, l'ordre 256 ou 256 sections compilent en moins de 3 s
   et tournent en temps réel.** La passe inverse par blocs est linéaire en la
   taille du corps. En `fad` sur une récursion, chaque tangente est une
-  récursion complète : quadratique, l'ordre 64 ou 64 sections est le plafond
-  raisonnable (2 à 3 minutes, 5 Go), 256 ne compile pas.
+  récursion complète, donc la sortie elle-même est quadratique : l'ordre 64
+  compile en moins de 2 s, l'ordre 256 en moins de deux minutes (surtout
+  dans le JIT) et tourne à 0,04×. La cascade de sections `fi.tf2` en `fad`
+  n'a pas été améliorée et reste le cas le plus lent (64 sections :
+  5 minutes) ; sa cause reste à analyser.
 - **Règle simple** : `fad` pour les petits graphes et l'apprentissage dans
   le graphe, `rad` dès qu'il y a une récursion d'ordre élevé ou plus d'une
   centaine de paramètres.
@@ -849,8 +860,8 @@ FFT, et rend des graphes de 350 à 400 processeurs à 25 à 100 graphes par
 seconde sur RTX 3090 avec 5 sources de 2^17 échantillons. Le FDN colorless
 (Dal Santo, DAFx 2023) a 4, 6 ou 8 lignes, 6000 à 9000 modes, sur 480 000
 points de fréquence ; RIR2FDN (2024), 6 lignes, 5,7 à 41,9 s par itération
-sur V100 pour environ 1000 itérations. Notre limite de 4096 taps par
-expansion du graphe temporel couvre un filtre de l'acoustique active
+sur V100 pour environ 1000 itérations. L'expansion du graphe temporel
+(4096 taps : 8 s en `fad`, 23 s en `rad`) couvre un filtre de l'acoustique active
 (ordre 1000) mais pas sa matrice complète (52 filtres de 1000 taps), et
 reste loin des réponses de réverbération DDSP, différentiables seulement
 parce que la FFT rend le gradient gratuit : un FIR long a besoin d'une
@@ -861,7 +872,7 @@ compétitif.
 |---|---|---|---|
 | IIR petit ordre | notre classe de vitesse, noyaux dédiés | plus lent, repliement | compilé, exact |
 | IIR ordre élevé | absent | seule voie, avec repliement | `rad` linéaire, ordre 256 |
-| FIR long | absent | FFT, gratuit | 4096 taps au plus |
+| FIR long | absent | FFT, gratuit | 4096 taps en 8 s (`fad`) |
 | lot, GPU | oui | oui | non mesuré |
 | perte spectrale | rare | native | à écrire |
 

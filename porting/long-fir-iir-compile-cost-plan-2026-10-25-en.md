@@ -186,7 +186,52 @@ recursion augmentation, and the clock-domain twin. It is left for its own
 plan, after Phases 1–2 show what remains. At 4096 taps it is 1.7 s, against
 the 5.5 s of normalization.
 
-## 4. Non-goals
+## 4. Outcome (2026-10-25)
+
+Phases 1 and 2 are implemented. Same measurement as §1 (`--compilation-time`,
+C++ backend):
+
+| program | total before | total after | `propagation` | `fir-prepare-normalize` |
+|---|---|---|---|---|
+| FIR 1024 plain | 0.40 s | 0.12 s | 0.003 s | 0.33 → 0.012 s |
+| FIR 4096 plain | 6.35 s | 0.92 s | 0.013 s | 5.51 → 0.049 s |
+| FIR 4096 `fad` | 8.26 s | 2.60 s | 1.67 s | 5.66 → 0.055 s |
+| FIR 2048 `rad` | 3.23 s | 0.89 s | 0.008 s | → 0.47 s |
+| IIR 64 `fad` | 0.95 s | 0.49 s | 0.19 → 0.015 s | 0.54 → 0.25 s |
+| IIR 128 `fad` | 6.63 s | 2.38 s | 1.59 → 0.072 s | 3.53 → 1.19 s |
+| IIR 256 `fad` | — | 12.0 s | 0.33 s | 5.38 s |
+
+At larger sizes, two costs remain, both outside these phases:
+
+- **The FIR under `fad` in propagation** is quadratic: 6.9 s at 8192 taps,
+  the dense bundles of §2.3, i.e. Phase 3.
+- **The FIR's evaluation** is quadratic too: 2.1 s at 8192 taps, plain.
+  That is `fi.fir`'s recursive list pattern, independent of AD and not
+  analysed here.
+
+For the IIR under `fad`, the preparation that remains is mostly the
+retyping passes, linear in an O(N²) graph.
+
+Phase 2 extends only an appended term: a term whose signature comes before
+the last one of the sum takes the full path (§3, condition 3). On `fi.fir` and
+`fi.iir`, signatures are appended. The order-64 IIR under `fad` refused 113
+extensions out of 14,704.
+
+Validation:
+
+- **Debug checker.** Every fast-path result is recomputed by the full path,
+  which must return the same node and create none. It was active over the
+  whole debug workspace suite (3,435 tests, 0 failures).
+- **`sum_chain` unit tests,** including two mutations the checker rejects.
+- **Codegen-identity differential.** All 632 `.dsp` files of `tests/` and
+  `examples/`, in scalar, `-vec` and `-double` modes, through the base
+  (`22999fe5`) and the new binary. All 1,896 compilations are identical in C++
+  text, exit status and stderr; 115 of them fail identically on both
+  (timeouts and refused programs).
+- **Compile-budget A/B by hand,** over the 13 basket cases, best of five: the
+  new/base ratios are 0.96 to 1.02, which is noise.
+
+## 5. Non-goals
 
 - Changing the normal form itself: a different factorization, or a different
   term order. Those are parity decisions, and DIFF-BEH-023 is the only one in

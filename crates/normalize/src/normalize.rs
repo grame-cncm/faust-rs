@@ -48,14 +48,7 @@ pub(crate) fn normalize_add_term(
     t: SigId,
 ) -> SigId {
     #[cfg(debug_assertions)]
-    if is_de_bruijn_closed(arena, t)
-        && let Err(e) = check_de_bruijn_coherence(arena, t)
-    {
-        panic!(
-            "normalize_add_term received an incoherent De Bruijn tree: {e}\n\
-             Closed De Bruijn trees must be coherent before normalization."
-        );
-    }
+    debug_check_coherent_input(arena, t);
 
     let mut a = Aterm::from_sig(arena, types, t);
     let mut d = a.greatest_divisor(arena, types);
@@ -64,6 +57,20 @@ pub(crate) fn normalize_add_term(
         d = a.greatest_divisor(arena, types);
     }
     a.normalized_tree(arena, types)
+}
+
+/// The debug-build precondition of [`normalize_add_term`]: a closed de Bruijn
+/// input is coherent.
+#[cfg(debug_assertions)]
+pub(crate) fn debug_check_coherent_input(arena: &TreeArena, t: SigId) {
+    if is_de_bruijn_closed(arena, t)
+        && let Err(e) = check_de_bruijn_coherence(arena, t)
+    {
+        panic!(
+            "normalize_add_term received an incoherent De Bruijn tree: {e}\n\
+             Closed De Bruijn trees must be coherent before normalization."
+        );
+    }
 }
 
 // ─── Delay-term normalization ─────────────────────────────────────────────────

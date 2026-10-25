@@ -674,51 +674,60 @@ under `fad`, block totals for the IIR under `rad`.
 
 ## 14. How Large a FIR or IIR Compiles
 
-Measured on 2026-09-23 with `faustprobe --double --block 256 -n 48000 --time`
+Measured on 2026-10-25 with `faustprobe --double --block 256 -n 48000 --time`
 (Cranelift, one Apple laptop), the coefficients as slider seeds, the whole
-bundle of primal and derivative lanes as outputs. Gradients were checked
-against finite differences on lanes picked at random up to order 256
-(`--fd-check` with an explicit `--grad-lane`, since `--train` assigns the
-lanes in the order of its list).
+bundle of primal and derivative lanes as outputs. *before* is `main-dev` at
+`22999fe5`. *after* adds the shared de Bruijn check memo and the incremental
+normalization of long sums
+([plan](../porting/long-fir-iir-compile-cost-plan-2026-10-25-en.md)), which
+leave the generated code unchanged. The compile time includes the Cranelift
+JIT, which dominates the largest programs: the order-256 IIR under `fad`
+compiles to C++ in 12 s. The 2026-09-23 figures of the first version of this
+section were measured with older code (4096 taps: 281 s).
 
 FIR of N taps (`fi.fir`, N seeds):
 
-| N | fad compile | fad compute | rad compile | rad compute | memory |
+| N | fad compile before → after | fad compute | rad compile before → after | rad compute | memory (rad) |
 |---|---|---|---|---|---|
-| 64 | 24 ms | 428x real time | 30 ms | 61x | 25 MB |
-| 256 | 0.2 s | 37x | 0.2 s | 9.6x | 70 MB |
-| 1024 | 5.6 s | 6x | 5.4 s | 1.4x | 0.6 to 0.7 GB |
-| 4096 | 281 s | 1.1x | 265 s | 0.16x | 5 to 9 GB |
+| 64 | 20 → 20 ms | 390x real time | 40 → 30 ms | 58x | 25 MB |
+| 256 | 0.10 → 0.07 s | 34x | 0.18 → 0.12 s | 10x | 62 MB |
+| 1024 | 0.99 → 0.55 s | 5.4x | 1.8 → 1.1 s | 1.9x | 0.34 GB |
+| 4096 | 15.7 → 8.1 s | 1.06x | 36 → 23 s | 0.30x | 1.9 GB |
 
 Direct-form IIR of order N (`fi.iir`, 2N + 1 seeds):
 
-| N | fad compile | fad compute | rad compile | rad compute |
+| N | fad compile before → after | fad compute | rad compile before → after | rad compute |
 |---|---|---|---|---|
-| 16 | 69 ms | 103x | 19 ms | 131x |
-| 64 | 2.5 s | 1.4x | 0.13 s | 16x |
-| 256 | 198 s | 0.05x | 0.8 s | 4.3x |
+| 16 | 90 → 80 ms | 90x | 30 → 20 ms | 114x |
+| 64 | 2.1 → 1.6 s | 1.6x | 80 → 80 ms | 21x |
+| 256 | 162 → 110 s | 0.04x | 0.53 → 0.39 s | 4.8x |
 
 Cascade of K biquads (`fi.tf2`, 5K seeds):
 
-| K | fad compile | fad compute | rad compile | rad compute |
+| K | fad compile before → after | fad compute | rad compile before → after | rad compute |
 |---|---|---|---|---|
-| 16 | 1.05 s | 3.5x | 42 ms | 64x |
-| 64 | 189 s | 0.11x | 0.21 s | 10x |
-| 256 | given up after 900 s | | 2.6 s | 2.1x |
+| 16 | 1.2 → 1.1 s | 4x | 40 → 40 ms | 65x |
+| 64 | 310 → 319 s | 0.1x | 0.23 → 0.19 s | 10x |
+| 256 | over 600 s | | 3.3 → 2.4 s | 2.0x |
 
 What follows:
 
-- **FIR: a few hundred taps comfortably, a thousand for 5 s of
-  compilation, 4096 is the practical limit** (minutes and gigabytes, still
-  real time under `fad`). The cost is quadratic: each derivative lane is
-  itself an N-tap FIR, so the graph has N^2 nodes. Beyond that the FIR would
-  have to be a coefficient table with a loop, which neither Faust nor the AD
-  rules have today.
+- **FIR: a thousand taps in half a second, 4096 in 8 s under `fad`**, still
+  real time. The derivative is not what costs: a lane of `Σ cᵢ·x@i` with
+  respect to `c_k` is `x@k`, one node, so the output is linear in N. What
+  was quadratic was the normalization of the `:>` sum (every partial sum
+  normalized in full, as in the C++ reference, which takes 12.5 s for the
+  *plain* 1024-tap FIR). It is now incremental. Two quadratic costs remain:
+  the dense tangent bundle of `fad` (N tangents on each of the N nodes of the
+  sum, 6.9 s of propagation at 8192 taps) and the evaluation of `fi.fir`'s
+  recursive list pattern (2.1 s at 8192 taps, plain).
 - **IIR: under `rad`, order 256 or 256 sections compile in under 3 s and
   run in real time.** The block reverse sweep is linear in the size of the
-  body. Under `fad` on a recursion each tangent is a full recursion:
-  quadratic, so order 64 or 64 sections is the reasonable ceiling (2 to 3
-  minutes, 5 GB), and 256 does not compile.
+  body. Under `fad` on a recursion each tangent is a full recursion, so the
+  output itself is quadratic: order 64 compiles in under 2 s, order 256 in
+  under two minutes (most of it in the JIT) and runs at 0.04x. The cascade
+  of `fi.tf2` sections under `fad` was not helped and is the slowest case
+  (64 sections: 5 minutes); its cause is still to be analysed.
 - **Rule of thumb**: `fad` for small graphs and in-graph learning, `rad`
   as soon as there is a high-order recursion or more than a hundred or so
   parameters.
@@ -777,7 +786,8 @@ processors at 25 to 100 graphs per second on an RTX 3090 with 5 sources
 of 2^17 samples. The colorless FDN (Dal Santo, DAFx 2023) has 4, 6 or 8
 lines, 6000 to 9000 modes, on 480 000 frequency points; RIR2FDN (2024),
 6 lines, 5.7 to 41.9 s per iteration on a V100 for about 1000 iterations.
-Our 4096-tap limit by expansion of the time-domain graph covers one
+Expanding the time-domain graph (4096 taps: 8 s under `fad`, 23 s under
+`rad`) covers one
 active-acoustics filter (order 1000) but not its full matrix (52 filters
 of 1000 taps), and is far from DDSP's reverberation responses, which are
 differentiable only because the FFT makes the gradient free: a long FIR
@@ -787,7 +797,7 @@ needs a table-plus-loop representation or an FFT path before it competes.
 |---|---|---|---|
 | low-order IIR | our class of speed, dedicated kernels | slower, aliasing | compiled, exact |
 | high-order IIR | absent | the only way, with aliasing | `rad` linear, order 256 |
-| long FIR | absent | FFT, free | 4096 taps at most |
+| long FIR | absent | FFT, free | 4096 taps in 8 s (`fad`) |
 | batches, GPU | yes | yes | not measured |
 | spectral loss | rare | native | to be written |
 

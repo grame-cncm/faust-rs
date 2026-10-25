@@ -2062,6 +2062,60 @@ by root, including a node coherent under a binder and reached again outside
 it); the AD suites (`fad_recursive_runtime.rs`, `rad_runtime.rs`,
 `ondemand_pipeline.rs`).
 
+### 2.29 `normalize`: the state of each normalized sum, extended by its parent
+
+Status: implemented 2026-10-25
+(`porting/long-fir-iir-compile-cost-plan-2026-10-25-en.md`, Phase 2).
+
+Location: `crates/normalize/src/sum_chain.rs`, `SumMemo`, owned by
+`simplify::SimplifyCache` and used by the default `BinOp` path of
+`match_simplification`.
+
+Cache: `HashMap<SigId, SumState>`, keyed by a sum `T` that
+`normalize_add_term` returned. A state holds:
+- the terms of `T` (an `Aterm`);
+- the signatures of the terms appended last (pending);
+- the folds before and after those were appended;
+- the divisor candidate index;
+- the greatest signature.
+
+Key and lifetime: the state of `T` depends on `T` and on the type map
+(`state_order`, `sig_order`), which is fixed for the `SimplifyCache` that owns
+the memo (rule 6). The state is removed when a parent consumes it. A second
+parent of the same sum, and a sum of fewer than eight terms, take the full
+path. The memo is cleared with the cache.
+
+Why: a `:>` sum is a left chain, and every partial sum was decomposed,
+searched for a divisor and folded back in full. That is O(k) per prefix and
+O(N²) per sum, and the C++ reference does the same. The parent `T ± y` now
+extends the state of `T`, under checks that make it create the full path's
+nodes in the full path's order, with a fallback to the full path from scratch
+otherwise (module documentation of `sum_chain`).
+
+Measured on `fi.fir` of 4096 taps, plain: `fir-prepare-normalize` went from
+5.51 s to 0.049 s, and the compile from 6.35 s to 0.92 s. On `fi.iir` of order
+128 under `fad`, it went from 3.53 s to 1.19 s, the rest being linear passes
+over an O(N²) graph.
+
+Hit rate (temporary counters, reverted), per simplify pass:
+- order-64 IIR under `fad`: 14,591 sums extended, 113 refused because a new
+  signature came before the last one, 374 states stored by the full path;
+- 2048-tap FIR under `rad`: 2,040 extended.
+
+Limit: only an appended term is extended. A term whose signature comes before
+the last one would change every fold after it, and the full path builds those
+nodes, so the fast path steps aside there.
+
+Validation:
+- in debug builds every fast-path result is recomputed by the full path on
+  the same arena, which must return the same node and create no node, so the
+  whole debug test suite runs the checker;
+- `sum_chain` unit tests: chains joined left, right and with alternating
+  signs, a shared factor, an insertion before the end, a sum used twice;
+- two mutations the checker rejects: a dropped term, and an ignored common
+  factor;
+- the base-vs-new codegen differential over `tests/` and `examples/`.
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.

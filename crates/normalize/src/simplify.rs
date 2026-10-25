@@ -31,6 +31,7 @@ use crate::mterm::{
     DivisionByZero, is_minus_one, is_negative_num, is_num, is_one, is_zero, minus_num, mul_nums,
 };
 use crate::normalize::{normalize_add_term, normalize_delay_term, normalize_delay1_term};
+use crate::sum_chain::SumMemo;
 
 // ─── Public entry points ──────────────────────────────────────────────────────
 
@@ -58,22 +59,33 @@ pub(crate) fn simplify(
 #[derive(Default)]
 pub(crate) struct SimplifyCache {
     nodes: HashMap<SigId, Option<SigId>>,
+    /// States of the sums this pass normalized, so that a sum extended by
+    /// new terms is normalized incrementally ([`SumMemo`]).
+    sums: SumMemo,
 }
 
 impl SimplifyCache {
     pub(crate) fn new() -> Self {
         Self {
             nodes: HashMap::new(),
+            sums: SumMemo::new(),
         }
     }
 
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
+        self.sums = SumMemo::new();
     }
 
     #[cfg(test)]
     fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Fast-path and fallback counts of the incremental sum normalization.
+    #[cfg(test)]
+    pub(crate) fn sum_stats(&self) -> crate::sum_chain::SumMemoStats {
+        self.sums.stats
     }
 }
 
@@ -231,7 +243,7 @@ fn sig_map(
     let rebuilt = arena.intern(kind, &new_children);
 
     // Apply local simplification rules.
-    let result = simplification(arena, types, rebuilt);
+    let result = simplification(arena, types, &mut cache.sums, rebuilt);
 
     // Cache the result.
     if result == sig {
@@ -251,8 +263,13 @@ fn sig_map(
 /// applies).
 ///
 /// C++: `static Tree simplification(Tree sig)`.
-fn simplification(arena: &mut TreeArena, types: &HashMap<SigId, SigType>, sig: SigId) -> SigId {
-    match_simplification(arena, types, sig)
+fn simplification(
+    arena: &mut TreeArena,
+    types: &HashMap<SigId, SigType>,
+    sums: &mut SumMemo,
+    sig: SigId,
+) -> SigId {
+    match_simplification(arena, types, sums, sig)
 }
 
 /// Inner implementation of simplification rules, separated to make borrow
@@ -260,6 +277,7 @@ fn simplification(arena: &mut TreeArena, types: &HashMap<SigId, SigType>, sig: S
 fn match_simplification(
     arena: &mut TreeArena,
     types: &HashMap<SigId, SigType>,
+    sums: &mut SumMemo,
     sig: SigId,
 ) -> SigId {
     // ── Math primitives (constant folding) ────────────────────────────────
@@ -517,8 +535,9 @@ fn match_simplification(
             }
         }
 
-        // Default BinOp path: normalize as an add-term.
-        return normalize_add_term(arena, types, sig);
+        // Default BinOp path: normalize as an add-term, incrementally when
+        // `sig` extends a sum this pass already normalized.
+        return sums.normalize_add_term(arena, types, sig);
     }
 
     // ── Delay1 / Delay ────────────────────────────────────────────────────
@@ -811,7 +830,7 @@ mod tests {
             let x = b.int(base);
             let y = b.int(exponent);
             let pow = b.pow(x, y);
-            let folded = simplification(&mut arena, &HashMap::new(), pow);
+            let folded = simplification(&mut arena, &HashMap::new(), &mut SumMemo::new(), pow);
             let actual = match match_sig(&arena, folded) {
                 SigMatch::Int(value) => value,
                 SigMatch::BinOp(BinOp::Mul, lhs, rhs) => {

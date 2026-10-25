@@ -35,6 +35,7 @@ pub mod normalform;
 pub(crate) mod normalize;
 pub mod rec_merge;
 pub(crate) mod simplify;
+pub(crate) mod sum_chain;
 pub mod table_promote;
 
 pub use mterm::DivisionByZero;
