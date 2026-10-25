@@ -231,7 +231,152 @@ Validation:
 - **Compile-budget A/B by hand,** over the 13 basket cases, best of five: the
   new/base ratios are 0.96 to 1.02, which is noise.
 
-## 5. Non-goals
+## 5. The `fi.tf2` cascade under `fad` (analysis, 2026-10-25)
+
+Phases 1 and 2 left the cascade of K `fi.tf2` sections (5K slider seeds)
+unchanged: 64 sections compile in about 280 s through `faustprobe`. This
+section records why, and what would fix it. Only the measurements and the
+`sigtype` prototype below were made; nothing else is implemented.
+
+### 5.1 Where the time goes
+
+`faust-rs --compilation-time`, C++ backend, at `e8ac891d`:
+
+| K | total | `fir-prepare-normalize` | C++ lines |
+|---|---|---|---|
+| 8 | 0.17 s | 0.08 s | 3,321 |
+| 16 | 0.68 s | 0.48 s | 12,281 |
+| 32 | 4.83 s | 3.67 s | 47,481 |
+| 64 | 42.8 s | 33.1 s | 187,001 |
+
+The output is quadratic (×4 per doubling). Section j carries the tangents of
+every seed upstream of it, so this is the forward-mode contract, as for the
+IIR. The front end is cubic (×9 per doubling). Through `faustprobe` most of
+the 280 s is neither: at K = 32, `-lang cranelift --compilation-time` gives
+`cranelift-codegen` 7.0 s against 2.5 s for everything before it.
+
+### 5.2 Cause 1: the Cranelift register allocator (the dominant cost)
+
+Profiling `-lang cranelift` at K = 32 puts 91 % of the samples in
+`regalloc2::ion::run`, the default `backtracking` allocator, on the one large
+`compute` function. Its cost grows much faster than the function: about ×35
+for ×4 of code from K = 32 to K = 64.
+
+Cranelift 0.135 has `regalloc_algorithm = "single_pass"`. A temporary
+experiment set it through an environment variable in `make_jit_builder`
+(`crates/codegen/src/backends/cranelift/core.rs`) and was reverted.
+`faustprobe --double --block 256 -n 48000 --time`:
+
+| program | compile, backtracking → single_pass | compute (× real time) |
+|---|---|---|
+| tf2 cascade K = 32, `fad` | 11.9 → 3.7 s | 0.55 → 0.59 |
+| tf2 cascade K = 64, `fad` | 274 → 28 s | 0.12 → 0.13 |
+| `fi.iir` order 256, `fad` | 90 → 17 s | 0.06 → 0.03 |
+| `fi.fir` 4096 taps, `fad` | 7.4 → 3.9 s | 1.12 → 1.04 |
+| `fi.fir` 1024 taps, `fad` | 0.50 → 0.33 s | 5.66 → 5.50 |
+
+At K = 64 the JIT goes from about 250 s to about 4 s; the rest is the front
+end. The generated code is not always slower, but it can be, by 2× on the
+order-256 IIR. Choosing the allocator is therefore a trade between compile time
+and run time, so it is a decision for the user. Two options:
+
+- an explicit option on `faust-rs` and `faustprobe`, with the default
+  unchanged;
+- a threshold on the function size above which `single_pass` is used, with
+  the option to force either.
+
+Either changes only the machine code Cranelift emits, not the FIR. There is
+no C++ counterpart to keep in parity.
+
+### 5.3 Cause 2: the fixpoint of the recursion types (front end)
+
+`fir-prepare-normalize` is mostly the retyping passes, through
+`TypeAnnotator::annotate`, `solve_recursive_groups` and `SeedWalk`. A
+temporary counter (reverted) at K = 64 gave, per annotation:
+
+- 64 groups;
+- 66 iterations;
+- 2,333 body inferences;
+- 3.3 s, 1.9 s of it in `SeedWalk::invalidate`.
+
+About seven annotations run per compile.
+
+The fixpoint is the Jacobi iteration of C++ `typeAnnotation`: each iteration
+recomputes the groups whose seeds changed, from the previous iteration's
+approximations. In a chain of K groups a change moves one group downstream
+per iteration, so the iteration runs K + 2 times. Group j is recomputed about
+j times, and its body has O(j) slots under `fad`, so the cost is Σ j² = O(K³).
+The incremental `SeedWalk` already skips the groups that did not change. What
+remains is the wavefront itself.
+
+Two exact costs inside it:
+
+- **`infer_proj` cloned the whole tuple of a group per projection.**
+  `TypeAnnotator::infer` returns a clone of the memoised type, so a body of S
+  slots cost O(S²) in clones.
+  - A prototype reads the group's type in place and clones the projected
+    component only: `fir-prepare-normalize` at K = 64 goes from 33.1 to
+    23.8 s, and the compile to C++ from 42.8 to 32.6 s.
+  - The C++ output is identical at K = 16, 32 and 64. The codegen-identity
+    differential over the 632 `.dsp` × 3 modes against `e8ac891d` gives
+    1,896/1,896 identical. `sigtype`'s 63 tests pass.
+  - The prototype is in the working tree, **not committed**.
+- **Hashing.** `in_progress` and the `SeedWalk` sets use SipHash. AHash took
+  K = 64 further from 23.8 to 20.8 s (−13 %). That is too little to add a
+  dependency to `sigtype` without a wider A/B, so it was reverted.
+
+`identical()` compares two equal types by their `Debug` text, about 9 % of
+the samples. That could be a structural comparison including `lsb` and `res`.
+
+**The real fix would be a different schedule.** The schedule would visit the
+groups in dependency order, as Gauss–Seidel over the condensation of the group
+graph, so that each group is recomputed after its upstream groups have
+settled. The chain would then take a few passes instead of K. With
+`RECURSIVE_WIDENING_LIMIT = 0`, a bound that changes jumps to its upper bound
+at once. If the inference is monotone, the set of bounds that change, and so
+the result, should not depend on the schedule. But this is an argument, not a
+proof. The iteration count and the widening ages would differ from the C++
+reference, which the current code reproduces on purpose
+(`solve_recursive_groups_jacobi` is its test oracle). So it needs the user's
+decision and a differential on the inferred types (Rust against itself across
+the corpus, and the types against C++ on the clocked and AD fixtures) before
+any code.
+
+### 5.4 Measurement correction for §4 and the synthesis §14
+
+The `faustprobe` matrix behind the "before → after" tables of
+`docs/fad-rad-synthesis-{en,fr}.md` §14 ran with two orphan `faustprobe`
+processes busy. They came from the `tf2_fad_256` cases of earlier attempts,
+whose timeout killed `/usr/bin/time` but not its child. The ratios hold, but
+the absolute values are somewhat high.
+
+The clean rerun (base `22999fe5` against `e8ac891d` plus the `infer_proj`
+prototype, nothing else running but Spotlight):
+
+| program | fad compile, base → new | rad compile, base → new |
+|---|---|---|
+| `fi.fir` 1024 | 0.89 → 0.49 s | 1.74 → 0.93 s |
+| `fi.fir` 4096 | 13.9 → 7.1 s | 34.2 → 20.5 s |
+| `fi.iir` 64 | 2.06 → 1.29 s | 0.07 → 0.06 s |
+| `fi.iir` 256 | 140 → 93 s | 0.48 → 0.33 s |
+| `fi.tf2` × 64 | 289 → 280 s | 0.22 → 0.19 s |
+| `fi.tf2` × 256 | over 600 s | 3.4 → 2.2 s |
+
+§14 still shows the earlier figures and should take these when the
+`infer_proj` fix is committed.
+
+### 5.5 Next steps, in order of payoff
+
+1. **The Cranelift allocator choice** (§5.2), once the user decides: the
+   largest gain, at K = 64 the JIT goes from ~250 s to ~4 s.
+2. **Commit the `infer_proj` fix** (§5.3), exact, with §14 corrected
+   (§5.4).
+3. **The dependency-ordered fixpoint** (§5.3), if the user accepts a schedule
+   different from C++, behind a differential on types.
+4. **Phase 3** (sparse tangent bundles) and the evaluation of `fi.fir`
+   (§4), for the long FIR.
+
+## 6. Non-goals
 
 - Changing the normal form itself: a different factorization, or a different
   term order. Those are parity decisions, and DIFF-BEH-023 is the only one in
