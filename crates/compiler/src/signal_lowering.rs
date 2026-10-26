@@ -821,7 +821,48 @@ fn lower_signals_to_fir_transform_fastlane_with_timing_step(
         vector_pipeline_status: lowered.vector_pipeline_status,
         vector_effective_mode: lowered.vector_effective_mode,
         vector_pipeline_detail: lowered.vector_pipeline_detail,
+        ui_macros: lowered.ui_macros,
     })
+}
+
+/// The `-uim` macro table of a lowered module, in the C-family backends'
+/// terms: transform's widget table with each range spread into the four
+/// numbers the macros print (C++ `generateWidgetMacro`).
+fn c_family_ui_macros(
+    widgets: &[transform::signal_fir::UiMacroWidget],
+) -> Vec<codegen::backends::ui_macros::UiMacroWidget> {
+    use codegen::backends::ui_macros::{UiMacroKind, UiMacroWidget};
+    widgets
+        .iter()
+        .map(|widget| {
+            let kind = match widget.kind {
+                ui::ControlKind::Button => UiMacroKind::Button,
+                ui::ControlKind::Checkbox => UiMacroKind::Checkbox,
+                ui::ControlKind::VSlider => UiMacroKind::VSlider,
+                ui::ControlKind::HSlider => UiMacroKind::HSlider,
+                ui::ControlKind::NumEntry => UiMacroKind::NumEntry,
+                ui::ControlKind::VBargraph => UiMacroKind::VBargraph,
+                ui::ControlKind::HBargraph => UiMacroKind::HBargraph,
+                ui::ControlKind::Soundfile => UiMacroKind::Soundfile,
+            };
+            let range = widget.range.unwrap_or(ui::ControlRange {
+                init: 0.0,
+                min: 0.0,
+                max: 0.0,
+                step: 0.0,
+            });
+            UiMacroWidget {
+                kind,
+                path: widget.path.clone(),
+                label: widget.label.clone(),
+                zone: widget.zone.clone(),
+                init: range.init,
+                min: range.min,
+                max: range.max,
+                step: range.step,
+            }
+        })
+        .collect()
 }
 
 /// Builds the one-line JSON description embedded in generated source by
@@ -953,6 +994,9 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
     })?;
     time_phase_with_sink(timing_sink, "cpp-codegen", || {
         effective_options.double_precision = ctx.real_type == crate::RealType::Float64;
+        if effective_options.ui_macros {
+            effective_options.ui_macro_widgets = c_family_ui_macros(&lowered.ui_macros);
+        }
         generate_cpp_module(&lowered.store, lowered.module, &effective_options)
     })
     .map_err(|error| LowerError::Codegen {
@@ -1007,6 +1051,9 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
     })?;
     time_phase_with_sink(timing_sink, "c-codegen", || {
         effective_options.double_precision = ctx.real_type == crate::RealType::Float64;
+        if effective_options.ui_macros {
+            effective_options.ui_macro_widgets = c_family_ui_macros(&lowered.ui_macros);
+        }
         generate_c_module(&lowered.store, lowered.module, &effective_options)
     })
     .map_err(|error| LowerError::Codegen {

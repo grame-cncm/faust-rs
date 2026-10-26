@@ -1904,3 +1904,21 @@ fn human_renderer_respects_the_selected_path_style() {
     );
     assert!(rendered.starts_with("mem.dsp:1:11:"), "{rendered}");
 }
+
+#[test]
+fn dash_uim_enables_user_interface_macros_and_is_echoed() {
+    let cli = CliArgs::parse_from(normalize_legacy_args(
+        ["faust-rs", "-uim", "foo.dsp"].map(ToString::to_string),
+    ));
+    assert!(cli.user_interface_macros);
+    assert!(
+        super::runner::compile_options_full_string(&cli, Some("cpp"))
+            .split(' ')
+            .any(|part| part == "-uim")
+    );
+
+    let long = CliArgs::parse_from(["faust-rs", "--user-interface-macros", "foo.dsp"]);
+    assert!(long.user_interface_macros);
+    let off = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
+    assert!(!off.user_interface_macros);
+}

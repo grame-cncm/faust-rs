@@ -341,6 +341,24 @@ Specify the DSP class name used instead of `mydsp`.
 Specify the DSP superclass name used instead of `dsp`. Only meaningful for
 C++ output or architecture wrapping.
 
+### `-uim, --user-interface-macros`
+
+Add the user interface macro definitions to the C and C++ output, as the C++
+compiler's `-uim` does: an `#ifdef FAUST_UIMACROS` block after the DSP code
+with `FAUST_FILE_NAME`, `FAUST_CLASS_NAME`, `FAUST_COMPILATION_OPIONS`,
+`FAUST_INPUTS`, `FAUST_OUTPUTS`, `FAUST_ACTIVES`, `FAUST_PASSIVES`, one
+`FAUST_ADD*` line per widget, and the `FAUST_LIST_ACTIVES(p)` /
+`FAUST_LIST_PASSIVES(p)` lists. The C++ class becomes a `struct` without
+access specifiers, so an architecture (`minimal-static.cpp`, `teensy.cpp`,
+`juce-plugin.cpp`, `clap-arch.cpp`, ...) reaches its fields by name. Widget
+paths are the raw labels of the enclosing groups, metadata included,
+followed by the widget label (`"[1]Main [style:knob]/gain"`). The other
+backends ignore the option, as in C++.
+
+```bash
+faust-rs -uim -a minimal-static.cpp noise.dsp -o noise.cpp
+```
+
 ### `--cpp-class-name <name>`
 
 Override the generated C++ class name for `--dump-cpp-from-fbc`. Distinct
@@ -705,6 +723,7 @@ parsing, so these historical Faust spellings keep working:
 | `-pn <name>` | `--process-name <name>` |
 | `-cn <name>` | `--class-name <name>` |
 | `-scn <name>` | `--super-class-name <name>` |
+| `-uim` | `--user-interface-macros` |
 | `-double` | `--double` |
 | `-single` | `--single` |
 | `-json` | `--json` |

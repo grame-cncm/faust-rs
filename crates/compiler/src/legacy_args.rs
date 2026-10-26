@@ -48,6 +48,10 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
             }
             continue;
         }
+        if arg == "-uim" {
+            normalized.push("--user-interface-macros".to_owned());
+            continue;
+        }
         if arg == "-double" {
             normalized.push("--double".to_owned());
             continue;

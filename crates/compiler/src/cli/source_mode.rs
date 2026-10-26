@@ -840,6 +840,7 @@ pub(crate) fn run_source_mode(
                 cli,
                 Some(cli_lang_name(CliLang::Cpp)),
             )),
+            ui_macros: cli.user_interface_macros,
             ..CppOptions::default()
         };
         let result = compiler.compile_file_to_cpp_with_lane(
@@ -879,6 +880,7 @@ pub(crate) fn run_source_mode(
                 cli,
                 Some(cli_lang_name(CliLang::C)),
             )),
+            ui_macros: cli.user_interface_macros,
             ..COptions::default()
         };
         let result = compiler.compile_file_to_c_with_lane(

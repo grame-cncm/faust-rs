@@ -329,6 +329,7 @@ fn expect_ui_group(
         label,
         metadata: _,
         children,
+        raw_label: _,
     } = match_ui(&program.arena, node)
     else {
         panic!("expected UI group node");
@@ -418,12 +419,14 @@ fn propagate_with_ui_extracts_group_and_widget_label_metadata() {
         label,
         metadata,
         children,
+        raw_label,
     } = match_ui(&out.ui.arena, out.ui.root)
     else {
         panic!("expected root UI group");
     };
     assert_eq!(kind, UiGroupKind::Vertical);
     assert_eq!(label, "main");
+    assert_eq!(raw_label, "main [tooltip: use me]");
     assert_eq!(metadata, vec![("tooltip".to_owned(), "use me".to_owned())]);
     assert_eq!(children.len(), 1);
     assert_eq!(

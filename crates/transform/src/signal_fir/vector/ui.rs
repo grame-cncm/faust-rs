@@ -187,6 +187,7 @@ fn emit_ui_node(
             label,
             metadata,
             children,
+            ..
         } => {
             emit_metadata(store, out, "0", &metadata);
             let typ = match kind {

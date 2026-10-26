@@ -107,11 +107,28 @@ pub struct UiGroupPathSegment {
 /// Mapping status:
 /// - `adapted` relative to the C++ cons-list path representation.
 /// - Canonical Rust carrier for path-aware `UiProgram` insertion.
+///
+/// Two specs name the same group when their kind, label and metadata agree
+/// ([`UiGroupSpec::same_group`]); `raw_label` only rides along, so the group
+/// keeps the spelling of the segment that created it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiGroupSpec {
     pub kind: UiGroupKind,
     pub label: String,
     pub metadata: UiMetadata,
+    /// The source spelling of the label, inline metadata included
+    /// (`"[1]Main [style:knob]"`), which the C++ `-uim` macro paths print
+    /// (`InstructionsCompiler::generateMacroInterfaceTree`).
+    pub raw_label: String,
+}
+
+impl UiGroupSpec {
+    /// Whether `self` and `other` name the same group: kind, label and
+    /// metadata, whatever their raw spellings.
+    #[must_use]
+    pub fn same_group(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.label == other.label && self.metadata == other.metadata
+    }
 }
 
 /// Normalized widget-style pathname after rebasing against the current group
@@ -397,6 +414,7 @@ impl UiProgram {
                 label,
                 metadata,
                 children: inner,
+                raw_label,
             } = match_ui(&arena, *only)
         {
             let label = if label.is_empty() {
@@ -404,8 +422,10 @@ impl UiProgram {
             } else {
                 label.to_owned()
             };
+            let raw_label = raw_label.to_owned();
             let inner = inner.clone();
-            root = UiBuilder::new(&mut arena).group_with_metadata(kind, &label, &metadata, &inner);
+            root = UiBuilder::new(&mut arena)
+                .group_with_raw_label(kind, &label, &raw_label, &metadata, &inner);
             root_origin = UiRootOrigin::Explicit;
         }
         Some(Self {
@@ -435,6 +455,7 @@ fn rebuild_live(
             label,
             metadata,
             children,
+            raw_label,
         } => {
             let kept = children
                 .into_iter()
@@ -443,7 +464,9 @@ fn rebuild_live(
             if kept.is_empty() && !is_root {
                 return None;
             }
-            Some(UiBuilder::new(into).group_with_metadata(kind, label, &metadata, &kept))
+            Some(
+                UiBuilder::new(into).group_with_raw_label(kind, label, raw_label, &metadata, &kept),
+            )
         }
         UiMatch::InputControl(control) => {
             live(control).then(|| UiBuilder::new(into).input_control(control))
@@ -671,6 +694,7 @@ pub fn canonicalize_group_spec(segment: &UiGroupPathSegment) -> UiGroupSpec {
         kind: segment.kind,
         label,
         metadata,
+        raw_label: segment.raw_label.clone(),
     }
 }
 
@@ -696,7 +720,8 @@ impl<'a> UiBuilder<'a> {
     }
 
     #[must_use]
-    /// Builds one grouped UI node plus already-extracted label metadata.
+    /// Builds one grouped UI node plus already-extracted label metadata, its
+    /// raw label being `label` itself.
     pub fn group_with_metadata(
         &mut self,
         kind: UiGroupKind,
@@ -704,11 +729,32 @@ impl<'a> UiBuilder<'a> {
         metadata: &[(String, String)],
         children: &[UiId],
     ) -> UiId {
+        self.group_with_raw_label(kind, label, label, metadata, children)
+    }
+
+    #[must_use]
+    /// Builds one grouped UI node with its source spelling `raw_label`
+    /// (inline metadata included) kept beside the extracted `label` and
+    /// `metadata`. An empty `raw_label` marks a group the C++ compiler leaves
+    /// unnamed: the synthesized root, or `hgroup("", ...)`.
+    pub fn group_with_raw_label(
+        &mut self,
+        kind: UiGroupKind,
+        label: &str,
+        raw_label: &str,
+        metadata: &[(String, String)],
+        children: &[UiId],
+    ) -> UiId {
         let kind = self.arena.int(kind as i64);
         let label = self.arena.string_lit(label);
         let metadata = encode_metadata_list(self.arena, metadata);
         let children = vec_to_list(self.arena, children);
-        intern_tag(self.arena, UI_GROUP_TAG, &[kind, label, metadata, children])
+        let raw_label = self.arena.string_lit(raw_label);
+        intern_tag(
+            self.arena,
+            UI_GROUP_TAG,
+            &[kind, label, metadata, children, raw_label],
+        )
     }
 
     #[must_use]
@@ -907,7 +953,7 @@ impl UiProgramBuilder {
         ids.into_iter().find(|child| match &self.nodes[*child] {
             UiDraftNode::Group {
                 spec: child_spec, ..
-            } => child_spec == spec,
+            } => child_spec.same_group(spec),
             UiDraftNode::InputControl(_)
             | UiDraftNode::OutputControl(_)
             | UiDraftNode::Soundfile(_) => false,
@@ -981,9 +1027,10 @@ impl UiProgramBuilder {
                     .iter()
                     .map(|(_, child)| self.materialize_node(*child, arena))
                     .collect::<Vec<_>>();
-                UiBuilder::new(arena).group_with_metadata(
+                UiBuilder::new(arena).group_with_raw_label(
                     spec.kind,
                     &spec.label,
+                    &spec.raw_label,
                     &spec.metadata,
                     &children,
                 )
@@ -1006,6 +1053,10 @@ pub enum UiMatch<'a> {
         label: &'a str,
         metadata: UiMetadata,
         children: Vec<UiId>,
+        /// Source spelling of the label, inline metadata included; empty for
+        /// a group the C++ compiler leaves unnamed (see
+        /// [`UiBuilder::group_with_raw_label`]).
+        raw_label: &'a str,
     },
     InputControl(ControlId),
     OutputControl(ControlId),
@@ -1201,7 +1252,7 @@ pub fn match_ui(arena: &TreeArena, id: UiId) -> UiMatch<'_> {
         return UiMatch::Unknown;
     };
     match (&node.kind, node.children.as_slice()) {
-        (NodeKind::Tag(tag), [kind, label, metadata, children])
+        (NodeKind::Tag(tag), [kind, label, metadata, children, raw_label])
             if arena.tag_name(*tag).unwrap_or("") == UI_GROUP_TAG =>
         {
             let Some(kind) = decode_group_kind(arena, *kind) else {
@@ -1216,11 +1267,15 @@ pub fn match_ui(arena: &TreeArena, id: UiId) -> UiMatch<'_> {
             let Some(children) = list_to_vec(arena, *children) else {
                 return UiMatch::Unknown;
             };
+            let Some(raw_label) = decode_label(arena, *raw_label) else {
+                return UiMatch::Unknown;
+            };
             UiMatch::Group {
                 kind,
                 label,
                 metadata,
                 children,
+                raw_label,
             }
         }
         (NodeKind::Tag(tag), [control])

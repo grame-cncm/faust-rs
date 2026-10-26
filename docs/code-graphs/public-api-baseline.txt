@@ -208,6 +208,7 @@ enum MemoryType
 enum RealPrecision
 enum SampleType
 enum StructFieldKind
+enum UiMacroKind
 enum WasmBackendErrorCode
 enum WasmValType
 fn BackendError::at_node
@@ -433,6 +434,7 @@ mod sdf3
 mod serial
 mod shortname
 mod soundfile
+mod ui_macros
 mod vhdl
 mod wasm
 static FBC_INSTRUCTION_NAMES
@@ -487,6 +489,7 @@ struct StructFieldLayout
 struct StructLayoutPlan
 struct TargetAbi
 struct TypeLayout
+struct UiMacroWidget
 struct WasmJsonContext
 struct WasmMemoryLayout
 struct WasmModule
@@ -2844,6 +2847,7 @@ fn schedule
 fn schedule_vector_plan
 fn signal_dependencies
 fn simulate_clock_step
+fn ui_macro_widgets
 fn verify_decorations
 fn verify_event_order_certificate
 fn verify_fused_serial_groups
@@ -2981,6 +2985,7 @@ struct SignalUseInfo
 struct SignalUseRecord
 struct SignalUseTable
 struct TransportRecord
+struct UiMacroWidget
 struct UseContext
 struct VecSafeWitness
 struct VectorClockAdPlan
@@ -3031,6 +3036,7 @@ use session
 use signal
 use simulation
 use super::analysis::EffectAtom
+use ui_macros
 use uses
 use vector::analysis
 use vector::assemble
@@ -3074,6 +3080,7 @@ fn AnonymousWidgetNames::label
 fn ControlSpec::synthetic
 fn UiBuilder::group
 fn UiBuilder::group_with_metadata
+fn UiBuilder::group_with_raw_label
 fn UiBuilder::hgroup
 fn UiBuilder::input_control
 fn UiBuilder::new
@@ -3083,6 +3090,7 @@ fn UiBuilder::tgroup
 fn UiBuilder::vgroup
 fn UiGroupKind::from_raw
 fn UiGroupKind::name
+fn UiGroupSpec::same_group
 fn UiProgram::control
 fn UiProgram::controls_in_tree
 fn UiProgram::empty

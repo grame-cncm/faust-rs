@@ -75,6 +75,7 @@ fn expect_ui_group(
         label,
         metadata: _,
         children,
+        ..
     } = match_ui(&out.ui.arena, node)
     else {
         panic!("expected UI group node");
@@ -1527,6 +1528,7 @@ fn inline_group_label_metadata_splits_display_label_and_group_metadata() {
         label,
         metadata,
         children,
+        ..
     } = match_ui(&out.ui.arena, out.ui.root)
     else {
         panic!("expected root grouped UI");

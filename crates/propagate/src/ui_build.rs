@@ -242,8 +242,17 @@ impl UiCollector {
     }
 }
 
+/// The root wrapped around several top-level items. Its raw label is empty:
+/// the C++ compiler's root folder has no name of its own, so its `-uim` macro
+/// paths start below it.
 fn synthesize_ui_root_group(arena: &mut TreeArena, label: &str, children: &[TreeId]) -> TreeId {
-    ui::UiBuilder::new(arena).vgroup(label, children)
+    ui::UiBuilder::new(arena).group_with_raw_label(
+        UiGroupKind::Vertical,
+        label,
+        "",
+        &UiMetadata::new(),
+        children,
+    )
 }
 
 fn rewrite_root_group_label(
@@ -257,10 +266,17 @@ fn rewrite_root_group_label(
             label,
             metadata,
             children,
-        } if label.is_empty() && !options.synthesized_root_label.is_empty() => ui::UiBuilder::new(
-            arena,
-        )
-        .group_with_metadata(kind, &options.synthesized_root_label, &metadata, &children),
+            raw_label,
+        } if label.is_empty() && !options.synthesized_root_label.is_empty() => {
+            let raw_label = raw_label.to_owned();
+            ui::UiBuilder::new(arena).group_with_raw_label(
+                kind,
+                &options.synthesized_root_label,
+                &raw_label,
+                &metadata,
+                &children,
+            )
+        }
         _ => root,
     }
 }

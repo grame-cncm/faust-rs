@@ -15,6 +15,7 @@
 //!     `c`/`cpp`; see `porting/c-family-emitter-core-plan-2026-07-04-en.md`)
 //!   - internal `textual` module (precedence-aware expression layout reusable
 //!     by textual targets)
+//!   - [`ui_macros`] (the `-uim` `FAUST_UIMACROS` block of `c`/`cpp`)
 //! - Scaffolded backends (planned parity targets, `backend_id()` only):
 //!   - `csharp`, `dlang`, `jax`, `jsfx`, `llvm`, `sdf3`, `vhdl`.
 //!
@@ -35,6 +36,7 @@ pub(crate) mod literals;
 pub(crate) mod module_view;
 pub(crate) mod table_bytes;
 pub(crate) mod textual;
+pub mod ui_macros;
 
 use fir::{FirId, FirMatch, FirStore, match_fir};
 

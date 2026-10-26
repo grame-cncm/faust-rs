@@ -230,6 +230,7 @@ fn finish_vector_module(
             vector_effective_mode: VectorEffectiveMode::CertifiedVector,
             vector_pipeline_detail: None,
             table_warnings: Vec::new(),
+            ui_macros: Vec::new(),
         },
         assembly,
         output_stores,

@@ -53,6 +53,8 @@
 //! - `one_sample` — `-os` compatibility classifier (rejects block-sensitive
 //!   carriers).
 //! - `origins` — [`FirOrigins`]: Signal/Box provenance of the emitted FIR.
+//! - `ui_macros` — [`ui_macro_widgets`]: the widget table of the C/C++ `-uim`
+//!   macros, over the pruned interface.
 //! - `loop_graph`, `placement`, `planner`, `cse`, `recursion`, `siggen`,
 //!   `error` — internal analysis/lowering support.
 //!
@@ -90,6 +92,7 @@ mod placement;
 mod planner;
 mod recursion;
 mod siggen;
+mod ui_macros;
 pub mod vector;
 pub use diagnostics::{pv_slice, shadow};
 pub use vector::analysis as vector_analysis;
@@ -105,6 +108,7 @@ pub use vector::verify as vector_verify;
 
 pub use error::{SignalFirError, SignalFirErrorCode};
 pub use origins::{FirOrigins, FirSignalOrigin};
+pub use ui_macros::{UiMacroWidget, ui_macro_widgets};
 
 use fir::{FirId, FirStore, FirType};
 use std::collections::HashSet;
@@ -510,6 +514,10 @@ pub struct SignalFirOutput {
     /// same class under `-wall`). Empty when `check_table` was off or every
     /// access was provably in-bounds.
     pub table_warnings: Vec<crate::signal_prepare::TableRangeWarning>,
+    /// The widgets of the interface the module shows, for the C/C++ `-uim`
+    /// macros ([`ui_macro_widgets`] over the pruned UI). Empty for a
+    /// table-generator sub-module.
+    pub ui_macros: Vec<UiMacroWidget>,
 }
 
 /// Everything one fast-lane lowering run needs, in one named place.
@@ -981,6 +989,7 @@ fn compile_fastlane_inner(
         }) {
             Ok(mut output) => {
                 output.table_warnings = prepared.table_warnings().to_vec();
+                output.ui_macros = ui_macro_widgets(ui);
                 return Ok(output);
             }
             Err(failure) => vector_fallback = Some(failure),
@@ -1031,6 +1040,7 @@ fn compile_fastlane_inner(
 
     output.shadow_report = shadow_report.flatten();
     output.table_warnings = prepared.table_warnings().to_vec();
+    output.ui_macros = ui_macro_widgets(ui);
     if let Some(failure) = vector_fallback {
         output.vector_pipeline_status = VectorPipelineStatus::Fallback(failure.reason);
         output.vector_pipeline_detail = Some(failure.detail);

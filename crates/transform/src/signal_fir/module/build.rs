@@ -1017,6 +1017,7 @@ fn assemble_module_output(
             vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
             vector_pipeline_detail: None,
             table_warnings: Vec::new(),
+            ui_macros: Vec::new(),
         });
     }
 
@@ -1049,6 +1050,7 @@ fn assemble_module_output(
         vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
         vector_pipeline_detail: None,
         table_warnings: Vec::new(),
+        ui_macros: Vec::new(),
     })
 }
 

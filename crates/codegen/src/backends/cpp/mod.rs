@@ -36,6 +36,7 @@ use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::c_family::{self, CFamilySyntax, EmitMode};
 use crate::backends::faust_api;
+use crate::backends::ui_macros::{UiMacroBlock, UiMacroWidget, emit_ui_macros};
 use crate::memory_layout::{
     AllocationPhase, Mem0Analysis, Mem0AnalysisOptions, MemoryLayoutFlavor, MemoryManagerMode,
     MemoryRole, MemoryScope, MemoryZone, analyze_effective_mem0,
@@ -104,6 +105,17 @@ pub struct CppOptions {
     pub metadata_filename: Option<String>,
     /// Non-identity compilation metadata replayed by `metadata()`.
     pub metadata_entries: Vec<(String, String)>,
+    /// Emit the `-uim` user-interface macros (the `#ifdef FAUST_UIMACROS`
+    /// block) after the DSP code. Source provenance: C++
+    /// `global::gUIMacroSwitch`.
+    ///
+    /// In C++ the class is then declared `struct` with no access
+    /// specifiers, so architectures reach its fields, as C++ `-uim` does.
+    pub ui_macros: bool,
+    /// The widgets those macros list, in interface order. The compiler
+    /// pipeline fills them from the interface the module shows; ignored
+    /// unless [`Self::ui_macros`].
+    pub ui_macro_widgets: Vec<UiMacroWidget>,
 }
 
 impl Default for CppOptions {
@@ -124,6 +136,8 @@ impl Default for CppOptions {
             metadata_name: None,
             metadata_filename: None,
             metadata_entries: Vec::new(),
+            ui_macros: false,
+            ui_macro_widgets: Vec::new(),
         }
     }
 }
@@ -283,8 +297,16 @@ fn generate_cpp_module_step(
         module.sub_modules,
     )?;
 
-    let _ = writeln!(out, "class {class_name} : public {super_class_name} {{");
-    let _ = writeln!(out, "private:");
+    // `-uim`: a `struct` without access specifiers, so the macros' field
+    // names are reachable from the architecture (C++ `CPPCodeContainer`).
+    let keyword = class_keyword(options);
+    let access = |out: &mut String, specifier: &str| {
+        if !options.ui_macros {
+            let _ = writeln!(out, "{specifier}:");
+        }
+    };
+    let _ = writeln!(out, "{keyword} {class_name} : public {super_class_name} {{");
+    access(&mut out, "private");
     if mem0.is_some() {
         let _ = writeln!(out, "    dsp_memory_manager* fOwnerManager;");
     }
@@ -309,14 +331,14 @@ fn generate_cpp_module_step(
         module.globals,
         true,
     )?;
-    let _ = writeln!(out, "public:");
+    access(&mut out, "public");
     if mem0.is_some() {
         let _ = writeln!(out, "    static dsp_memory_manager* fManager;");
-        let _ = writeln!(out, "private:");
+        access(&mut out, "private");
         let _ = writeln!(out, "    static dsp_memory_manager* fClassManager;");
         let _ = writeln!(out, "    static int fClassSampleRate;");
         let _ = writeln!(out, "    static size_t fLiveInstances;");
-        let _ = writeln!(out, "public:");
+        access(&mut out, "public");
     }
     let struct_inits = c_family::collect_struct_initializers(
         store,
@@ -369,6 +391,21 @@ fn generate_cpp_module_step(
         let _ = writeln!(out, "size_t {class_name}::fLiveInstances = 0;");
     }
 
+    if options.ui_macros {
+        emit_ui_macros(
+            &mut out,
+            &UiMacroBlock {
+                file_name: options.metadata_filename.as_deref(),
+                class_name,
+                compile_options: options.compile_options.as_deref().unwrap_or("-lang cpp"),
+                num_inputs: module.num_inputs,
+                num_outputs: module.num_outputs,
+                double_precision: options.double_precision,
+                widgets: &options.ui_macro_widgets,
+            },
+        );
+    }
+
     if let Some(namespace) = options.namespace.as_deref() {
         let _ = writeln!(out);
         let _ = writeln!(out, "}} // namespace {namespace}");
@@ -376,6 +413,13 @@ fn generate_cpp_module_step(
     let _ = writeln!(out);
     let _ = writeln!(out, "#endif");
     Ok(out)
+}
+
+/// `struct` under `-uim`, whose macros name the fields from outside the
+/// class, `class` otherwise (C++ `CPPCodeContainer::produceClass` and
+/// `produceInternal`).
+fn class_keyword(options: &CppOptions) -> &'static str {
+    if options.ui_macros { "struct" } else { "class" }
 }
 
 /// Inputs for [`emit_dsp_contract_methods`], grouped like the C backend's
@@ -1379,10 +1423,12 @@ fn emit_sub_modules(
         emit_sub_modules(store, out, options, module_name, nested)?;
         emit_static_tables(store, out, options, static_decls)?;
 
-        let _ = writeln!(out, "class {name} {{");
+        let _ = writeln!(out, "{} {name} {{", class_keyword(options));
         let _ = writeln!(out);
-        let _ = writeln!(out, "  private:");
-        let _ = writeln!(out);
+        if !options.ui_macros {
+            let _ = writeln!(out, "  private:");
+            let _ = writeln!(out);
+        }
         if options.memory_manager_mode.is_mem0() {
             let _ = writeln!(out, "    dsp_memory_manager* fClassManager;");
         }
@@ -1397,8 +1443,10 @@ fn emit_sub_modules(
         )?;
         emit_section(store, out, options, module_name, "globals", globals, false)?;
         let _ = writeln!(out);
-        let _ = writeln!(out, "  public:");
-        let _ = writeln!(out);
+        if !options.ui_macros {
+            let _ = writeln!(out, "  public:");
+            let _ = writeln!(out);
+        }
         if options.memory_manager_mode.is_mem0() {
             let _ = writeln!(
                 out,

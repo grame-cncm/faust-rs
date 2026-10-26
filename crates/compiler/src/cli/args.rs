@@ -204,6 +204,11 @@ pub struct CliArgs {
     /// (`-scn <name>`, `--super-class-name <name>`).
     #[arg(long = "super-class-name")]
     pub super_class_name: Option<String>,
+    /// Add the user interface macro definitions (`#ifdef FAUST_UIMACROS`)
+    /// to the C and C++ output (`-uim`, `--user-interface-macros`); the C++
+    /// class is then a `struct`. Ignored by the other backends, as in C++.
+    #[arg(long = "user-interface-macros", action = ArgAction::SetTrue)]
+    pub user_interface_macros: bool,
     /// Override generated C++ class name for `--dump-cpp-from-fbc`.
     ///
     /// This applies only to `.fbc` -> native C++ emission, distinct from DSP generation

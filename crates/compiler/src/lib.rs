@@ -312,6 +312,9 @@ pub struct FirCompileOutput {
     pub vector_effective_mode: VectorEffectiveMode,
     /// Complete first-failure diagnostic when vector selection fell back.
     pub vector_pipeline_detail: Option<String>,
+    /// Widgets of the interface the module shows, for the C/C++ `-uim`
+    /// macros.
+    pub ui_macros: Vec<transform::signal_fir::UiMacroWidget>,
 }
 
 /// Request payload for the artifact-centric WASM compile service used by the

@@ -30,6 +30,7 @@ fn builder_and_match_cover_grouped_ui_shapes() {
             label: "root",
             metadata: vec![],
             children: vec![input, output, soundfile],
+            raw_label: "root",
         }
     );
     assert_eq!(
@@ -39,6 +40,7 @@ fn builder_and_match_cover_grouped_ui_shapes() {
             label: "row",
             metadata: vec![],
             children: vec![input],
+            raw_label: "row",
         }
     );
     assert_eq!(
@@ -48,6 +50,7 @@ fn builder_and_match_cover_grouped_ui_shapes() {
             label: "tabs",
             metadata: vec![],
             children: vec![output],
+            raw_label: "tabs",
         }
     );
 }
@@ -94,6 +97,7 @@ fn group_metadata_round_trips_through_builder_and_matcher() {
                 ("tooltip".to_owned(), "hello".to_owned()),
             ],
             children: vec![control],
+            raw_label: "top",
         }
     );
 }
@@ -137,6 +141,7 @@ fn ui_program_keeps_root_and_control_registry() {
             label: "top",
             metadata: vec![],
             children: vec![checkbox],
+            raw_label: "top",
         }
     );
     assert_eq!(
@@ -159,6 +164,7 @@ fn ui_program_empty_is_non_emitting_placeholder_with_empty_vertical_root() {
             label: "",
             metadata: vec![],
             children: vec![],
+            raw_label: "",
         }
     );
 }
@@ -336,6 +342,7 @@ fn canonicalize_group_spec_splits_metadata_after_path_normalization() {
             kind: UiGroupKind::Horizontal,
             label: "Main".to_owned(),
             metadata: vec![("style".to_owned(), "tabbed".to_owned())],
+            raw_label: "Main [style:tabbed]".to_owned(),
         }
     );
 }
@@ -348,11 +355,13 @@ fn ui_program_builder_merges_group_paths_and_preserves_leaf_order() {
             kind: UiGroupKind::Horizontal,
             label: "Foo".to_owned(),
             metadata: Vec::new(),
+            raw_label: "Foo".to_owned(),
         },
         UiGroupSpec {
             kind: UiGroupKind::Vertical,
             label: "Bar".to_owned(),
             metadata: Vec::new(),
+            raw_label: "Bar".to_owned(),
         },
     ];
     builder.insert_input_control(&path, 0, String::new());
@@ -413,17 +422,20 @@ fn ui_program_builder_can_drop_empty_group_placeholders() {
         kind: UiGroupKind::Horizontal,
         label: "Foo".to_owned(),
         metadata: Vec::new(),
+        raw_label: "Foo".to_owned(),
     }];
     let bar = vec![
         UiGroupSpec {
             kind: UiGroupKind::Horizontal,
             label: "Foo".to_owned(),
             metadata: Vec::new(),
+            raw_label: "Foo".to_owned(),
         },
         UiGroupSpec {
             kind: UiGroupKind::Vertical,
             label: "Bar".to_owned(),
             metadata: Vec::new(),
+            raw_label: "Bar".to_owned(),
         },
     ];
 
@@ -444,6 +456,7 @@ fn ui_program_builder_can_drop_empty_group_placeholders() {
         kind: UiGroupKind::Tab,
         label: "Empty".to_owned(),
         metadata: Vec::new(),
+        raw_label: "Empty".to_owned(),
     }];
     let empty_id = builder
         .ensure_group_path(&empty)
