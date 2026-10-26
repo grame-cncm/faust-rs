@@ -2464,3 +2464,61 @@ fn control_widgets_lists_controls_in_interface_order_keyed_by_group_context() {
     assert_eq!(widgets.input_index(c_slider, root_context.key()), None);
     assert!(root_context.enter(&arena, a_slider).is_none());
 }
+
+#[test]
+fn a_bargraph_box_gets_one_control_per_input_signal() {
+    // `hbargraph("m"), hbargraph("m"), hbargraph("m")` on inputs 0, 1, 0:
+    // one bargraph box, two distinct input signals. C++ makes one widget per
+    // bargraph signal (`sigHBargraph(path, min, max, x)` carries `x`), so two
+    // meters, the third occurrence being the first signal again.
+    let mut arena = TreeArena::new();
+    let root = {
+        let lm = arena.string_lit("m");
+        let mut b = BoxBuilder::new(&mut arena);
+        let (zero, one) = (b.int(0), b.int(1));
+        let meter = b.hbargraph(lm, zero, one);
+        let pair = b.par(meter, meter);
+        b.par(pair, meter)
+    };
+    let flat = propagate::try_build_flat_box(&arena, root).expect("flat box");
+    let inputs = {
+        let mut s = SigBuilder::new(&mut arena);
+        vec![s.input(0), s.input(1), s.input(0)]
+    };
+    let output = propagate::propagate_typed_with_ui(
+        &mut arena,
+        flat,
+        &inputs,
+        &mut ArityCache::new(),
+        &propagate::PropagateUiOptions::default(),
+    )
+    .expect("propagates");
+
+    let controls: Vec<_> = output
+        .signals
+        .iter()
+        .map(|&sig| match match_sig(&arena, sig) {
+            SigMatch::HBargraph(control, input) => (control, input),
+            other => panic!("a bargraph, got {other:?}"),
+        })
+        .collect();
+    assert_ne!(controls[0].0, controls[1].0, "two inputs, two controls");
+    assert_eq!(controls[0], controls[2], "the same input, the same signal");
+
+    // The split control is a copy of the box's, with a leaf of its own.
+    let ui = &output.ui;
+    assert_eq!(ui.controls.len(), 2);
+    let (first, split) = (&ui.controls[0], &ui.controls[1]);
+    assert_eq!(split.id, controls[1].0);
+    assert_eq!(
+        (split.kind, &split.label, split.range, split.source_node),
+        (first.kind, &first.label, first.range, first.source_node)
+    );
+    assert_eq!(
+        ui.controls_in_tree().into_iter().collect::<Vec<_>>(),
+        [controls[0].0, controls[1].0]
+    );
+
+    // The box-level list is unchanged: one bargraph box.
+    assert_eq!(propagate::control_widgets(&arena, flat).outputs.len(), 1);
+}

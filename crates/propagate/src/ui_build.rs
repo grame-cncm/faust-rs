@@ -47,6 +47,9 @@ struct UiCollector {
     /// Every reference to such a box denotes the same control regardless of
     /// group context.
     ad_seed_parameters: AHashSet<BoxId>,
+    /// Group path and order key of every bargraph leaf, so that a control
+    /// split at propagation ([`BargraphSplits`]) gets its leaf beside it.
+    output_leaves: AHashMap<ControlId, (Vec<UiGroupSpec>, String)>,
 }
 
 impl UiCollector {
@@ -58,10 +61,23 @@ impl UiCollector {
             visited: AHashMap::new(),
             node_primary_id: AHashMap::new(),
             ad_seed_parameters: AHashSet::new(),
+            output_leaves: AHashMap::new(),
         }
     }
 
-    fn finish(self, options: &PropagateUiOptions) -> UiBuildOutput {
+    fn finish(mut self, options: &PropagateUiOptions, splits: &BargraphSplits) -> UiBuildOutput {
+        for &(original, split) in &splits.added {
+            let mut spec = self.controls[original as usize].clone();
+            assert_eq!(
+                split as usize,
+                self.controls.len(),
+                "split bargraph ids follow the registry densely"
+            );
+            spec.id = split;
+            self.controls.push(spec);
+            let (path, order_key) = self.output_leaves[&original].clone();
+            self.builder.insert_output_control(&path, split, order_key);
+        }
         let (mut arena, roots) = self.builder.finish();
         let keep_existing_root = matches!(roots.as_slice(), [only] if matches!(match_ui(&arena, *only), UiMatch::Group { .. }));
         let (root, root_origin) = if keep_existing_root {
@@ -209,6 +225,8 @@ impl UiCollector {
             range,
         );
         if created {
+            self.output_leaves
+                .insert(id, (path.to_vec(), order_key.clone()));
             self.builder.insert_output_control(path, id, order_key);
         }
         created
@@ -310,9 +328,112 @@ pub(crate) fn build_ui_program(
     box_tree: FlatBoxId,
     options: &PropagateUiOptions,
 ) -> UiBuildOutput {
+    collect_ui_program(source_arena, box_tree).finish(options, &BargraphSplits::default())
+}
+
+/// The UI of `box_tree` before its bargraphs are known: the control ids a
+/// propagation reads, and the program [`UiDraft::finish`] completes with the
+/// bargraph controls that propagation split.
+pub(crate) fn collect_ui_program(source_arena: &TreeArena, box_tree: FlatBoxId) -> UiDraft {
     let mut collector = UiCollector::new();
     let _ = collect_ui_nodes(source_arena, box_tree, &[], false, &mut collector);
-    collector.finish(options)
+    UiDraft { collector }
+}
+
+/// A grouped UI collected from the box, not yet finished.
+pub(crate) struct UiDraft {
+    collector: UiCollector,
+}
+
+impl UiDraft {
+    /// The control id of every widget occurrence, by `(widget box, group
+    /// context)`.
+    pub(crate) fn control_ids(&self) -> &ControlIds {
+        &self.collector.control_ids
+    }
+
+    /// A [`BargraphSplits`] allocating after the controls collected.
+    pub(crate) fn bargraph_splits(&self) -> BargraphSplits {
+        BargraphSplits::starting_at(
+            ControlId::try_from(self.collector.controls.len())
+                .expect("control registry index fits in u32"),
+        )
+    }
+
+    /// The finished program, with one more control per split bargraph.
+    pub(crate) fn finish(
+        self,
+        options: &PropagateUiOptions,
+        splits: &BargraphSplits,
+    ) -> UiBuildOutput {
+        self.collector.finish(options, splits)
+    }
+}
+
+/// The bargraph controls of one propagation, one per bargraph signal.
+///
+/// A bargraph box is a function of its input, so the same box can display
+/// several signals: `process = hmeter, hmeter;` applies one `hbargraph` box
+/// to each channel. The UI collected from the box has one control for it (a
+/// widget box in one group context is one control), and both signals would
+/// write the same zone, the second channel's level overwriting the first.
+///
+/// # Source provenance (C++)
+/// A C++ bargraph signal, `sigHBargraph(path, min, max, x)`
+/// (`compiler/signals/signals.cpp`), carries its input, and the interface
+/// gets one widget per bargraph signal compiled
+/// (`InstructionsCompiler::generateHBargraph` calls `fUITree.addUIWidget`,
+/// `compiler/generator/instructions_compiler.cpp`): two inputs, two widgets,
+/// two zones. Here the first input a bargraph control is propagated with
+/// keeps the control; each other input gets a control of its own, a copy of
+/// it allocated after the collected ones, whose leaf is placed with the
+/// original's path and order key, after it.
+///
+/// Inputs are compared as propagated (De Bruijn recursion, before
+/// simplification), C++ compares them after simplification: two inputs that
+/// only simplification makes equal stay two bargraphs here.
+#[derive(Debug)]
+pub(crate) struct BargraphSplits {
+    next: ControlId,
+    /// The input the control was first propagated with.
+    first_input: AHashMap<ControlId, SigId>,
+    /// The control each other input got.
+    split: AHashMap<(ControlId, SigId), ControlId>,
+    /// `(original, split)` in allocation order.
+    added: Vec<(ControlId, ControlId)>,
+}
+
+impl Default for BargraphSplits {
+    fn default() -> Self {
+        Self::starting_at(0)
+    }
+}
+
+impl BargraphSplits {
+    fn starting_at(next: ControlId) -> Self {
+        Self {
+            next,
+            first_input: AHashMap::new(),
+            split: AHashMap::new(),
+            added: Vec::new(),
+        }
+    }
+
+    /// The control of the bargraph `control` displaying `input`.
+    pub(crate) fn control_for(&mut self, control: ControlId, input: SigId) -> ControlId {
+        let first = *self.first_input.entry(control).or_insert(input);
+        if first == input {
+            return control;
+        }
+        *self.split.entry((control, input)).or_insert_with(|| {
+            let id = self.next;
+            self.next = id
+                .checked_add(1)
+                .expect("control registry index fits in u32");
+            self.added.push((control, id));
+            id
+        })
+    }
 }
 
 /// Collects grouped UI nodes reachable from one validated flat box subtree.

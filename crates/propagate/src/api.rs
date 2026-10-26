@@ -67,7 +67,8 @@ fn propagate_typed_with_origins_policy(
     ui_options: &PropagateUiOptions,
     mut signal_origins: SignalOrigins,
 ) -> Result<PropagateOutput, PropagateError> {
-    let ui = build_ui_program(arena, box_tree, ui_options);
+    let ui = collect_ui_program(arena, box_tree);
+    let mut bargraphs = ui.bargraph_splits();
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo::default();
     memo.results
@@ -77,7 +78,10 @@ fn propagate_typed_with_origins_policy(
     let mut clock_domains = ClockDomainTable::new();
     let mut ctx = PropagateContext {
         cache,
-        control_ids: ControlIdSource::Ui(&ui.control_ids),
+        control_ids: ControlIdSource::Ui {
+            ids: ui.control_ids(),
+            bargraphs: &mut bargraphs,
+        },
         slot_env: &mut slot_env,
         memo: &mut memo,
         clock_domains: &mut clock_domains,
@@ -91,6 +95,7 @@ fn propagate_typed_with_origins_policy(
     let signals = propagate_in_slot_env(arena, box_tree, inputs, &mut ctx);
     ctx.memo.profile.print();
     let signals = signals?;
+    let ui = ui.finish(ui_options, &bargraphs);
     Ok(PropagateOutput {
         signals,
         signal_origins,

@@ -537,7 +537,7 @@ pub(crate) use flat::{
     FlatNodeKind, RecFadMode, contains_forward_ad, count_fad_nodes, flat_node_kind, free_slots,
     rec_fad_mode,
 };
-pub(crate) use ui_build::{build_ui_program, decode_box_label};
+pub(crate) use ui_build::{BargraphSplits, build_ui_program, collect_ui_program, decode_box_label};
 
 #[cfg(test)]
 mod tests;

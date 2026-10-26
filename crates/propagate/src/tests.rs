@@ -344,6 +344,7 @@ fn propagate_counting_memo(
     use crate::result_memo::result_memo_is_safe_root;
 
     let ui = build_ui_program(arena, flat, &PropagateUiOptions::default());
+    let mut bargraphs = crate::BargraphSplits::default();
     let mut cache = ArityCache::new();
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo {
@@ -356,7 +357,10 @@ fn propagate_counting_memo(
     let mut signal_origins = SignalOrigins::default();
     let mut ctx = PropagateContext {
         cache: &mut cache,
-        control_ids: ControlIdSource::Ui(&ui.control_ids),
+        control_ids: ControlIdSource::Ui {
+            ids: &ui.control_ids,
+            bargraphs: &mut bargraphs,
+        },
         slot_env: &mut slot_env,
         memo: &mut memo,
         clock_domains: &mut clock_domains,
@@ -380,6 +384,7 @@ fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<Si
     use crate::result_memo::result_memo_is_safe_root;
 
     let ui = build_ui_program(arena, flat, &PropagateUiOptions::default());
+    let mut bargraphs = crate::BargraphSplits::default();
     let mut cache = ArityCache::new();
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo::default();
@@ -389,7 +394,10 @@ fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<Si
     let mut signal_origins = SignalOrigins::default();
     let mut ctx = PropagateContext {
         cache: &mut cache,
-        control_ids: ControlIdSource::Ui(&ui.control_ids),
+        control_ids: ControlIdSource::Ui {
+            ids: &ui.control_ids,
+            bargraphs: &mut bargraphs,
+        },
         slot_env: &mut slot_env,
         memo: &mut memo,
         clock_domains: &mut clock_domains,

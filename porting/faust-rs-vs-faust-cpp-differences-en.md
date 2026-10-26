@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-26 (control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-26 (one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1063,6 +1063,39 @@ must run unchanged with Faust C++ should not pass them.
   `crates/transform/src/signal_prepare/tests/typing.rs`
   (`prepare_signals_for_fir_keeps_sampling_frequency_in_delay_amounts_after_simplify`,
   whose sample rate is bounded as `ma.SR` bounds it).
+
+### DIFF-BEH-027 — bargraph inputs are compared before simplification
+
+- Status: `adapted`, 2026-10-26.
+- Both compilers make one bargraph per bargraph signal: one bargraph box
+  applied to two signals, as in `process = hmeter, hmeter;`
+  (`tests/impulse-tests/dsp/vumeter.dsp`), is two meters, each written by its
+  own signal. C++ gets this from the signal itself
+  (`sigHBargraph(path, min, max, x)` carries `x`, and
+  `InstructionsCompiler::generateHBargraph` adds one widget per bargraph
+  signal compiled). Rust keys a control by its widget box and group context,
+  so the propagation splits it: the first input a bargraph control is
+  propagated with keeps it, each other input gets a copy of it, with its own
+  zone and a leaf placed after the original's (`BargraphSplits`,
+  `crates/propagate/src/ui_build.rs`). Until 2026-10-26 it did not, and every
+  backend showed one meter written by both signals, the last write winning
+  (one bargraph instead of two in `vumeter.dsp`).
+- What remains: C++ compares bargraph inputs after simplification, Rust as
+  propagated. Two inputs that only simplification makes equal are one meter in
+  C++ and two in Rust, both showing the same value: for
+  `m(x) = attach(x, x : hbargraph("m", 0, 1));` and
+  `process = _ <: (_ <: + : m), (*(2) : m), (+(1) : -(1) : m);`, C++ shows two
+  meters (`2x` and `x`), Rust three (`2x`, `2x`, `x`).
+- Not affected: `coutputs(e)` / `coutput(i, e)` (DIFF-SRC-004) list the
+  bargraph *boxes* of `e`, so the box of `hmeter, hmeter` is listed once.
+- Compatibility impact: none on samples or on programs whose bargraph inputs
+  are distinct after simplification. In the residual case the interface
+  (`buildUserInterface`, JSON, `-uim` counts) has extra meters.
+- Evidence: `crates/compiler/tests/bargraph_per_signal.rs` (the residual case
+  is frozen by `bargraph_inputs_equal_only_after_simplification_stay_apart`);
+  `a_bargraph_box_gets_one_control_per_input_signal` in
+  `crates/propagate/tests/core_api.rs`; counts compared with faust 2.84.3 and
+  2.90.15.
 
 ## 6. Additional backends and delivery forms
 

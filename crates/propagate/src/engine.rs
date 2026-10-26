@@ -527,8 +527,9 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "vbargraph");
             let value = clock_in_domain(arena, ctx, inputs[0]);
+            let control =
+                ctx.bargraph_control_id(box_tree.as_tree_id(), ctx_hash, "vbargraph", value);
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.vbargraph(control, value)])
         }
@@ -538,8 +539,9 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "hbargraph");
             let value = clock_in_domain(arena, ctx, inputs[0]);
+            let control =
+                ctx.bargraph_control_id(box_tree.as_tree_id(), ctx_hash, "hbargraph", value);
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.hbargraph(control, value)])
         }
@@ -1571,8 +1573,12 @@ pub(crate) struct PropagateContext<'a> {
 
 /// Where a propagation takes the control id of a widget.
 pub(crate) enum ControlIdSource<'a> {
-    /// The ids registered during UI extraction.
-    Ui(&'a ControlIds),
+    /// The ids registered during UI extraction, and the bargraph controls
+    /// split from them, one per bargraph input.
+    Ui {
+        ids: &'a ControlIds,
+        bargraphs: &'a mut BargraphSplits,
+    },
     /// Constant folding (`api::propagate_fold`): there is no UI program, and
     /// a widget gets a placeholder id, allocated the first time the fold
     /// session meets it (box node and group path) and kept for the session.
@@ -1598,7 +1604,7 @@ impl PropagateContext<'_> {
         widget: &str,
     ) -> ui::ControlId {
         match &mut self.control_ids {
-            ControlIdSource::Ui(ids) => match ids.get(&(node, group_path)) {
+            ControlIdSource::Ui { ids, .. } => match ids.get(&(node, group_path)) {
                 Some(&id) => id,
                 None => panic!("{widget} control id must be registered during UI extraction"),
             },
@@ -1609,6 +1615,26 @@ impl PropagateContext<'_> {
                     .expect("one fold session cannot meet more than u32::MAX widgets");
                 *ids.entry((node, group_path)).or_insert(next)
             }
+        }
+    }
+}
+
+impl PropagateContext<'_> {
+    /// The control id of a bargraph displaying `input`: its widget's id for
+    /// the first input it displays, a control split from it for each other
+    /// (see [`BargraphSplits`]). A constant fold keeps the placeholder: two
+    /// bargraph signals there differ by their inputs anyway.
+    pub(crate) fn bargraph_control_id(
+        &mut self,
+        node: tlib::TreeId,
+        group_path: u64,
+        widget: &str,
+        input: SigId,
+    ) -> ui::ControlId {
+        let control = self.control_id(node, group_path, widget);
+        match &mut self.control_ids {
+            ControlIdSource::Ui { bargraphs, .. } => bargraphs.control_for(control, input),
+            ControlIdSource::Fold(_) => control,
         }
     }
 }
