@@ -370,7 +370,7 @@ impl ParseState {
     ) -> TreeId {
         let span = token_span(&tok);
         self.update_cursor_from_span(lexer, span);
-        self.arena.symbol(lexer.span_str(span))
+        self.arena.symbol(blank_control_chars(lexer.span_str(span)))
     }
 
     /// Builds type code node for foreign signatures (`int=0`, `float=1`, `any=2`).
@@ -922,7 +922,8 @@ impl ParseState {
         }
     }
 
-    /// Parses one quoted string token and removes outer quotes.
+    /// Parses one quoted string token, removes outer quotes and blanks its
+    /// control characters (see `blank_control_chars`).
     #[must_use]
     pub fn uqstring_from_token<'lexer, 'input: 'lexer>(
         &mut self,
@@ -936,7 +937,7 @@ impl ParseState {
             .strip_prefix('"')
             .and_then(|s| s.strip_suffix('"'))
             .unwrap_or(raw);
-        self.arena.string_lit(stripped)
+        self.arena.string_lit(blank_control_chars(stripped))
     }
 
     fn string_node_text(&self, node: TreeId) -> Option<&str> {
@@ -3374,6 +3375,34 @@ fn locator_import_cycle_from_stack(
             site: edge.site,
         })
         .collect()
+}
+
+/// Replaces every control character (`U+0000`..`U+001F`: newline, tab,
+/// carriage return, ...) of a string literal's text with a space.
+///
+/// Source provenance (C++):
+/// - `compiler/tlib/symbol.cpp`, `Symbol::get(const string&)`: every string
+///   becomes a symbol there, and its control characters are replaced with
+///   white spaces before hashing. A multi-line label, `declare` value or
+///   foreign-function string therefore reaches every output (`buildUserInterface`,
+///   `metadata()`, JSON, `-uim`) with spaces in place of its newlines.
+/// - `compiler/parser/faustparser.y`, `unquote()`/`replaceCR()`: the `uqstring`
+///   rule also maps `\n` to a space; it is subsumed by `Symbol::get`.
+///
+/// Mapping status: `1:1` for string-literal tokens. The source has no escape
+/// processing: a backslash followed by `n` is two ordinary characters and is
+/// kept. Bytes `>= 0x80` (UTF-8 continuation bytes) are never control
+/// characters, so non-ASCII text is unchanged.
+fn blank_control_chars(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.chars().any(|c| c < ' ') {
+        std::borrow::Cow::Owned(
+            text.chars()
+                .map(|c| if c < ' ' { ' ' } else { c })
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
 }
 
 fn string_node_text_from_arena(arena: &TreeArena, node: TreeId) -> Option<&str> {

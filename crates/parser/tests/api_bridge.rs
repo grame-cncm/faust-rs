@@ -247,6 +247,50 @@ fn parse_program_exposes_master_document_metadata_snapshot() {
     assert!(values.contains("main"));
 }
 
+/// C++ `Symbol::get` (`tlib/symbol.cpp`) blanks the control characters of
+/// every string literal: newlines, tabs and carriage returns inside labels,
+/// `declare` values and foreign-function strings become spaces, while a
+/// backslash escape is two ordinary characters (the lexer has no escapes).
+#[test]
+fn string_literal_control_characters_become_spaces_like_cpp() {
+    let out = parse_program(
+        "declare author \"A\nB\";\n\
+         declare tabbed \"x\ty\r\nz\";\n\
+         f = ffunction(float f(float), \"<m\nath.h>\", \"lib\tm\");\n\
+         process = vgroup(\"Grp\n  [tooltip: two\n lines]\", \
+         hslider(\"my\nfreq[unit:Hz]\", 1, 0, 2, 1)) : f, button(\"b\\n\");\n",
+        "control_chars.dsp",
+    );
+    assert!(
+        out.errors.is_empty(),
+        "unexpected parse errors: {:?}",
+        out.errors
+    );
+    let metadata = out.compilation_metadata.entries();
+    let value = |key: &str| {
+        metadata
+            .get(&CompilationMetadataKey::global(key))
+            .unwrap_or_else(|| panic!("metadata `{key}` should exist"))
+    };
+    assert!(value("author").contains("A B"));
+    assert!(value("tabbed").contains("x y  z"));
+
+    let dump = dump_box(&out.state.arena, out.root.expect("root should be present"));
+    for expected in [
+        "Grp   [tooltip: two  lines]",
+        "my freq[unit:Hz]",
+        "<m ath.h>",
+        "lib m",
+        "b\\\\n",
+    ] {
+        assert!(dump.contains(expected), "`{expected}` missing in {dump}");
+    }
+    assert!(
+        !dump.contains(['\n', '\t', '\r']),
+        "control characters survived in {dump}"
+    );
+}
+
 #[test]
 fn bridge_exposes_file_import_parsing() {
     let root = make_temp_root("imports");
