@@ -7,7 +7,7 @@ exit=1
     "commit_date": "<COMMIT_DATE>",
     "name": "faust-rs",
     "target": "<TARGET>",
-    "version": "0.9.2"
+    "version": "0.9.3"
   },
   "diagnostics": [
     {

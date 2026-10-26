@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------
 name: "simple"
-Code generated with Faust 0.9.2 (https://faust.grame.fr)
+Code generated with Faust 0.9.3 (https://faust.grame.fr)
 Compilation options: -lang cpp -cn Custom -single
 ------------------------------------------------------------ */
 

@@ -1,6 +1,6 @@
 interpreter_dsp_factory float
 file_version 9
-Faust version 0.9.2
+Faust version 0.9.3
 compile_options -lang interp -single
 name mydsp
 sha_key 
