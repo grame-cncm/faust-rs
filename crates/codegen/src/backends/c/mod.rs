@@ -393,30 +393,37 @@ fn emit_c_header(
     let _ = writeln!(out, "#define exp10 __exp10");
     let _ = writeln!(out, "#endif");
     let _ = writeln!(out);
-    let _ = writeln!(
-        out,
-        "static inline FAUST_UNUSED int faustmini(int a, int b) {{ return (a < b) ? a : b; }}"
-    );
+    // Guarded by `FAUSTMAXI`, in C++ `CCodeContainer::produceClass`'s order
+    // (`c_code_container.cpp`, since Faust 2.85.5 and in the pinned
+    // `8eebea429`), so several DSPs can share one translation unit.
+    let _ = writeln!(out, "#ifndef FAUSTMAXI");
+    let _ = writeln!(out, "#define FAUSTMAXI");
     let _ = writeln!(
         out,
         "static inline FAUST_UNUSED int faustmaxi(int a, int b) {{ return (a > b) ? a : b; }}"
     );
+    let _ = writeln!(
+        out,
+        "static inline FAUST_UNUSED int faustmini(int a, int b) {{ return (a < b) ? a : b; }}"
+    );
+    let _ = writeln!(out, "#endif");
     // Two's-complement wrapping integer arithmetic: signed overflow is UB in
     // C, so add/sub/mul run on `uint32_t` (defined modulo 2^32) and convert
     // back — the semantics Faust-generated code (the noise LCG in
-    // particular) has always assumed.
-    let _ = writeln!(
-        out,
-        "static inline FAUST_UNUSED int faust_wrap_add(int a, int b) {{ return (int)(((uint32_t)a) + ((uint32_t)b)); }}"
-    );
-    let _ = writeln!(
-        out,
-        "static inline FAUST_UNUSED int faust_wrap_sub(int a, int b) {{ return (int)(((uint32_t)a) - ((uint32_t)b)); }}"
-    );
-    let _ = writeln!(
-        out,
-        "static inline FAUST_UNUSED int faust_wrap_mul(int a, int b) {{ return (int)(((uint32_t)a) * ((uint32_t)b)); }}"
-    );
+    // particular) has always assumed. The `FAUST_INT_WRAP` guard is C++
+    // `CCodeContainer::produceClass`'s (`c_code_container.cpp`, Faust
+    // master-dev `88b5c93ae`): several DSPs, from either compiler, can share
+    // one translation unit. `static` gives each unit its own copy, so the
+    // body may differ from C++'s.
+    let _ = writeln!(out, "#ifndef FAUST_INT_WRAP");
+    let _ = writeln!(out, "#define FAUST_INT_WRAP");
+    for (name, op) in [("add", '+'), ("sub", '-'), ("mul", '*')] {
+        let _ = writeln!(
+            out,
+            "static inline FAUST_UNUSED int faust_wrap_{name}(int a, int b) {{ return (int)(((uint32_t)a) {op} ((uint32_t)b)); }}"
+        );
+    }
+    let _ = writeln!(out, "#endif");
     let _ = writeln!(out);
 }
 

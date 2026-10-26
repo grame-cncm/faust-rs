@@ -1109,21 +1109,25 @@ fn emit_cpp_header(
     let _ = writeln!(out, "#endif");
     let _ = writeln!(out);
     // Two's-complement wrapping integer arithmetic: signed overflow is UB in
-    // C++, so add/sub/mul run on `uint32_t` (defined modulo 2^32) and
+    // C++, so add/sub/mul run on `unsigned int` (defined modulo 2^32) and
     // convert back — the semantics Faust-generated code (the noise LCG in
     // particular) has always assumed.
-    let _ = writeln!(
-        out,
-        "inline int faust_wrap_add(int a, int b) {{ return int(uint32_t(a) + uint32_t(b)); }}"
-    );
-    let _ = writeln!(
-        out,
-        "inline int faust_wrap_sub(int a, int b) {{ return int(uint32_t(a) - uint32_t(b)); }}"
-    );
-    let _ = writeln!(
-        out,
-        "inline int faust_wrap_mul(int a, int b) {{ return int(uint32_t(a) * uint32_t(b)); }}"
-    );
+    //
+    // As C++ `CPPCodeContainer::produceClass` (`cpp_code_container.cpp`,
+    // Faust master-dev `88b5c93ae`), token for token: the `FAUST_INT_WRAP`
+    // guard keeps several DSP classes in one translation unit legal, the
+    // same guard name lets a faust-rs DSP sit next to a C++ Faust one, and
+    // the identical bodies keep these external-linkage `inline` functions
+    // one definition (ODR) across translation units mixing the two.
+    let _ = writeln!(out, "#ifndef FAUST_INT_WRAP");
+    let _ = writeln!(out, "#define FAUST_INT_WRAP");
+    for (name, op) in [("add", '+'), ("sub", '-'), ("mul", '*')] {
+        let _ = writeln!(
+            out,
+            "inline int faust_wrap_{name}(int a, int b) {{ return int((unsigned int)a {op} (unsigned int)b); }}"
+        );
+    }
+    let _ = writeln!(out, "#endif");
     let _ = writeln!(out);
 }
 

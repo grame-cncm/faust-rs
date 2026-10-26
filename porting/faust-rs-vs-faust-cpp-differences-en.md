@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-26 (one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1105,6 +1105,44 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   `a_bargraph_box_gets_one_control_per_input_signal` in
   `crates/propagate/tests/core_api.rs`; counts compared with faust 2.84.3 and
   2.90.15.
+
+### DIFF-BEH-028 — C and C++ helper functions guarded as in C++
+
+- Status: `reference-fix` relative to the pinned `8eebea429` for the wrapping
+  helpers; aligned with C++ correction `88b5c93ae` (master-dev, 2026-08-26,
+  released in 2.90.x).
+- The C and C++ backends write integer add, sub and mul as
+  `faust_wrap_add/sub/mul`, which compute on unsigned 32-bit values and
+  convert back: signed overflow is undefined in C and C++, and compilers
+  exploit it at `-O2`/`-O3` (the integer noise LCG). The pinned reference
+  writes plain `+`, `-`, `*`.
+- Since 2026-10-26 the helpers are printed under `#ifndef FAUST_INT_WRAP`, as
+  `CPPCodeContainer::produceClass` and `CCodeContainer::produceClass` print
+  them, so several DSPs, from either compiler, can share one translation unit.
+  The C++ helpers are the reference's token for token
+  (`inline int faust_wrap_add(int a, int b) { return int((unsigned int)a +
+  (unsigned int)b); }`), so these external-linkage `inline` functions stay one
+  definition (ODR) across translation units mixing the two compilers. The C
+  helpers keep `static inline FAUST_UNUSED` and `uint32_t`: internal linkage,
+  one copy per unit, no definition to share.
+- The C backend's `faustmaxi` / `faustmini` are printed under
+  `#ifndef FAUSTMAXI`, in the reference's order, as both the pinned reference
+  and master-dev print them; faust-rs had left them unguarded (an unrecorded
+  difference closed the same day). They are `static inline FAUST_UNUSED`, as
+  master-dev's `static inline` (`220e37386`, 2026-05-29). The pinned reference
+  prints them as plain `inline`, which in C99 is an inline definition without
+  an external one: a C file that calls `faustmini` fails to link at `-O0`
+  (`_faustmini` not found). That fix is cherry-picked on the local C++ branch
+  `fix-faustmaxi-static-inline-FIR19` (from `8eebea429`), not on the pin.
+- Before 2026-10-26, two faust-rs C++ classes, or two C DSPs, in one
+  translation unit failed with `redefinition of 'faust_wrap_add'` (and of
+  `faustmaxi` for C).
+- Compatibility impact: none on samples. Generated C/C++ text differs from the
+  pinned reference by the wrapping helpers; it matches C++ master-dev's for
+  C++, and for C up to the helper bodies and `FAUST_UNUSED`.
+- Evidence: `crates/compiler/tests/int_wrap_guard.rs` (the exact text in both
+  backends; two C++ classes with a C++ Faust copy of the helpers, and two C
+  DSPs, built at `-O0` and run in one translation unit).
 
 ## 6. Additional backends and delivery forms
 
