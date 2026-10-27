@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -165,7 +165,7 @@ fn run_interp(input: BenchInput<'_>) -> Result<(Duration, f64), String> {
 fn run_interp_file(case: &Path) -> Result<(Duration, f64), String> {
     let c_path = CString::new(case.to_string_lossy().as_bytes())
         .map_err(|e| format!("CString path: {e}"))?;
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCInterpreterDSPFactoryFromFile(c_path.as_ptr(), 0, std::ptr::null(), err.as_mut_ptr())
     };
@@ -218,7 +218,7 @@ fn run_interp_fixture_sine_phasor() -> Result<(Duration, f64), String> {
     write_fbc(&factory, &mut fbc_bytes, false).map_err(|e| e.to_string())?;
     let fbc_text = String::from_utf8(fbc_bytes).map_err(|e| format!("utf8 FBC: {e}"))?;
     let c_fbc = CString::new(fbc_text.as_bytes()).map_err(|e| format!("CString FBC: {e}"))?;
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let ffi_factory =
         unsafe { readCInterpreterDSPFactoryFromBitcode(c_fbc.as_ptr(), err.as_mut_ptr()) };
     if ffi_factory.is_null() {
@@ -277,7 +277,7 @@ fn run_interp_fixture_heavy_bench() -> Result<(Duration, f64), String> {
     write_fbc(&factory, &mut fbc_bytes, false).map_err(|e| e.to_string())?;
     let fbc_text = String::from_utf8(fbc_bytes).map_err(|e| format!("utf8 FBC: {e}"))?;
     let c_fbc = CString::new(fbc_text.as_bytes()).map_err(|e| format!("CString FBC: {e}"))?;
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let ffi_factory =
         unsafe { readCInterpreterDSPFactoryFromBitcode(c_fbc.as_ptr(), err.as_mut_ptr()) };
     if ffi_factory.is_null() {
@@ -340,7 +340,7 @@ fn run_cranelift(input: BenchInput<'_>) -> Result<(Duration, f64), String> {
 fn run_cranelift_file(case: &Path) -> Result<(Duration, f64), String> {
     let c_path = CString::new(case.to_string_lossy().as_bytes())
         .map_err(|e| format!("CString path: {e}"))?;
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCCraneliftDSPFactoryFromFile(
             c_path.as_ptr(),
