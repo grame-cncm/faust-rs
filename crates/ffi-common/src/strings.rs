@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn write_error_4096_writes_nul_terminated_message() {
-        let mut buffer = [0_i8; 4096];
+        let mut buffer = [0 as c_char; 4096];
         unsafe {
             write_error_4096(buffer.as_mut_ptr(), "hello");
         }
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn error_buffer_truncates_to_4095_bytes_and_terminates() {
-        let mut buffer = [1_i8; 4096];
+        let mut buffer = [1 as c_char; 4096];
         let message = "x".repeat(5000);
         unsafe {
             write_error_4096(buffer.as_mut_ptr(), &message);

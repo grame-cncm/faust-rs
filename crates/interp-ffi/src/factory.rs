@@ -1704,7 +1704,7 @@ mod tests {
     #[test]
     fn different_programs_get_different_factories() {
         let _guard = crate::test_serial_guard();
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let mut create = |name: &std::ffi::CStr, source: &std::ffi::CStr| unsafe {
             createCInterpreterDSPFactoryFromString(
                 name.as_ptr(),
@@ -1739,7 +1739,7 @@ mod tests {
         let _guard = crate::test_serial_guard();
         let name = c"interp_factory_lifecycle";
         let source = c"process = _;";
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
 
         let mut create = || unsafe {
             createCInterpreterDSPFactoryFromString(
@@ -1775,7 +1775,7 @@ mod tests {
     #[test]
     fn two_different_sources_get_two_cache_entries() {
         let _guard = crate::test_serial_guard();
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let mut create = |name: &CStr, source: &CStr| unsafe {
             createCInterpreterDSPFactoryFromString(
                 name.as_ptr(),
@@ -1815,10 +1815,10 @@ mod tests {
     #[test]
     fn precision_and_option_order_decide_cache_identity() {
         let _guard = crate::test_serial_guard();
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let name = c"interp_key_options";
         let source = c"process = _ * hslider(\"g\", 0.5, 0, 1, 0.01);";
-        let create = |args: &[&CStr], error: &mut [i8; 4096]| {
+        let create = |args: &[&CStr], error: &mut [c_char; 4096]| {
             let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
             unsafe {
                 createCInterpreterDSPFactoryFromString(
@@ -1884,7 +1884,7 @@ mod tests {
     #[test]
     fn a_bitcode_factory_is_keyed_by_the_digest_of_its_bitcode() {
         let _guard = crate::test_serial_guard();
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let source = unsafe {
             createCInterpreterDSPFactoryFromString(
                 c"interp_bitcode_key".as_ptr(),
@@ -1927,7 +1927,7 @@ mod tests {
         let _guard = crate::test_serial_guard();
         let name = c"interp_factory_clear";
         let source = c"process = _;";
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let factory = unsafe {
             createCInterpreterDSPFactoryFromString(
                 name.as_ptr(),

@@ -140,7 +140,7 @@ mod tests {
             .iter()
             .map(|arg| arg.as_ptr())
             .collect::<Vec<_>>();
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromFile(
                 c_path.as_ptr(),
@@ -383,7 +383,7 @@ mod tests {
         let _guard = crate::test_serial_guard();
         let case = workspace_root().join("tests/runtime_corpus/trace_09_ui_slider.dsp");
         let c_path = CString::new(case.to_string_lossy().as_bytes()).expect("path CString");
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromFile(
                 c_path.as_ptr(),
@@ -451,7 +451,7 @@ mod tests {
         let _guard = crate::test_serial_guard();
         let case = workspace_root().join("tests/corpus/rep_56_noise_smoo_slider.dsp");
         let c_path = CString::new(case.to_string_lossy().as_bytes()).expect("path CString");
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromFile(
                 c_path.as_ptr(),

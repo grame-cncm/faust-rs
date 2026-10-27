@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
@@ -26,7 +26,7 @@ fn main() -> Result<(), String> {
     let args = CliArgs::parse();
     let input_c = path_to_cstring(&args.input)?;
     let output_c = path_to_cstring(&args.output)?;
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     let factory = unsafe {
         createCCraneliftDSPFactoryFromFile(

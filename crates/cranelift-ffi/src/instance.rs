@@ -1257,7 +1257,7 @@ mod tests {
         let source = CString::new("process = rdtable(8, 0.25, int(_)) : @(7);").unwrap();
         let mem0 = CString::new("-mem0").unwrap();
         let argv = [mem0.as_ptr()];
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromString(
                 name.as_ptr(),
@@ -1317,7 +1317,7 @@ mod tests {
         let source = c"process = rdtable(8, 0.25, int(_)) : @(7);";
         let mem0 = c"-mem0";
         let argv = [mem0.as_ptr()];
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromString(
                 name.as_ptr(),
@@ -1396,7 +1396,7 @@ mod tests {
         let source = CString::new("process = _ : @(7);").unwrap();
         let mem0 = CString::new("-mem0").unwrap();
         let argv = [mem0.as_ptr()];
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromString(
                 name.as_ptr(),
@@ -1482,7 +1482,7 @@ mod tests {
         let _guard = crate::test_serial_guard();
         let name = CString::new("demo").unwrap();
         let src = CString::new("process = _;").unwrap();
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
 
         let factory = unsafe {
             createCCraneliftDSPFactoryFromString(
@@ -1565,7 +1565,7 @@ mod tests {
 
     fn assert_runtime_case_non_silent(case: &std::path::Path) {
         let case_c = CString::new(case.to_string_lossy().as_bytes()).expect("path CString");
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromFile(
                 case_c.as_ptr(),

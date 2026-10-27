@@ -1,6 +1,6 @@
 //! Tests of the factory C API.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 
 use super::{
     canonicalize_cache_identity_argv, clearCCraneliftForeignFunctions,
@@ -43,7 +43,7 @@ fn create_factory_from_string_runtime_roundtrip_queries() {
     let src = c"process = _;";
     let args = [c"-vec"];
     let argv = [args[0].as_ptr()];
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
@@ -146,7 +146,7 @@ fn ss_scheduling_strategy_changes_factory_cache_identity_canonically() {
     let src = c"process = _;";
 
     let build = |ss_value: &std::ffi::CStr| unsafe {
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let flag = c"-ss";
         let argv = [flag.as_ptr(), ss_value.as_ptr()];
         let factory = createCCraneliftDSPFactoryFromString(
@@ -192,7 +192,7 @@ fn ss_scheduling_strategy_changes_factory_cache_identity_canonically() {
 #[test]
 fn create_factory_from_file_rejects_null_filename() {
     let _guard = crate::test_serial_guard();
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCCraneliftDSPFactoryFromFile(
             std::ptr::null(),
@@ -212,7 +212,7 @@ fn create_factory_from_string_reports_compiler_error_for_invalid_faust() {
     let _guard = crate::test_serial_guard();
     let name = c"bad";
     let src = c"process = ;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
@@ -235,7 +235,7 @@ fn cache_lookup_and_list_are_wired_to_created_factories() {
     super::clear_registered_foreign_functions();
     let name = c"cachetest";
     let src = c"process = _;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
@@ -277,7 +277,7 @@ fn factory_cache_lifecycle_matches_reference_counted_cpp_contract() {
     super::clear_registered_foreign_functions();
     let name = c"cranelift_factory_lifecycle";
     let source = c"process = _;";
-    let mut error = [0_i8; 4096];
+    let mut error = [0 as c_char; 4096];
 
     let mut create = || unsafe {
         createCCraneliftDSPFactoryFromString(
@@ -315,7 +315,7 @@ fn clif_bitcode_write_emits_v1_magic_header() {
     let _guard = crate::test_serial_guard();
     let name = c"bitcode";
     let src = c"process = _;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
             name.as_ptr(),
@@ -348,7 +348,7 @@ fn clif_bitcode_file_write_emits_v1_magic_header() {
     let _guard = crate::test_serial_guard();
     let name = c"bitfile";
     let src = c"process = _;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
             name.as_ptr(),
@@ -389,7 +389,7 @@ fn clif_bitcode_roundtrip_in_memory_rebuilds_runnable_factory() {
     let _guard = crate::test_serial_guard();
     let name = c"clifroundtrip";
     let src = c"process = _;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
             name.as_ptr(),
@@ -472,7 +472,7 @@ fn clif_bitcode_roundtrip_via_file_rebuilds_runnable_factory() {
     let _guard = crate::test_serial_guard();
     let name = c"cliffile";
     let src = c"process = _;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let factory = unsafe {
         createCCraneliftDSPFactoryFromString(
             name.as_ptr(),
@@ -520,7 +520,7 @@ fn clif_bitcode_roundtrip_via_file_rebuilds_runnable_factory() {
 fn source_backed_bitcode_read_rejects_invalid_format() {
     let _guard = crate::test_serial_guard();
     let bad = c"NOT_A_CRANELIFT_FORMAT";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
     let restored = unsafe { readCCraneliftDSPFactoryFromBitcode(bad.as_ptr(), err.as_mut_ptr()) };
     assert!(restored.is_null());
     let msg = unsafe { CStr::from_ptr(err.as_ptr()) }.to_str().unwrap();
@@ -580,7 +580,7 @@ fn selected_runtime_corpus_cases_lower_compute_body() {
     ];
 
     for rel in cases {
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let path = root.join(rel);
         let c_path =
             std::ffi::CString::new(path.to_string_lossy().as_bytes()).expect("path CString");
@@ -627,7 +627,7 @@ fn clif_save_restore_selected_corpus_cases() {
     ];
 
     for rel in cases {
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let path = root.join(rel);
         let c_path =
             std::ffi::CString::new(path.to_string_lossy().as_bytes()).expect("path CString");
@@ -696,7 +696,7 @@ fn boxes_and_signals_constructor_match_string_constructor_sha() {
 
     let name = c"same";
     let src = c"process = _;";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     let from_box = unsafe {
         createCCraneliftDSPFactoryFromBoxes(
@@ -769,7 +769,7 @@ fn registered_foreign_function_is_used_for_factory_build() {
     super::clear_registered_foreign_functions();
     let name = c"foreign_fun";
     let src = c"process = ffunction(float ffi_test_foreign_gain(float), <math.h>, \"\");";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     unsafe {
         registerCCraneliftForeignFunction(
@@ -807,7 +807,7 @@ fn unregister_foreign_function_removes_future_binding() {
     super::clear_registered_foreign_functions();
     let name = c"foreign_fun_unreg";
     let src = c"process = ffunction(float ffi_test_foreign_gain(float), <math.h>, \"\");";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     unsafe {
         registerCCraneliftForeignFunction(
@@ -848,7 +848,7 @@ fn clear_foreign_functions_removes_all_future_bindings() {
     super::clear_registered_foreign_functions();
     let name = c"foreign_fun_clear";
     let src = c"process = ffunction(float ffi_test_foreign_gain(float), <math.h>, \"\");";
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     unsafe {
         registerCCraneliftForeignFunction(

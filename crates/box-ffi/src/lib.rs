@@ -2953,7 +2953,7 @@ mod tests {
         convert: unsafe extern "C" fn(*mut c_void, *mut c_char) -> *mut *mut c_void,
     ) {
         let root = CboxWire();
-        let mut err = vec![0_i8; 4096];
+        let mut err = vec![0 as c_char; 4096];
         let signals = unsafe { convert(root, err.as_mut_ptr()) };
         assert!(
             !signals.is_null(),
@@ -2975,7 +2975,7 @@ mod tests {
     unsafe fn create_source(root: *mut c_void, lang: &str) -> Result<String, String> {
         let name = CString::new("SourceSmoke").unwrap();
         let lang = CString::new(lang).unwrap();
-        let mut err = vec![0_i8; 4096];
+        let mut err = vec![0 as c_char; 4096];
         let source = unsafe {
             CcreateSourceFromBoxes(
                 name.as_ptr(),
@@ -3034,7 +3034,7 @@ mod tests {
         let root = CboxExp10Aux(CboxWire());
         let name = CString::new("Exp10Smoke").unwrap();
         let lang = CString::new("fir").unwrap();
-        let mut err = vec![0_i8; 4096];
+        let mut err = vec![0 as c_char; 4096];
         let source = unsafe {
             CcreateSourceFromBoxes(
                 name.as_ptr(),

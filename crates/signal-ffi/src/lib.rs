@@ -2006,7 +2006,7 @@ mod tests {
         let mut signals = [output, ptr::null_mut()];
         let name = CString::new("SignalDSP").expect("valid name");
         let lang = CString::new("c").expect("valid lang");
-        let mut error = [0_i8; 4096];
+        let mut error = [0 as c_char; 4096];
         let source = unsafe {
             CcreateSourceFromSignals(
                 name.as_ptr(),
@@ -2062,7 +2062,7 @@ mod tests {
         // Compiles to `lang`; returns the source, or the message `error_msg` got.
         let mut compile = |lang: &str| -> Result<(), String> {
             let lang = CString::new(lang).expect("valid lang");
-            let mut error = [0_i8; 4096];
+            let mut error = [0 as c_char; 4096];
             let source = unsafe {
                 CcreateSourceFromSignals(
                     name.as_ptr(),

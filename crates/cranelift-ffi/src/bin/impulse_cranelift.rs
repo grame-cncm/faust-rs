@@ -161,7 +161,7 @@ fn run(options: Options) -> Result<String, String> {
     }
     let argv_ptrs: Vec<*const c_char> = argv_storage.iter().map(|s| s.as_ptr()).collect();
     let c_path = CString::new(options.dsp.as_str()).map_err(|e| e.to_string())?;
-    let mut err = [0_i8; 4096];
+    let mut err = [0 as c_char; 4096];
 
     let factory = unsafe {
         createCCraneliftDSPFactoryFromFile(

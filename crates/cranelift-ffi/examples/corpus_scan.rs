@@ -36,7 +36,7 @@ fn main() {
 
     for path in files {
         let c_path = CString::new(path.to_string_lossy().as_bytes()).unwrap();
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let factory = unsafe {
             createCCraneliftDSPFactoryFromFile(
                 c_path.as_ptr(),
