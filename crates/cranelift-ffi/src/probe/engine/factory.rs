@@ -200,7 +200,7 @@ impl Factory {
             argv.push(CString::new(arg.as_str()).map_err(|e| e.to_string())?);
         }
         let argv_ptrs: Vec<*const c_char> = argv.iter().map(|a| a.as_ptr()).collect();
-        let mut err = [0_i8; 4096];
+        let mut err = [0 as c_char; 4096];
         let factory = create(
             c_int::try_from(argv_ptrs.len()).map_err(|_| "too many -I arguments")?,
             if argv_ptrs.is_empty() {
