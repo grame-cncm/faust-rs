@@ -51,6 +51,10 @@ Guidelines for contributors and coding agents working on `faust-rs`.
 
 - CI runs on Linux, macOS, and Windows.
 - CI stages include `cargo check`, formatting, clippy, and tests.
+- The `cargo check` job also runs on `ubuntu-24.04-arm` (aarch64 Linux), the
+  only runner where C `char` is unsigned. Declare buffers and pointers passed
+  to C as `c_char`, never `i8`: `i8` compiles on the other three runners and
+  breaks there.
 - CI also runs golden parity guardrails via `cargo run -p xtask -- golden-check`.
 - CI also runs the compilation-cost gate via
   `cargo run --release -p xtask -- compile-budget-check`.
