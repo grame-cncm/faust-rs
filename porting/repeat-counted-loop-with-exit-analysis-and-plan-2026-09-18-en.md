@@ -638,3 +638,13 @@ compiler primitive, deferred, D1 to D4 open (§2.8).
 stays open). Its semantics, the three wrappers as its derived forms and
 the uses that motivate it are written up without the implementation in
 `docs/repeat-note-en.md` and `docs/repeat-note-fr.md`.
+
+2026-10-27. D1 reopened. `repeat` is not free as an identifier:
+`signals.lib` defines `si.repeat` (`repeat(1, FX) = FX; repeat(n, FX) =
+…`) since faustlibraries `9aa3e8f8` (2023-10-11), in the libraries of the
+pinned reference and of upstream 2.90. As a keyword it would break the
+parse of `signals.lib`, and so of `stdfaust.lib`. The library form (W4) is
+unaffected; the compiler primitive (W1–W3) needs another name, checked as
+in §1.1 of
+[`new-primitives-analysis-and-plan-2026-10-27-en.md`](new-primitives-analysis-and-plan-2026-10-27-en.md),
+which also places this primitive last among the candidate primitives.
