@@ -58,6 +58,16 @@ const ATTACH_CROSS_LOOP_SOURCE: &str = concat!(
     "aOut = gA : _,!;\n",
     "process = attach(_, aOut);"
 );
+// `phaser_flanger.dsp` reduced, without the standard libraries: a feedback
+// comb puts the program in a fused serial group, and the outer `attach`
+// discards the value the inner one passes through, so the fused scalar
+// transport of `2*x` has its store in the body and no load left once dead
+// pure roots are removed.
+const FUSED_TRANSPORT_DEAD_LOAD_SOURCE: &str = concat!(
+    "comb(d) = _ <: _, ((+ : @(d)) ~ *(0.5)) : +;\n",
+    "meter(v) = abs(v) : + ~ *(0.9) : vbargraph(\"l\", 0, 1);\n",
+    "process = comb(5) : \\(x).(attach(x, attach(2*x, meter(2*x))));"
+);
 // Zero-stuffed upsampling input driving an in-domain accumulator. The vector
 // lowerer used to pass `ZeroPad` through unguarded, feeding the outer-rate
 // input on every fire: an impulse was accumulated `factor` times. Scalar
@@ -69,13 +79,28 @@ const UPSAMPLING_ZEROPAD_SOURCE: &str = "process = (2, _) : upsampling(+ ~ _);";
 // its inputs alone and the plan keeps its state advancing once per fire.
 const DOMAIN_ADOPTED_STATEFUL_SOURCE: &str =
     "process = (3, (_ : !)) : upsampling(1 : (+ ~ *(0.5)));";
-// `pm.ks` contains pass-through recursion slots: a slot whose body is a bare
-// projection of another recursion group. Its feedback read is the explicit
+// `pm.ks` written without the standard libraries: the `physmodels.lib`
+// `chain`/`terminations` waveguide structure it is built from, with
+// `ro.crossnn(1)` as a swap and an integer delay of 100 samples per direction
+// in place of `de.fdelay4`. `chain` and `terminations` create pass-through
+// recursion slots: a slot whose body is a bare projection of another recursion
+// group, two levels deep. Its feedback read is the explicit
 // `SIGDELAY1(SIGPROJ(i, SYMREF))`, so the alias carries exactly one sample of
-// delay. Its ~200-sample delay line hides a wrong feedback delay from any
-// render shorter than that (issue #24). `pm.ks` consumes the oracle input.
-const KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE: &str =
-    concat!("import(\"stdfaust.lib\");\n", "process = pm.ks(200, 0.5);");
+// delay. The 200-sample round trip hides a wrong feedback delay from any
+// render shorter than that: before `77568133` (issue #24) `-vec` differed
+// from scalar from frame 102 on. The input is the excitation.
+const KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE: &str = concat!(
+    "cross = \\(a,b).(b,a);\n",
+    "chain(A:As) = ((cross,_',_ : _,A : cross,_,_ : _,chain(As) : cross,_,_)) ~ _ : !,_,_,_;\n",
+    "chain(A) = A;\n",
+    "terminations(a,b,c) = (_,cross,_,_ : +,+,_ : b) ~ (a,c : cross);\n",
+    "endChain(b) = (0,0,0) : b : (!,!,_);\n",
+    "in(x) = +(x),+(x),_;\n",
+    "out(x,y,s) = x,y,x+y+s;\n",
+    "segment = par(i,2,@(100)),_;\n",
+    "refFilter = (_ <: (_+_')/2)*0.9;\n",
+    "process(excitation) = endChain(terminations(_, chain(in(excitation) : segment : out), refFilter));"
+);
 // Issue #24 reduced: the outer recursion's slot is a bare projection of the
 // inner recursion, which reads the outer one back. Scalar is
 // `y[n] = x[n] + 0.6 y[n-1]`; `-vec` used to read the alias two samples late.
@@ -530,37 +555,26 @@ fn stateful_recursion_under_upsampling_is_adopted_by_its_domain() {
 
 #[test]
 fn karplus_pass_through_backedge_is_certified_and_bit_exact() {
-    // Expanding `stdfaust.lib` needs more stack than libtest gives each test
-    // thread on some hosts; production compilation already runs on the main
-    // process stack. Keep the real library-level regression instead of
-    // weakening it to a hand-reduced signal graph.
-    std::thread::Builder::new()
-        .name("karplus-vector-regression".to_owned())
-        .stack_size(64 * 1024 * 1024)
-        .spawn(|| {
-            assert_vector_pipeline_certified(
-                "karplus_pass_through_backedge",
-                KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
-                32,
-            );
-            // Past the ~200-sample delay line, so the feedback is observed.
-            let input = [ramp(1024)];
-            assert_channels_bit_exact(
-                "karplus_pass_through_backedge",
-                KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
-                &input,
-                32,
-            );
-            assert_channels_bit_exact(
-                "karplus_pass_through_backedge_tail",
-                KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
-                &input,
-                24,
-            );
-        })
-        .expect("spawn Karplus regression thread")
-        .join()
-        .expect("Karplus regression thread");
+    assert_vector_pipeline_certified(
+        "karplus_pass_through_backedge",
+        KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
+        32,
+    );
+    // Five round trips of the 200-sample delay line, so the feedback is
+    // observed.
+    let input = [ramp(1024)];
+    assert_channels_bit_exact(
+        "karplus_pass_through_backedge",
+        KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
+        &input,
+        32,
+    );
+    assert_channels_bit_exact(
+        "karplus_pass_through_backedge_tail",
+        KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
+        &input,
+        24,
+    );
 }
 
 /// A recursion slot that is a bare projection of another group is an alias:
@@ -585,7 +599,6 @@ fn alias_recursion_slots_are_fed_back_with_one_sample_of_delay() {
     }
 }
 
-#[test]
 fn soundfile_reads_are_certified() {
     assert_vector_pipeline_certified("soundfile_read", SOUNDFILE_READ_SOURCE, 32);
 }
@@ -949,7 +962,7 @@ fn phase3_state_plan_accepts_temporal_slow_values_and_special_state_cells() {
 
 /// Dead pure roots are removed before FIR assembly, so a fused serial group's
 /// delayed reads and scalar transport loads can disappear when nothing consumes
-/// them. Both corpus shapes below hit that case: they must stay fully certified
+/// them. Both shapes below hit that case: they must stay fully certified
 /// rather than falling back once the reads are gone.
 #[test]
 fn fused_serial_groups_survive_dead_pure_root_removal() {
@@ -961,14 +974,24 @@ fn fused_serial_groups_survive_dead_pure_root_removal() {
                 vec_size: 32,
                 loop_variant: 0,
             });
-            let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../tests/impulse-tests/dsp");
-            // echo_bug loses a delayed read of its own delay line; phaser_flanger
-            // loses the load side of a fused scalar transport.
-            for name in ["echo_bug.dsp", "phaser_flanger.dsp"] {
-                let path = corpus.join(name);
+            // echo_bug loses a delayed read of its own delay line; the reduced
+            // phaser_flanger loses the load side of a fused scalar transport.
+            // The corpus phaser_flanger.dsp is not compiled here: it imports
+            // the installed libraries, whose versions change its signal (since
+            // faustlibraries `69071402` its phaser calls `ma.expm1`, a foreign
+            // `sinh`, which the vector pipeline lowers as scalar).
+            for (name, source) in [
+                (
+                    "echo_bug.dsp",
+                    include_str!("../../../tests/impulse-tests/dsp/echo_bug.dsp"),
+                ),
+                (
+                    "fused_transport_dead_load.dsp",
+                    FUSED_TRANSPORT_DEAD_LOAD_SOURCE,
+                ),
+            ] {
                 let output = compiler
-                    .compile_file_default_to_fir_with_lane(&path, SignalFirLane::TransformFastLane)
+                    .compile_source_to_fir_with_lane(name, source, SignalFirLane::TransformFastLane)
                     .unwrap_or_else(|error| panic!("{name} vector FIR: {error}"));
                 assert_eq!(
                     output.vector_pipeline_status,
@@ -982,12 +1005,17 @@ fn fused_serial_groups_survive_dead_pure_root_removal() {
                     "{name} must keep the certified vector structure"
                 );
             }
-            // echo_bug is self-contained, so the restored vector structure can
-            // also be held to the bit-exactness oracle. phaser_flanger needs the
-            // installed libraries and stays a certification-only case here.
+            // Both are self-contained, so the restored vector structure is also
+            // held to the bit-exactness oracle.
             assert_channels_bit_exact(
                 "echo_bug.dsp",
                 include_str!("../../../tests/impulse-tests/dsp/echo_bug.dsp"),
+                std::slice::from_ref(&ramp(67)),
+                32,
+            );
+            assert_channels_bit_exact(
+                "fused_transport_dead_load.dsp",
+                FUSED_TRANSPORT_DEAD_LOAD_SOURCE,
                 std::slice::from_ref(&ramp(67)),
                 32,
             );
