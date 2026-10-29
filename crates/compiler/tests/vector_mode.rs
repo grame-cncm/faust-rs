@@ -69,13 +69,32 @@ const UPSAMPLING_ZEROPAD_SOURCE: &str = "process = (2, _) : upsampling(+ ~ _);";
 // its inputs alone and the plan keeps its state advancing once per fire.
 const DOMAIN_ADOPTED_STATEFUL_SOURCE: &str =
     "process = (3, (_ : !)) : upsampling(1 : (+ ~ *(0.5)));";
-// `pm.ks` contains a pass-through symbolic recursion projection whose
-// cross-loop back-edge denotes the previous sample even though the selected
-// body has no explicit delay occurrence. Before X2b the vector lowerer tried
-// to route the body's current value and correctly fell back rather than
-// miscompile it. `pm.ks` itself consumes the deterministic oracle input.
+// `pm.ks` contains pass-through recursion slots: a slot whose body is a bare
+// projection of another recursion group. Its feedback read is the explicit
+// `SIGDELAY1(SIGPROJ(i, SYMREF))`, so the alias carries exactly one sample of
+// delay. Its ~200-sample delay line hides a wrong feedback delay from any
+// render shorter than that (issue #24). `pm.ks` consumes the oracle input.
 const KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE: &str =
     concat!("import(\"stdfaust.lib\");\n", "process = pm.ks(200, 0.5);");
+// Issue #24 reduced: the outer recursion's slot is a bare projection of the
+// inner recursion, which reads the outer one back. Scalar is
+// `y[n] = x[n] + 0.6 y[n-1]`; `-vec` used to read the alias two samples late.
+const NESTED_ALIAS_RECURSION_SOURCE: &str =
+    "process = (f ~ _) with { f(prev, x) = (+(prev*0.1 + x) ~ *(0.5)); };";
+// An alias slot with no dependency back into its body's group: the second
+// output reads the first slot's previous value.
+const INDEPENDENT_ALIAS_RECURSION_SOURCE: &str =
+    "process = (f ~ (_,_)) with { f(a, b, x) = (+(x) ~ *(0.5)), a*0.5; };";
+// Two alias levels, as in `pm.ks`: the outer slot aliases the middle one,
+// which aliases the inner recursion; the inner body reads both back.
+const ALIAS_CHAIN_RECURSION_SOURCE: &str = concat!(
+    "chain(x) = (outer ~ _) with {\n",
+    "  outer(prev) = (middle ~ _) with {\n",
+    "    middle(q) = x + 0.1*prev + 0.2*q : (+ ~ *(0.5));\n",
+    "  };\n",
+    "};\n",
+    "process = chain;"
+);
 const PULSE_COUNTUP_LOOP_SOURCE: &str = r#"
     pulse_countup_loop(n, trig) = + ~ cond(n) * trig with { cond(n, x) = x * (x <= n); };
     process = pulse_countup_loop(4, 1) + 0.001;
@@ -524,20 +543,46 @@ fn karplus_pass_through_backedge_is_certified_and_bit_exact() {
                 KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
                 32,
             );
-            assert_scalar_vector_bit_exact(
+            // Past the ~200-sample delay line, so the feedback is observed.
+            let input = [ramp(1024)];
+            assert_channels_bit_exact(
                 "karplus_pass_through_backedge",
                 KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
+                &input,
                 32,
             );
-            assert_scalar_vector_bit_exact(
+            assert_channels_bit_exact(
                 "karplus_pass_through_backedge_tail",
                 KARPLUS_PASS_THROUGH_BACKEDGE_SOURCE,
+                &input,
                 24,
             );
         })
         .expect("spawn Karplus regression thread")
         .join()
         .expect("Karplus regression thread");
+}
+
+/// A recursion slot that is a bare projection of another group is an alias:
+/// it is fed back with the explicit `SIGDELAY1` and nothing more. The edge
+/// from `SIGPROJ(i, SYMREF)` to the selected body is immediate, as in C++
+/// `getSignalDependencies`; counting it as a delay as well read the alias two
+/// samples late under `-vec` (issue #24).
+#[test]
+fn alias_recursion_slots_are_fed_back_with_one_sample_of_delay() {
+    let input = [ramp(256)];
+    for (name, source) in [
+        ("nested_alias_recursion", NESTED_ALIAS_RECURSION_SOURCE),
+        (
+            "independent_alias_recursion",
+            INDEPENDENT_ALIAS_RECURSION_SOURCE,
+        ),
+        ("alias_chain_recursion", ALIAS_CHAIN_RECURSION_SOURCE),
+    ] {
+        assert_vector_pipeline_certified(name, source, 32);
+        assert_channels_bit_exact(name, source, &input, 32);
+        assert_channels_bit_exact(name, source, &input, 24);
+    }
 }
 
 #[test]

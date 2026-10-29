@@ -215,6 +215,18 @@ check land together.
 
 ### X2b - cross-group previous-sample state
 
+> **Superseded 2026-10-29** by
+> [`vector-symref-projection-edge-fix-plan-2026-10-29-en.md`](vector-symref-projection-edge-fix-plan-2026-10-29-en.md)
+> (issue #24). The premise below is wrong: C++ `getSignalDependencies` makes
+> `proj(i, rec) -> body_i` immediate, and the `~` feedback delay is the
+> explicit `SIGDELAY1` above the back-reference. Serving the alias from its
+> body's history therefore read it two samples late; `pm.ks` was
+> miscompiled from frame 395 on, which the 64-frame bit-exactness test could
+> not observe. The class-B inconsistency came from the analysis giving the
+> back-reference edge `Delayed{1}`; that edge is now `Immediate`, the P6.1
+> widening and the history read are removed, and `pm.ks` stays certified and
+> is bit-exact over 1,024 frames.
+
 Complete. P6.1 materializes checked history for cross-loop symbolic
 pass-through back-edges and the pure lowerer consumes it conditionally. The
 structural transition test pins the cross-loop placement predicate, the real

@@ -1,13 +1,11 @@
 //! Tests for `vector::state` (relocated from the former inline
 //! `mod tests` block; test names unchanged).
 
-use std::collections::BTreeMap;
-
 use propagate::ClockDomainTable;
 use signals::SigBuilder;
 use tlib::TreeArena;
 
-use super::build::{build_vector_state_plan_with_resources, effective_delay_requirements};
+use super::build::{build_vector_state_plan_with_resources, delay_requirements};
 use super::check::verify_vector_state_plan_with_resources;
 use super::*;
 use crate::clk_env::annotate;
@@ -19,7 +17,6 @@ use crate::signal_fir::vector::clock_ad::build_vector_clock_ad_plan;
 use crate::signal_fir::vector::plan::VerifiedVectorPlan;
 use crate::signal_fir::vector::plan::{build_vector_plan, build_vector_plan_with_lockstep};
 use crate::signal_fir::vector::verify::LoopKind;
-use crate::signal_fir::vector::verify::Placement;
 use crate::signal_prepare::VerifiedPreparedSignals;
 use crate::signal_prepare::prepare_signals_for_fir_verified;
 
@@ -124,7 +121,7 @@ fn production_delay_geometry_matches_cpp_threshold_and_rounding() {
 }
 
 #[test]
-fn delayed_dependency_without_occurrence_delay_still_requires_history() {
+fn a_delayed_dependency_never_widens_history() {
     let mut arena = TreeArena::new();
     let (from, to) = {
         let mut builder = SigBuilder::new(&mut arena);
@@ -133,15 +130,13 @@ fn delayed_dependency_without_occurrence_delay_still_requires_history() {
     let mut source = certify(&arena, &[from, to]).into_certificate();
     let from = from.as_u32();
     let to = to.as_u32();
-    let placements = BTreeMap::from([
-        (u64::from(from), Placement::Owned(0)),
-        (u64::from(to), Placement::Owned(1)),
-    ]);
-    assert!(effective_delay_requirements(&source, &placements).is_empty());
+    assert!(delay_requirements(&source).is_empty());
 
-    // This is the exact cross-projection shape X2b must reconcile: the
-    // scheduling certificate says "previous sample", while the separate
-    // OccMarkup projection reports no explicit delay on the selected body.
+    // The shape X2b widened: a recursive projection whose scheduling edge
+    // says "previous sample" while the delay facts give its selected body no
+    // history. History comes from the delay facts alone, in the producer and
+    // in the checker: widening it here read alias slots two samples late
+    // (issue #24).
     source
         .records
         .iter_mut()
@@ -161,17 +156,8 @@ fn delayed_dependency_without_occurrence_delay_still_requires_history() {
             kind: DepKind::Delayed { amount: 1 },
             edge_key: 0,
         });
-    assert_eq!(
-        effective_delay_requirements(&source, &placements)
-            .into_iter()
-            .map(|(record, maximum)| (record.signal_id, maximum))
-            .collect::<Vec<_>>(),
-        vec![(to, 1)]
-    );
-    assert_eq!(
-        independently_expected_delay_requirements(&source, &placements),
-        vec![(u64::from(to), 1)]
-    );
+    assert!(delay_requirements(&source).is_empty());
+    assert!(independently_expected_delay_requirements(&source).is_empty());
 }
 
 #[test]

@@ -742,32 +742,10 @@ impl PureVectorLowerer<'_> {
                         expression: "symbolic recursion projection is out of bounds".to_owned(),
                     }
                 })?;
-                // C++ `getSignalDependencies` gives a symbolic back-edge
-                // previous-sample semantics even when the selected body
-                // has no explicit `sigDelay` occurrence. Use that implicit
-                // history only when the accepted state plan proves this is
-                // the X2b cross-loop alias shape; ordinary same-loop
-                // recursion keeps its established lowering.
-                let body_id = u64::from(body.as_u32());
-                let cross_loop = matches!(
-                    (
-                        self.record(signal_id)?.placement,
-                        self.record(body_id)?.placement,
-                    ),
-                    (Placement::Owned(from), Placement::Owned(to)) if from != to
-                );
-                let has_implicit_history = cross_loop
-                    && self.state_plan.is_some_and(|plan| {
-                        plan.plan()
-                            .delays
-                            .iter()
-                            .any(|transition| transition.signal_id == body_id)
-                    });
-                return if has_implicit_history {
-                    self.lower_delay_read(scope, body, 1, cur)
-                } else {
-                    self.lower_dep(scope, body, cur)
-                };
+                // A back-reference is the selected body's current value: the
+                // feedback delay is the explicit `SIGDELAY1` above it, so an
+                // alias slot reads its body undelayed (issue #24).
+                return self.lower_dep(scope, body, cur);
             }
             let projection = decode_group_projection(self.prepared.arena(), sig, index, group)
                 .map_err(|error| PureVectorLowerError::UnsupportedSignal {

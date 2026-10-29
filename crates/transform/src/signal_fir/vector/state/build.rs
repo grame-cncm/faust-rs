@@ -4,7 +4,6 @@
 
 use super::check::*;
 use super::model::*;
-use crate::signal_fir::vector::analysis::DepKind;
 use crate::signal_fir::vector::clock_ad::VerifiedVectorClockAdPlan;
 use crate::signal_fir::vector::decoration_verify::{
     DecorationCertificate, DecorationRecord, VerifiedDecorationCertificate,
@@ -67,13 +66,8 @@ pub(super) fn build_vector_state_plan_with_resources(
         .collect::<BTreeMap<_, _>>();
     let mut phases = BTreeMap::<u64, LoopStatePhases>::new();
     let mut delays = Vec::new();
-    let placements = plan
-        .signals
-        .iter()
-        .map(|signal| (signal.signal_id, signal.placement))
-        .collect::<BTreeMap<_, _>>();
 
-    for (record, max_delay) in effective_delay_requirements(source, &placements) {
+    for (record, max_delay) in delay_requirements(source) {
         let signal_id = u64::from(record.signal_id);
         let signal = signals_by_id[&signal_id];
         let Placement::Owned(loop_id) = signal.placement else {
@@ -241,66 +235,21 @@ pub(super) fn build_vector_state_plan_with_resources(
         delegated_resources,
     })
 }
-/// Returns the effective history obligation for every carried signal.
+/// Returns the history obligation of every carried signal: its certified
+/// `max_delay`, nothing else.
 ///
-/// C++ `getSignalDependencies` marks `sigProj(..., sigRef(...))` as a
-/// one-sample dependency on the selected recursive body, while `OccMarkup`
-/// marks the structural recursion carrier and can therefore leave that body
-/// at `max_delay == 0`. The state plan closes that intentional projection gap locally
-/// when the projection and selected body have distinct loop owners (the
-/// cross-loop pass-through alias case): the delayed scheduling edge then
-/// requires storage for the selected producer. Same-loop and explicitly
-/// delayed projections retain their existing carrier storage. This preserves
-/// the previous-sample back-edge without rewriting the prepared scalar tree.
-pub(super) fn effective_delay_requirements<'a>(
-    source: &'a DecorationCertificate,
-    placements: &BTreeMap<u64, Placement>,
-) -> Vec<(&'a DecorationRecord, u64)> {
-    let mut maxima = source
-        .records
-        .iter()
-        .map(|record| (record.signal_id, u64::from(record.max_delay)))
-        .collect::<BTreeMap<_, _>>();
-    let records = source
-        .records
-        .iter()
-        .map(|record| (record.signal_id, record))
-        .collect::<BTreeMap<_, _>>();
-    for dependency in &source.dependencies {
-        if let DepKind::Delayed { amount } = dependency.kind {
-            // An explicit `sigDelay` occurrence already allocates storage for
-            // the projection itself. X2b concerns the distinct cross-loop
-            // pass-through case, where lowering the alias also needs history
-            // for its selected body rather than a current-value transport.
-            let pass_through_projection = records
-                .get(&dependency.from)
-                .is_some_and(|record| record.recursive_projection.is_some())
-                && matches!(
-                    (
-                        placements.get(&u64::from(dependency.from)),
-                        placements.get(&u64::from(dependency.to)),
-                    ),
-                    (Some(Placement::Owned(from)), Some(Placement::Owned(to))) if from != to
-                );
-            if !pass_through_projection {
-                continue;
-            }
-            maxima
-                .entry(dependency.to)
-                .and_modify(|maximum| *maximum = (*maximum).max(u64::from(amount)))
-                .or_insert_with(|| u64::from(amount));
-        }
-    }
+/// Scheduling edges never add history. X2b (`3ac62e8d`) widened the selected
+/// body of a cross-loop `SIGPROJ(_, SYMREF)` from a `Delayed` edge that the
+/// analysis then gave every back-reference; C++ `getSignalDependencies` makes
+/// that edge immediate, and the explicit `SIGDELAY1` above the projection
+/// already carries the feedback delay, so the widening read alias slots two
+/// samples late (issue #24).
+pub(super) fn delay_requirements(source: &DecorationCertificate) -> Vec<(&DecorationRecord, u64)> {
     source
         .records
         .iter()
-        .filter_map(|record| {
-            maxima
-                .get(&record.signal_id)
-                .copied()
-                .filter(|maximum| *maximum > 0)
-                .map(|maximum| (record, maximum))
-        })
+        .filter(|record| record.max_delay > 0)
+        .map(|record| (record, u64::from(record.max_delay)))
         .collect()
 }
 pub(super) fn promote_lockstep_register_delays(

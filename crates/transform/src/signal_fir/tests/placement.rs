@@ -143,7 +143,9 @@ fn recursive_feedback_stays_in_sample_loop() {
     let body = {
         let mut b = SigBuilder::new(&mut arena);
         let in0 = b.input(0);
-        let feedback = b.proj(0, self_ref);
+        // `~` feeds back through an explicit one-sample delay.
+        let back_reference = b.proj(0, self_ref);
+        let feedback = b.delay1(back_reference);
         b.binop(BinOp::Add, in0, feedback)
     };
     let body_list = arena.cons(body, arena.nil());

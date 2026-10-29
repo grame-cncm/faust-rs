@@ -8,7 +8,7 @@
 
 use super::model::*;
 use crate::signal_fir::recursion::recursion_read_payload;
-use crate::signal_fir::vector::analysis::{DepKind, EffectAtom, StateCell, StateResource};
+use crate::signal_fir::vector::analysis::{EffectAtom, StateCell, StateResource};
 use crate::signal_fir::vector::clock_ad::VerifiedVectorClockAdPlan;
 use crate::signal_fir::vector::decoration_verify::{
     CanonicalSigType, DecorationCertificate, DecorationRecord, VerifiedDecorationCertificate,
@@ -238,43 +238,18 @@ pub(super) fn verify_supported_state(
     Ok(())
 }
 /// Re-derives delay coverage for the state-plan checker without calling the
-/// producer's projection helper.
+/// producer's helper: one history per record with a certified `max_delay`.
 pub(super) fn independently_expected_delay_requirements(
     source: &DecorationCertificate,
-    placements: &BTreeMap<u64, Placement>,
 ) -> Vec<(u64, u64)> {
     let mut expected = source
         .records
         .iter()
         .filter(|record| record.max_delay > 0)
         .map(|record| (u64::from(record.signal_id), u64::from(record.max_delay)))
-        .collect::<BTreeMap<_, _>>();
-    for dependency in &source.dependencies {
-        let DepKind::Delayed { amount } = dependency.kind else {
-            continue;
-        };
-        let recursive_projection = source
-            .records
-            .binary_search_by_key(&dependency.from, |record| record.signal_id)
-            .ok()
-            .is_some_and(|index| source.records[index].recursive_projection.is_some());
-        let distinct_owners = match (
-            placements.get(&u64::from(dependency.from)),
-            placements.get(&u64::from(dependency.to)),
-        ) {
-            (Some(Placement::Owned(source_loop)), Some(Placement::Owned(target_loop))) => {
-                source_loop != target_loop
-            }
-            _ => false,
-        };
-        if recursive_projection && distinct_owners {
-            expected
-                .entry(u64::from(dependency.to))
-                .and_modify(|maximum| *maximum = (*maximum).max(u64::from(amount)))
-                .or_insert_with(|| u64::from(amount));
-        }
-    }
-    expected.into_iter().collect()
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    expected
 }
 pub(super) fn verify_delays(
     source: &DecorationCertificate,
@@ -290,11 +265,7 @@ pub(super) fn verify_delays(
         .iter()
         .map(|signal| (signal.signal_id, signal))
         .collect::<BTreeMap<_, _>>();
-    let placements = signals
-        .iter()
-        .map(|(signal_id, signal)| (*signal_id, signal.placement))
-        .collect::<BTreeMap<_, _>>();
-    let requirements = independently_expected_delay_requirements(source, &placements);
+    let requirements = independently_expected_delay_requirements(source);
     let expected = requirements
         .iter()
         .map(|(signal_id, _)| *signal_id)

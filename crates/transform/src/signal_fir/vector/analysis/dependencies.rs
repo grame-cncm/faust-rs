@@ -167,7 +167,6 @@ impl<'a> SignalAnalysisContext<'a> {
                 group: group_ref,
             });
         }
-        let back_reference = match_sym_ref(self.arena, group_ref).is_some();
         let group = if match_sym_rec(self.arena, group_ref).is_some() {
             Some(group_ref)
         } else if let Some(var) = match_sym_ref(self.arena, group_ref) {
@@ -198,14 +197,12 @@ impl<'a> SignalAnalysisContext<'a> {
                     definitions.len()
                 ),
             })?;
-        let kind = if back_reference {
-            // In the acyclic Rust encoding, SYMREF denotes the implicit
-            // one-sample recursion back-edge that C++ represents cyclically.
-            DepKind::Delayed { amount: 1 }
-        } else {
-            DepKind::Immediate
-        };
-        Ok((definition, kind))
+        // C++ `getSignalDependencies`: `proj(i, rec) -> nth(body, i)` is
+        // immediate, for a back-reference (`SYMREF`) too. The feedback delay
+        // of `~` is the explicit `SIGDELAY1` around the back-reference; a
+        // second delay on this edge read alias slots two samples late under
+        // `-vec` (issue #24).
+        Ok((definition, DepKind::Immediate))
     }
 }
 /// One use count grouped by a [`UseContext`].

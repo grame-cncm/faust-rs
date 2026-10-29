@@ -2,7 +2,7 @@
 //! `mod tests` block; test names unchanged).
 
 use propagate::ClockDomainTable;
-use signals::SigBuilder;
+use signals::{BinOp, SigBuilder};
 use tlib::{TreeArena, sym_rec, vec_to_list};
 
 use super::effects::{direct_effects, propagate_effect_sets};
@@ -161,13 +161,52 @@ fn projection_schedules_its_selected_definition_and_marks_the_group() {
         occurrence_targets(signal_dependencies(&context, group).unwrap().occurrences()),
         vec![(first.as_u32(), 0), (second.as_u32(), 0)]
     );
+    // C++ `getSignalDependencies`: `proj(i, rec) -> nth(body, i)` is
+    // immediate for a back-reference too. The feedback delay is the explicit
+    // `SIGDELAY1` above it, never this edge (issue #24).
     assert_eq!(
         dep_targets(
             signal_dependencies(&context, back_reference)
                 .unwrap()
                 .scheduling()
         ),
-        vec![(second.as_u32(), DepKind::Delayed { amount: 1 })]
+        vec![(second.as_u32(), DepKind::Immediate)]
+    );
+}
+
+#[test]
+fn feedback_read_carries_the_only_delay_of_a_back_reference() {
+    let mut arena = TreeArena::new();
+    let input = SigBuilder::new(&mut arena).input(0);
+    let var = arena.symbol("r");
+    let reference = tlib::sym_ref(&mut arena, var);
+    let (projection, feedback, body) = {
+        let mut b = SigBuilder::new(&mut arena);
+        let projection = b.proj(0, reference);
+        let feedback = b.delay1(projection);
+        (projection, feedback, b.binop(BinOp::Add, input, feedback))
+    };
+    let body_list = vec_to_list(&mut arena, &[body]);
+    let group = sym_rec(&mut arena, var, body_list);
+    let output = SigBuilder::new(&mut arena).proj(0, group);
+    let empty_types = HashMap::new();
+    let context = SignalAnalysisContext::new(&arena, &empty_types, &[output]).unwrap();
+
+    assert_eq!(
+        dep_targets(
+            signal_dependencies(&context, feedback)
+                .unwrap()
+                .scheduling()
+        ),
+        vec![(projection.as_u32(), DepKind::Delayed { amount: 1 })]
+    );
+    assert_eq!(
+        dep_targets(
+            signal_dependencies(&context, projection)
+                .unwrap()
+                .scheduling()
+        ),
+        vec![(body.as_u32(), DepKind::Immediate)]
     );
 }
 

@@ -17,7 +17,9 @@ fn rec_proj_lowers_without_placeholder_nodes() {
         let mut b = SigBuilder::new(&mut arena);
         let in0 = b.input(0);
         let c0 = b.real(0.1);
-        let feedback = b.proj(0, self_ref);
+        // `~` feeds back through an explicit one-sample delay.
+        let back_reference = b.proj(0, self_ref);
+        let feedback = b.delay1(back_reference);
         // body = input(0) + 0.1 + feedback  (uses recursion so proj is emitted)
         let sum = b.binop(BinOp::Add, in0, c0);
         b.add(sum, feedback)
@@ -345,13 +347,15 @@ fn multi_output_recursive_group_stays_two_slot_array_backed() {
     let body0 = {
         let mut b = SigBuilder::new(&mut arena);
         let in0 = b.input(0);
-        let feedback0 = b.proj(0, self_ref);
+        let back_reference0 = b.proj(0, self_ref);
+        let feedback0 = b.delay1(back_reference0);
         b.binop(BinOp::Add, in0, feedback0)
     };
     let body1 = {
         let mut b = SigBuilder::new(&mut arena);
         let in1 = b.input(1);
-        let feedback1 = b.proj(1, self_ref);
+        let back_reference1 = b.proj(1, self_ref);
+        let feedback1 = b.delay1(back_reference1);
         b.binop(BinOp::Add, in1, feedback1)
     };
     let tail = arena.cons(body1, arena.nil());
