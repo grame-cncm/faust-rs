@@ -360,6 +360,7 @@ fn place_signals<'a>(
     certificate: &'a crate::signal_fir::decoration_verify::DecorationCertificate,
     facts: CertificateFacts<'a>,
     alloc: &LoopAllocation,
+    relocated: &BTreeSet<u32>,
     next_loop: &mut u64,
     timing_enabled: bool,
 ) -> Result<PlacementState<'a>, VectorPlanBuildError> {
@@ -414,7 +415,19 @@ fn place_signals<'a>(
     for &boundary in &certificate.lifecycle_boundaries {
         state.placement.insert(boundary, Placement::Control);
     }
-    for (&signal, &loop_id) in owner.iter() {
+    // Signals that would close a cycle through the shared root loop each get
+    // a loop of their own (see `cycle_closing_signals`), pre-seeded like the
+    // separated signals above.
+    let relocated_owners = relocated.iter().map(|&signal| {
+        let loop_id = *next_loop;
+        *next_loop += 1;
+        (signal, loop_id)
+    });
+    for (signal, loop_id) in owner
+        .iter()
+        .map(|(&signal, &loop_id)| (signal, loop_id))
+        .chain(relocated_owners)
+    {
         state.placement.insert(signal, Placement::Owned(loop_id));
         state
             .roots_by_loop
@@ -578,6 +591,54 @@ fn derive_dependency_edges(
         immediate_delay_edges,
         effect_edges,
     ))
+}
+
+/// Signals owned by the shared root loop that close a cycle through it: the
+/// root loop transports such a signal to a loop that the root loop itself
+/// depends on. It holds all the inline output roots (where C++
+/// `VectorCompiler::compileMultiSignal` opens one loop per output) and every
+/// non-duplicable signal first visited from them, such as a delay read, so a
+/// value one output computes can feed a recursion another output consumes.
+/// Only these signals leave it, each for a loop of its own; a plan without
+/// one is unchanged.
+fn cycle_closing_signals(
+    root_loop: Option<u64>,
+    cross_uses: &BTreeSet<(u32, u64, u64)>,
+    data_edges: &BTreeSet<LoopEdge>,
+    effect_edges: &BTreeSet<LoopEdge>,
+) -> BTreeSet<u32> {
+    let Some(root_loop) = root_loop else {
+        return BTreeSet::new();
+    };
+    let exported = cross_uses
+        .iter()
+        .filter(|&&(_, producer, _)| producer == root_loop)
+        .collect::<Vec<_>>();
+    if exported.is_empty() {
+        return BTreeSet::new();
+    }
+    // Loops the root loop depends on, transitively.
+    let mut dependencies = BTreeMap::<u64, Vec<u64>>::new();
+    for edge in data_edges.iter().chain(effect_edges) {
+        dependencies
+            .entry(edge.consumer)
+            .or_default()
+            .push(edge.dependency);
+    }
+    let mut upstream = BTreeSet::new();
+    let mut queue = VecDeque::from([root_loop]);
+    while let Some(loop_id) = queue.pop_front() {
+        for &dependency in dependencies.get(&loop_id).into_iter().flatten() {
+            if upstream.insert(dependency) {
+                queue.push_back(dependency);
+            }
+        }
+    }
+    exported
+        .into_iter()
+        .filter(|&&(_, _, consumer)| upstream.contains(&consumer))
+        .map(|&(signal, _, _)| signal)
+        .collect()
 }
 
 /// Data edges: one per cross-loop use, plus each delayed edge that is not
@@ -808,16 +869,46 @@ pub fn build_vector_plan(
     trace_stage("records-and-separations");
 
     let alloc = allocate_loops(certificate, &facts);
-    let mut next_loop = alloc.next_loop;
     let recursion_loop = alloc.recursion_loop.clone();
-    let state = place_signals(certificate, facts, &alloc, &mut next_loop, timing_enabled)?;
-    trace_stage("placement");
+    // Placement runs again only when signals of the shared root loop would
+    // close a cycle through it; every other program takes one pass.
+    let mut facts = Some(facts);
+    let mut relocated = BTreeSet::new();
+    let (state, next_loop, cross_uses, immediate_delay_edges, mut effect_edges, mut data_edges) = loop {
+        let pass_facts = facts
+            .take()
+            .unwrap_or_else(|| CertificateFacts::derive(certificate));
+        let mut next_loop = alloc.next_loop;
+        let state = place_signals(
+            certificate,
+            pass_facts,
+            &alloc,
+            &relocated,
+            &mut next_loop,
+            timing_enabled,
+        )?;
+        trace_stage("placement");
 
-    let (cross_uses, delayed_edges, immediate_delay_edges, mut effect_edges) =
-        derive_dependency_edges(certificate, &state)?;
-    trace_stage("dependency-edges");
-    let mut data_edges = close_delayed_edges(&cross_uses, delayed_edges, &effect_edges);
-    trace_stage("delayed-edge-closure");
+        let (cross_uses, delayed_edges, immediate_delay_edges, effect_edges) =
+            derive_dependency_edges(certificate, &state)?;
+        trace_stage("dependency-edges");
+        let data_edges = close_delayed_edges(&cross_uses, delayed_edges, &effect_edges);
+        trace_stage("delayed-edge-closure");
+
+        let closing =
+            cycle_closing_signals(alloc.root_loop, &cross_uses, &data_edges, &effect_edges);
+        if closing.is_empty() {
+            break (
+                state,
+                next_loop,
+                cross_uses,
+                immediate_delay_edges,
+                effect_edges,
+                data_edges,
+            );
+        }
+        relocated.extend(closing);
+    };
 
     let loop_ids = (0..next_loop).collect::<Vec<_>>();
     orient_effect_conflicts(&loop_ids, &state, &data_edges, &mut effect_edges);

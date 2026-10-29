@@ -411,6 +411,62 @@ fn previously_visited_inline_sample_root_is_promoted_without_panicking() {
     ));
 }
 
+/// `x + rec(y), y`: both outputs are inline roots, and the recursion reads
+/// `y`. In one shared root loop, that loop would read the recursion while the
+/// recursion read `y` from it. The `y` root closes the cycle, so it gets a
+/// loop of its own; the other root keeps the shared one.
+#[test]
+fn a_promoted_root_that_would_close_a_cycle_gets_its_own_loop() {
+    let mut arena = TreeArena::new();
+    let self_ref = tlib::de_bruijn_ref(&mut arena, 1);
+    let body = {
+        let mut builder = SigBuilder::new(&mut arena);
+        let y = builder.input(1);
+        let feedback = builder.proj(0, self_ref);
+        let previous = builder.delay1(feedback);
+        let decay = builder.real(0.9);
+        let scaled = builder.binop(signals::BinOp::Mul, previous, decay);
+        builder.binop(signals::BinOp::Add, y, scaled)
+    };
+    let nil = arena.nil();
+    let bodies = arena.cons(body, nil);
+    let group = tlib::de_bruijn_rec(&mut arena, bodies);
+    let (wet, dry) = {
+        let mut builder = SigBuilder::new(&mut arena);
+        let x = builder.input(0);
+        let recursion = builder.proj(0, group);
+        (
+            builder.binop(signals::BinOp::Add, x, recursion),
+            builder.input(1),
+        )
+    };
+    let decorations = certify(&arena, &[wet, dry]);
+    let plan = build_vector_plan(&decorations, 8)
+        .expect("the relocated root leaves an acyclic plan")
+        .into_plan();
+    let owner = |root: usize| {
+        let signal_id = u64::from(decorations.certificate().roots[root]);
+        match plan
+            .signals
+            .iter()
+            .find(|signal| signal.signal_id == signal_id)
+            .unwrap()
+            .placement
+        {
+            Placement::Owned(loop_id) => loop_id,
+            placement => panic!("output root {root} is not owned: {placement:?}"),
+        }
+    };
+    let (wet_loop, dry_loop) = (owner(0), owner(1));
+    assert_ne!(wet_loop, dry_loop);
+    let dry_record = &plan.loops[usize::try_from(dry_loop).unwrap()];
+    assert_eq!(dry_record.kind, LoopKind::Vectorizable);
+    assert_eq!(
+        dry_record.roots,
+        vec![u64::from(decorations.certificate().roots[1])]
+    );
+}
+
 #[test]
 fn zero_chunk_size_is_rejected_before_plan_construction() {
     let (arena, y, z) = build_pv_signals(20);

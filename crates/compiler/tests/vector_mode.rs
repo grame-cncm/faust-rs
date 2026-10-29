@@ -120,6 +120,31 @@ const ALIAS_CHAIN_RECURSION_SOURCE: &str = concat!(
     "};\n",
     "process = chain;"
 );
+// A dry/wet output: the input `y` is returned as is and also read by a
+// recursion that another output consumes. Both outputs are inline roots, so
+// they shared one root loop, which read the recursion while the recursion read
+// `y` from it: the plan had a cycle and `-vec` fell back to scalar.
+const SHARED_ROOT_LOOP_CYCLE_SOURCES: [(&str, &str); 3] = [
+    (
+        "shared_root_dry_after",
+        "process = _,_ : \\(x,y).(x + (y : +~*(0.9)), y);",
+    ),
+    (
+        "shared_root_dry_before",
+        "process = _,_ : \\(x,y).(y, x + (y : +~*(0.9)));",
+    ),
+    (
+        "shared_root_attach_meter",
+        "process = _,_ : \\(x,y).(attach(x, y : +~*(0.9) : vbargraph(\"l\",0,2)), y);",
+    ),
+];
+// The root loop owns more than its roots: `s@5`, first read by the first
+// output, is materialized there, and the recursion fed by `x+y` reads it back.
+// The cycle closes through that delay read, not through an output root.
+const SHARED_ROOT_LOOP_DELAY_READ_CYCLE_SOURCE: &str = concat!(
+    "fl(d) = _ <: _, @(d) : +;\n",
+    "process = _ <: fl(5), fl(7) : \\(x,y).(x + ((x+y) : +~*(0.9)), y);"
+);
 const PULSE_COUNTUP_LOOP_SOURCE: &str = r#"
     pulse_countup_loop(n, trig) = + ~ cond(n) * trig with { cond(n, x) = x * (x <= n); };
     process = pulse_countup_loop(4, 1) + 0.001;
@@ -599,6 +624,22 @@ fn alias_recursion_slots_are_fed_back_with_one_sample_of_delay() {
     }
 }
 
+#[test]
+fn a_shared_root_loop_never_closes_a_cycle_through_a_recursion() {
+    let inputs = [ramp(256), ramp(256).into_iter().rev().collect()];
+    for (name, source) in SHARED_ROOT_LOOP_CYCLE_SOURCES {
+        assert_vector_pipeline_certified(name, source, 32);
+        assert_channels_bit_exact(name, source, &inputs, 32);
+        assert_channels_bit_exact(name, source, &inputs, 24);
+    }
+    let name = "shared_root_delay_read";
+    let source = SHARED_ROOT_LOOP_DELAY_READ_CYCLE_SOURCE;
+    assert_vector_pipeline_certified(name, source, 32);
+    assert_channels_bit_exact(name, source, &inputs[..1], 32);
+    assert_channels_bit_exact(name, source, &inputs[..1], 24);
+}
+
+#[test]
 fn soundfile_reads_are_certified() {
     assert_vector_pipeline_certified("soundfile_read", SOUNDFILE_READ_SOURCE, 32);
 }
