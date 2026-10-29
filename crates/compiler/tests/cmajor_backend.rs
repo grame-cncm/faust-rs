@@ -284,12 +284,14 @@ fn float64_precision_reaches_streams_controls_and_literals() {
 
 #[test]
 fn step_is_left_out_when_the_default_is_off_its_grid() {
-    // A Cmajor host starts an input at `init` rounded to a multiple of `step`:
-    // 9.3e-10 with a step of 0.001 would start at 0, 0.707 with 0.01 at 0.71.
+    // A Cmajor host starts an input at round(init / step) * step, in float:
+    // 9.3e-10 with a step of 0.001 would start at 0, 0.707 with 0.01 at 0.71,
+    // and 0.2 with 0.0001 at 2000 * 0.0001f = 0.19999999.
     let text = cmajor(
         "step_grid.dsp",
         "process = hslider(\"off\", 9.313225746154785e-10, -1, 1, 0.001), \
-         nentry(\"q\", 0.707, 0.1, 10, 0.01), hslider(\"on\", 0.3, 0, 1, 0.1);",
+         nentry(\"q\", 0.707, 0.1, 10, 0.01), hslider(\"on\", 0.3, 0, 1, 0.1), \
+         hslider(\"ulp\", 0.2, 0.001, 1.45, 0.0001);",
     );
     let line = |name: &str| {
         text.lines()
@@ -300,6 +302,7 @@ fn step_is_left_out_when_the_default_is_off_its_grid() {
     assert!(!line("off").contains("step:"), "{text}");
     assert!(!line("q").contains("step:"), "{text}");
     assert!(line("on").contains("init: 0.3f, step: 0.1f"), "{text}");
+    assert!(!line("ulp").contains("step:"), "{text}");
     assert_cmajor_frontend("step_grid", &text);
 }
 
