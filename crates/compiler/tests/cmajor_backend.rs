@@ -366,6 +366,31 @@ fn one_sample_io_uses_cmajor_streams() {
 }
 
 #[test]
+fn streams_are_declared_in_channel_order() {
+    // A Cmajor host numbers the channels in declaration order: declared in
+    // reverse, the three outputs of this patch came out as 3, 2, 1.
+    let text = cmajor("order.dsp", "process = par(i, 3, *(i + 1));");
+    let streams: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains(" stream "))
+        .collect();
+    assert_eq!(
+        streams,
+        [
+            "input stream float32 input0;",
+            "input stream float32 input1;",
+            "input stream float32 input2;",
+            "output stream float32 output0;",
+            "output stream float32 output1;",
+            "output stream float32 output2;",
+        ],
+        "{text}"
+    );
+    assert_cmajor_frontend("order", &text);
+}
+
+#[test]
 fn intrinsic_execution_flags_do_not_change_facade_output() {
     let source = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01);";
     let options = CmajorOptions::default();

@@ -471,14 +471,23 @@ fn collect_table_sizes(store: &FirStore, roots: &[FirId]) -> BTreeMap<String, us
     out
 }
 
-/// Emits Cmajor streams in the ordering of the pinned C++ `sortIO` reference.
+/// Emits Cmajor streams in channel order: `input0..` then `output0..`.
+///
+/// A Cmajor host numbers a processor's channels in the order its endpoints
+/// are declared, so this order is the channel order of the patch. The pinned
+/// C++ reference (`8eebea429`) declared them in reverse (`output2, output1,
+/// output0, input2, ...`) through a `sortIO` call that C++ Faust `master-dev`
+/// has since removed: rendered by `cmaj render`, the channels came out
+/// reversed. This follows the current C++ order (`CmajorInstVisitor` in
+/// `compiler/generator/cmajor/cmajor_instructions.hh`, mapping status `1:1`
+/// with `master-dev`, `adapted` from the pinned reference).
 fn emit_streams(out: &mut String, view: &ModuleView, options: &CmajorOptions) {
     let real = options.real_type.cmajor_name();
-    for channel in (0..view.num_outputs).rev() {
-        let _ = writeln!(out, "\t\toutput stream {real} output{channel};");
-    }
-    for channel in (0..view.num_inputs).rev() {
+    for channel in 0..view.num_inputs {
         let _ = writeln!(out, "\t\tinput stream {real} input{channel};");
+    }
+    for channel in 0..view.num_outputs {
+        let _ = writeln!(out, "\t\toutput stream {real} output{channel};");
     }
 }
 
