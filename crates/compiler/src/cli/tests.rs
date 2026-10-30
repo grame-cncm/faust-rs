@@ -4,6 +4,7 @@
 //! they can exercise parser normalization, diagnostic rendering helpers, and
 //! output utilities without expanding the launcher in `main.rs`.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2002,6 +2003,88 @@ fn colored_diagnostics_are_the_plain_text_plus_escapes_only() {
         assert!(colored.contains('\u{1b}'), "{colored}");
         assert_eq!(anstream::adapter::strip_str(&colored).to_string(), plain);
     }
+}
+
+/// Renders `process = foo;` on line `line`, labeled, with a second label on
+/// line `other` to set the gutter width.
+fn render_with_foo_on_line(line: u32, other: u32) -> String {
+    let source = (1..=line.max(other))
+        .map(|n| {
+            if n == line {
+                "process = foo;\n"
+            } else {
+                "// x\n"
+            }
+        })
+        .collect::<String>();
+    let label = |style, at: u32, col, end_col, message| {
+        diagnostics::Label::new(
+            style,
+            SourceSpan::new("mem.dsp", at, col, at, end_col),
+            message,
+        )
+    };
+    let bundle = bundle_over_source(
+        &source,
+        vec![
+            label(diagnostics::LabelStyle::Primary, line, 11, 14, "blamed"),
+            label(diagnostics::LabelStyle::Secondary, other, 1, 3, "context"),
+        ],
+    );
+    format_diagnostics_human(&bundle)
+}
+
+#[test]
+fn carets_sit_under_their_code_whatever_the_line_number_width() {
+    for (line, other) in [(1, 2), (9, 10), (12, 13), (99, 100), (1000, 3), (3, 1000)] {
+        let rendered = render_with_foo_on_line(line, other);
+        let source_row = rendered
+            .lines()
+            .find(|row| row.contains("process = foo;"))
+            .unwrap();
+        let caret_row = rendered.lines().find(|row| row.contains("blamed")).unwrap();
+        assert_eq!(
+            caret_row.find('^'),
+            source_row.find("foo"),
+            "line {line}:\n{rendered}"
+        );
+        let bars = rendered
+            .lines()
+            .filter(|row| row.contains(" | ") || row.ends_with(" |"))
+            .map(|row| row.find('|'));
+        assert_eq!(
+            bars.collect::<BTreeSet<_>>().len(),
+            1,
+            "every gutter must have one width:\n{rendered}"
+        );
+    }
+}
+
+#[test]
+fn one_digit_line_numbers_keep_the_four_column_gutter() {
+    let rendered = render_with_foo_on_line(1, 2);
+    assert!(rendered.contains("\n  1 | process = foo;\n"), "{rendered}");
+    assert!(
+        rendered.contains("\n    |           ^^^ blamed\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn multi_line_span_counts_its_last_line_in_the_gutter_width() {
+    let source = "a\n".repeat(10);
+    let bundle = bundle_over_source(
+        &source,
+        vec![diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
+            SourceSpan::new("mem.dsp", 9, 1, 10, 2),
+            "span",
+        )],
+    );
+    let rendered = format_diagnostics_human(&bundle);
+    assert!(rendered.contains("\n   9 | a\n"), "{rendered}");
+    assert!(rendered.contains("\n     | ...\n"), "{rendered}");
+    assert!(rendered.contains("\n  10 | a\n"), "{rendered}");
 }
 
 #[test]

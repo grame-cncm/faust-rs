@@ -186,6 +186,29 @@ fn paint(style: Style, text: impl Display) -> String {
     format!("{style}{text}{style:#}")
 }
 
+/// The line-number column of one diagnostic's snippets.
+///
+/// Its width is that of the longest number the diagnostic shows, so that a
+/// caret row lines up with its source row and rows of different labels line up
+/// with each other. Numbers are right-aligned.
+#[derive(Clone, Copy)]
+struct Gutter {
+    style: Style,
+    width: usize,
+}
+
+impl Gutter {
+    /// The column of a source row.
+    fn numbered(self, line: u32) -> String {
+        paint(self.style, format!("  {line:>0$} |", self.width))
+    }
+
+    /// The column of a caret or elision row.
+    fn blank(self) -> String {
+        paint(self.style, format!("  {:1$} |", "", self.width))
+    }
+}
+
 /// Writes one `  = tag: body` line, with only the tag styled.
 fn push_tagged(out: &mut String, style: Style, tag: &str, body: impl Display) {
     out.push_str(&format!("  {} {body}\n", paint(style, format!("= {tag}:"))));
@@ -296,6 +319,16 @@ fn render_labels(
         ordered_labels(diagnostic)
     };
 
+    let width = labels
+        .iter()
+        .map(|label| label.span.line.max(label.span.end_line))
+        .max()
+        .map_or(1, |line| line.to_string().len());
+    let gutter = Gutter {
+        style: palette.gutter,
+        width,
+    };
+
     // Labels that land on one line share its snippet: echoing the same source
     // line once per label is noise, and the carets are what distinguish them.
     let mut current_line: Option<(&Path, u32)> = None;
@@ -328,14 +361,7 @@ fn render_labels(
             LabelStyle::Primary => palette.severity(diagnostic.severity),
             LabelStyle::Secondary => palette.secondary,
         };
-        render_snippet(
-            out,
-            bundle,
-            label,
-            repeats_line,
-            palette.gutter,
-            label_style,
-        );
+        render_snippet(out, bundle, label, repeats_line, gutter, label_style);
         current_line = single_line.then_some((label.span.file.as_path(), label.span.line));
     }
 }
@@ -379,7 +405,7 @@ fn render_snippet(
     bundle: &DiagnosticBundle,
     label: &Label,
     line_already_shown: bool,
-    gutter: Style,
+    gutter: Gutter,
     label_style: Style,
 ) {
     let Some(first) = source_line(bundle, label.span.file.as_path(), label.span.line) else {
@@ -387,15 +413,15 @@ fn render_snippet(
     };
     let expanded = expand_tabs(&first);
     if !line_already_shown {
-        let number = paint(gutter, format!("  {} |", label.span.line));
+        let number = gutter.numbered(label.span.line);
         out.push_str(&format!("{number} {expanded}\n"));
     }
-    let blank = paint(gutter, "    |");
+    let blank = gutter.blank();
 
     if label.span.end_line > label.span.line {
         out.push_str(&format!("{blank} ...\n"));
         if let Some(last) = source_line(bundle, label.span.file.as_path(), label.span.end_line) {
-            let number = paint(gutter, format!("  {} |", label.span.end_line));
+            let number = gutter.numbered(label.span.end_line);
             out.push_str(&format!("{number} {}\n", expand_tabs(&last)));
         }
         out.push_str(&format!("{blank} {}\n", paint(label_style, &label.message)));

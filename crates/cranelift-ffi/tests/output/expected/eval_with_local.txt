@@ -5,10 +5,10 @@ exit=1
 --- stderr
 faustprobe: evaluation failed for tests/output/dsp/small.lib: undefined symbol `k`
 tests/output/dsp/small.lib:1:1: error [FRS-EVAL-0002] undefined symbol `k`
-  1 | __faustprobe_env = environment{ onepole(p) = _ : + ~ *(p);
-    | ^^^^^^^^^^^^^^^^ definition site
+   1 | __faustprobe_env = environment{ onepole(p) = _ : + ~ *(p);
+     | ^^^^^^^^^^^^^^^^ definition site
   10 | process = __faustprobe_env.__faustprobe_eval0;
-    | ^^^^^^^ call site
+     | ^^^^^^^ call site
   = note: cause: unresolved identifier in current lexical scope
   = note: rule: referenced identifier must be present in visible lexical scope
   = note: computed: `k` is not present in current visible scope
