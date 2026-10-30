@@ -28,6 +28,8 @@ use std::thread;
 
 use clap::Parser;
 
+use compiler::diagnostics_human::StderrColor;
+use cranelift_ffi::factory::set_complete_error_color;
 use cranelift_ffi::probe::engine::last_compile_failure;
 use cranelift_ffi::probe::protocol;
 
@@ -130,10 +132,15 @@ fn main() -> ExitCode {
     // Cranelift JIT plus the faust-rs front end recurse deeply; run on a large
     // stack, as `impulse-cranelift` and the differential tests do.
     let error_format = args.error_format;
+    let stderr = StderrColor::resolve(args.color);
+    // A summary line is all that a human reads under the JSON format.
+    let color = stderr.enabled() && error_format == ErrorFormat::Human;
     let result = thread::Builder::new()
         .name("faustprobe".to_owned())
         .stack_size(256 * 1024 * 1024)
         .spawn(move || {
+            // Per thread, and this is the thread that compiles.
+            set_complete_error_color(color);
             let result = if args.determinism_worker {
                 determinism::worker(&args)
             } else {
@@ -148,7 +155,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("faustprobe: {error}");
+            stderr.write(&format!("faustprobe: {error}\n"));
             ExitCode::FAILURE
         }
     }

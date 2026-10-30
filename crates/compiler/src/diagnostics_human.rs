@@ -28,15 +28,18 @@
 //! [`HumanRenderOptions::color`] adds ANSI styles and nothing else: every style
 //! of a colorless [`Palette`] is empty, so both paths are the same code and
 //! removing the escapes gives back the plain text byte for byte. The renderer
-//! never looks at a terminal. The caller decides, which is why
+//! never looks at a terminal. The caller decides, through [`StderrColor`] for a
+//! command-line tool, which is why
 //! [`crate::CompilerError::rendered_diagnostics`] stays plain for FFI hosts.
 
 use std::collections::BTreeSet;
 use std::fmt::Display;
+use std::io::Write as _;
 use std::path::Path;
 
+use anstream::AutoStream;
 use anstyle::{AnsiColor, Style};
-use clap::ValueEnum;
+use clap::{ColorChoice, ValueEnum};
 use diagnostics::{
     Applicability, DiagnosticBundle, DiagnosticTrace, Label, LabelStyle, Severity, SuggestedFix,
 };
@@ -126,6 +129,47 @@ impl Default for HumanRenderOptions {
             verbosity: ErrorVerbosity::Standard,
             path_style: DiagnosticPathStyle::Absolute,
             color: false,
+        }
+    }
+}
+
+/// Whether a tool's stderr takes color, decided once for the run.
+///
+/// Shared by `faust-rs` and `faustprobe`, so that `--color` means one thing.
+/// `auto` follows `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `TERM`, and
+/// whether stderr is a terminal.
+#[derive(Clone, Copy, Debug)]
+pub struct StderrColor(anstream::ColorChoice);
+
+impl StderrColor {
+    /// Resolves a `--color` choice against this process's stderr. An explicit
+    /// choice outranks the environment.
+    #[must_use]
+    pub fn resolve(choice: ColorChoice) -> Self {
+        Self(match choice {
+            ColorChoice::Auto => AutoStream::choice(&std::io::stderr()),
+            ColorChoice::Always => anstream::ColorChoice::Always,
+            ColorChoice::Never => anstream::ColorChoice::Never,
+        })
+    }
+
+    /// Whether to render with [`HumanRenderOptions::color`].
+    #[must_use]
+    pub fn enabled(self) -> bool {
+        self.0 != anstream::ColorChoice::Never
+    }
+
+    /// Writes `text` to stderr.
+    ///
+    /// Plain text bypasses [`AutoStream`] altogether: its stripping filter
+    /// would also remove any escape a source line itself contains, and colored
+    /// text goes through it only for the consoles that need ANSI translated.
+    pub fn write(self, text: &str) {
+        if self.enabled() {
+            // A failed write to stderr has nowhere left to be reported.
+            let _ = AutoStream::new(std::io::stderr(), self.0).write_all(text.as_bytes());
+        } else {
+            eprint!("{text}");
         }
     }
 }

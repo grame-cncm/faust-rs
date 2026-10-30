@@ -166,6 +166,12 @@ would land elsewhere. The probe reads the report as any host of the C API
 can, from `getCCraneliftDSPFactoryErrorDiagnostics` (the README's "Compile
 errors" has the four such functions and their contract).
 
+**`--color auto|always|never`** colors the human text of a compile failure, as
+`faust-rs` does: by default when stderr is a terminal, following `NO_COLOR`,
+`CLICOLOR` and `CLICOLOR_FORCE`, and never when stderr is redirected, so a
+script or an agent reading it gets plain text. `always` and `never` outrank the
+environment. Measurements on stdout and the JSON report are never colored.
+
 ### Evaluating an expression: `--eval`
 
 `--eval EXPR` probes an expression evaluated **in the scope of the file**

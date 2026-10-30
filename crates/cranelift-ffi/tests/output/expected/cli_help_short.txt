@@ -123,6 +123,8 @@ Options:
           Largest accepted departure from linearity under `--freqresp`, relative to the expected response's peak (default 1e-9 in double precision, 1e-4 in single)
       --error-format <ERROR_FORMAT>
           How a compile failure is reported: `human`, the compiler's rendered diagnostics on stderr (the default), or `json`, the compiler's diagnostics-v2 report on stdout (code, ranges, facts, machine-applicable fixes) and the one-line summary on stderr [default: human] [possible values: human, json]
+      --color <COLOR>
+          When the human diagnostics of a compile failure use color: `auto` (the default) follows `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and whether stderr is a terminal, as `faust-rs` does. Measurements on stdout are never colored [default: auto] [possible values: auto, always, never]
   -h, --help
           Print help (see more with '--help')
 

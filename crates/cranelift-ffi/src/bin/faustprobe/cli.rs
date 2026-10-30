@@ -1,6 +1,6 @@
 //! The command line: `Args`, the enums of its flags, and what a mode refuses.
 
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, ColorChoice, Parser, ValueEnum};
 
 use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
@@ -495,6 +495,13 @@ pub(crate) struct Args {
     /// comparison) is reported as text either way.
     #[arg(long = "error-format", value_enum, default_value_t = ErrorFormat::Human)]
     pub(crate) error_format: ErrorFormat,
+
+    /// When the human diagnostics of a compile failure use color: `auto`
+    /// (the default) follows `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and
+    /// whether stderr is a terminal, as `faust-rs` does. Measurements on
+    /// stdout are never colored.
+    #[arg(long = "color", value_enum, default_value_t = ColorChoice::Auto)]
+    pub(crate) color: ColorChoice,
 
     /// Draw the block diagrams of the program into DIR, created if needed,
     /// and exit: nothing is compiled to code or rendered, so the flags of a

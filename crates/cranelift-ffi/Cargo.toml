@@ -25,6 +25,7 @@ ffi-common = { path = "../ffi-common" }
 serde_json = "1"
 
 [dev-dependencies]
+anstream = "0.6"
 foreign-call = { path = "../foreign-call" }
 interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }
 

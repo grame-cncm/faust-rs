@@ -629,7 +629,7 @@ When human diagnostics use color.
 
 An explicit `always` or `never` takes precedence over the environment. Color
 adds escape sequences and changes nothing else, and it never applies to
-`--error-format json`.
+`--error-format json`. `faustprobe` takes the same option.
 
 ### `--help-error-format`
 

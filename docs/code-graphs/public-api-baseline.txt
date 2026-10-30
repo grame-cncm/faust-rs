@@ -694,6 +694,9 @@ fn FaustInstallPaths::render_paths_list
 fn FaustwasmServiceError::diagnostics_report_json
 fn FaustwasmServiceError::rendered_diagnostics
 fn SignalCompileOutput::propagated_output_count
+fn StderrColor::enabled
+fn StderrColor::resolve
+fn StderrColor::write
 fn UreqSourceFetcher::new
 fn WasmArtifactRequest::new
 fn all_backend_execution_caps
@@ -794,6 +797,7 @@ struct FirVerifyOptions
 struct GenerateAuxFilesRequest
 struct HumanRenderOptions
 struct SignalCompileOutput
+struct StderrColor
 struct StreamCopyConfig
 struct StreamCopyState
 struct UreqSourceFetcher
@@ -988,6 +992,7 @@ fn parse_points
 fn parse_reduction
 fn read_channels
 fn response
+fn set_complete_error_color
 fn sfdr_db
 fn shift_for
 fn soundfile_part_count

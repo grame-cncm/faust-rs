@@ -433,6 +433,7 @@ dependencies = [
 name = "cranelift-ffi"
 version = "0.9.3"
 dependencies = [
+ "anstream",
  "box-ffi",
  "clap",
  "codegen",

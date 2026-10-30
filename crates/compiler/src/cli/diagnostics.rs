@@ -33,11 +33,8 @@
 //!
 //! See `docs/diagnostics-codes-reference-en.md` for the frozen `FRS-*` code table.
 
-use std::io::Write as _;
-
 use super::args::{DiagnosticPathStyle, ErrorFormat, ErrorVerbosity};
-use super::human::{self, HumanRenderOptions};
-use anstream::AutoStream;
+use super::human::{self, HumanRenderOptions, StderrColor};
 use clap::ColorChoice;
 use compiler::diagnostics_json::{
     DiagnosticFieldSet, DiagnosticsV2RenderOptions, SourceTextPolicy, render_diagnostics_v2_json,
@@ -62,36 +59,21 @@ pub fn print_bundle(
 }
 
 /// Writes one bundle to stderr in the human format.
-///
-/// A plain render bypasses [`AutoStream`] altogether: its stripping filter
-/// would also remove any escape the source line itself contains, and a colored
-/// run goes through it only for the consoles that need ANSI translated.
 pub(crate) fn print_human_bundle(
     bundle: &DiagnosticBundle,
     verbosity: ErrorVerbosity,
     path_style: DiagnosticPathStyle,
     color: ColorChoice,
 ) {
-    let choice = match color {
-        ColorChoice::Auto => AutoStream::choice(&std::io::stderr()),
-        ColorChoice::Always => anstream::ColorChoice::Always,
-        ColorChoice::Never => anstream::ColorChoice::Never,
-    };
-    let color = choice != anstream::ColorChoice::Never;
-    let rendered = human::format_bundle(
+    let stderr = StderrColor::resolve(color);
+    stderr.write(&human::format_bundle(
         bundle,
         HumanRenderOptions {
             verbosity,
             path_style,
-            color,
+            color: stderr.enabled(),
         },
-    );
-    if color {
-        // A failed write to stderr has nowhere left to be reported.
-        let _ = AutoStream::new(std::io::stderr(), choice).write_all(rendered.as_bytes());
-    } else {
-        eprint!("{rendered}");
-    }
+    ));
 }
 
 /// Formats diagnostics in a human-oriented form at the default verbosity.

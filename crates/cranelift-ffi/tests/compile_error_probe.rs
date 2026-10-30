@@ -6,8 +6,9 @@
 //! `getCCompleteCraneliftDSPFactoryError` instead, and prints what `faust-rs`
 //! prints: the summary, then location, source snippet, notes and fixes.
 
+use cranelift_ffi::factory::set_complete_error_color;
 use cranelift_ffi::probe::engine::Factory;
-use std::process::Command;
+use std::process::{Command, Output};
 
 mod common;
 use common::probe_source;
@@ -86,6 +87,119 @@ fn the_binary_prints_the_diagnostic_and_fails() {
     assert!(stderr.contains(":2:21: error [FRS-PARSE-0001]"), "{stderr}");
     assert!(stderr.contains("  2 | process = _ : *(0.5 ;"), "{stderr}");
     assert!(stderr.contains("^ unexpected token"), "{stderr}");
+}
+
+// ---------------------------------------------------------------- --color
+
+/// A failing run of the binary on `source`, whose outcome the test environment
+/// cannot influence: the variables `--color auto` reads start out unset.
+fn failing_run(tag: &str, source: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
+    let path =
+        std::env::temp_dir().join(format!("faustprobe_color_{tag}_{}.dsp", std::process::id()));
+    std::fs::write(&path, source).expect("write dsp");
+    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
+        .args(["-n", "4"])
+        .args(args)
+        .arg(&path)
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .envs(env.iter().copied())
+        .output()
+        .expect("run faustprobe");
+    let _ = std::fs::remove_file(&path);
+    assert!(!out.status.success());
+    out
+}
+
+fn has_escape(bytes: &[u8]) -> bool {
+    bytes.contains(&0x1b)
+}
+
+#[test]
+fn color_auto_stays_plain_on_a_pipe_and_follows_the_environment() {
+    let run = |tag, env| failing_run(tag, UNCLOSED, &[], env).stderr;
+    assert!(!has_escape(&run("auto", &[])));
+    assert!(!has_escape(&run("no", &[("NO_COLOR", "1")])));
+    assert!(has_escape(&run("force", &[("CLICOLOR_FORCE", "1")])));
+}
+
+#[test]
+fn an_explicit_color_choice_outranks_the_environment() {
+    let always = failing_run(
+        "always",
+        UNCLOSED,
+        &["--color", "always"],
+        &[("NO_COLOR", "1")],
+    );
+    assert!(has_escape(&always.stderr));
+    let never = failing_run(
+        "never",
+        UNCLOSED,
+        &["--color", "never"],
+        &[("CLICOLOR_FORCE", "1")],
+    );
+    assert!(!has_escape(&never.stderr));
+}
+
+#[test]
+fn color_always_changes_nothing_but_the_escapes() {
+    let plain = failing_run("escapes", UNDEFINED, &["--color", "never"], &[]);
+    let colored = failing_run("escapes", UNDEFINED, &["--color", "always"], &[]);
+    assert!(colored.stdout.is_empty());
+    assert_eq!(
+        anstream::adapter::strip_bytes(&colored.stderr).into_vec(),
+        plain.stderr
+    );
+}
+
+#[test]
+fn color_survives_the_rewriting_of_an_eval_error() {
+    // Not located in the expression, then located in it: `--eval` searches the
+    // text of both, for the symbol and for the location.
+    for (tag, expr, expected) in [
+        ("eval_symbol", "nope + 1", "`nope` is used by <eval 0>"),
+        ("eval_location", "1 + (", "<eval 0>:1:"),
+    ] {
+        let source = "process = _;\n";
+        let plain = failing_run(tag, source, &["--color", "never", "--eval", expr], &[]);
+        let colored = failing_run(tag, source, &["--color", "always", "--eval", expr], &[]);
+        assert!(has_escape(&colored.stderr));
+        let stripped = anstream::adapter::strip_bytes(&colored.stderr).into_vec();
+        assert_eq!(stripped, plain.stderr);
+        let stripped = String::from_utf8_lossy(&stripped);
+        assert!(stripped.contains(expected), "{stripped}");
+    }
+}
+
+#[test]
+fn color_always_never_reaches_the_json_channel() {
+    let out = failing_run(
+        "json",
+        UNCLOSED,
+        &["--color", "always", "--error-format", "json"],
+        &[],
+    );
+    assert!(!has_escape(&out.stdout));
+    assert!(!has_escape(&out.stderr));
+    serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        .expect("stdout must stay one JSON document");
+}
+
+#[test]
+fn complete_error_color_is_opt_in_and_per_thread() {
+    let color_on_this_thread = std::thread::spawn(|| {
+        set_complete_error_color(true);
+        let colored = compile_error(UNDEFINED);
+        set_complete_error_color(false);
+        (colored, compile_error(UNDEFINED))
+    });
+    let (colored, restored) = color_on_this_thread.join().expect("join");
+    assert!(has_escape(colored.as_bytes()), "{colored}");
+    assert!(!has_escape(restored.as_bytes()), "{restored}");
+    let plain = compile_error(UNDEFINED);
+    assert!(!has_escape(plain.as_bytes()), "{plain}");
+    assert_eq!(anstream::adapter::strip_str(&colored).to_string(), plain);
 }
 
 // ------------------------------------------------- --error-format json (F4)

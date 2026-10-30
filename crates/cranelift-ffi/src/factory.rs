@@ -13,6 +13,7 @@
 //! - bitcode write now emits a textual `.clif` container payload (`FAUST_CLIF_V1`)
 //!   while read-side migration is completed incrementally.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 use std::os::raw::c_int;
@@ -27,9 +28,9 @@ use codegen::backends::cranelift::{
 use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
-    AuxFileArtifact, CompileOptionArgs, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
-    FaustwasmServiceError, GenerateAuxFilesRequest, SchedulingStrategy, SignalCompileOutput,
-    SignalFirLane, merge_import_search_paths,
+    AuxFileArtifact, CompileOptionArgs, Compiler as FaustCompiler, CompilerError, DiagnosticBundle,
+    ExpandDspRequest, FaustwasmServiceError, GenerateAuxFilesRequest, SchedulingStrategy,
+    SignalCompileOutput, SignalFirLane, diagnostics_human, merge_import_search_paths,
 };
 use ffi_common::{
     CompleteError, FaustMemoryManager, alloc_ptr_array, decode_c_argv as decode_c_argv_shared,
@@ -1543,6 +1544,31 @@ thread_local! {
     /// Complete text of the last error this thread reported; see
     /// [`ffi_common::complete_error`] for the contract.
     static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
+    /// Whether this thread renders its complete text in color; see
+    /// [`set_complete_error_color`].
+    static COMPLETE_ERROR_COLOR: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Makes the complete error text of the calling thread carry ANSI color, for a
+/// Rust tool that prints it to a terminal.
+///
+/// The text crosses the C API on its way to such a tool, so no argument can
+/// carry the choice. Off by default and unreachable from C, so that hosts of
+/// that API keep plain text. The summary and the JSON report are never
+/// colored.
+pub fn set_complete_error_color(enabled: bool) {
+    COMPLETE_ERROR_COLOR.with(|color| color.set(enabled));
+}
+
+/// One failure's rendered diagnostics, in color when this thread asked for it.
+fn rendered_diagnostics(bundle: &DiagnosticBundle) -> String {
+    diagnostics_human::format_bundle(
+        bundle,
+        diagnostics_human::HumanRenderOptions {
+            color: COMPLETE_ERROR_COLOR.with(Cell::get),
+            ..Default::default()
+        },
+    )
 }
 
 /// The complete diagnostics-v2 JSON report of the last error reported on the
@@ -1570,7 +1596,7 @@ fn summary_of(error: &CompilerError) -> String {
     COMPLETE_ERROR.with(|record| {
         record.attach_with_diagnostics(
             &summary,
-            &error.rendered_diagnostics(),
+            &rendered_diagnostics(error.diagnostic_bundle()),
             &error.diagnostics_report_json(BACKEND),
         );
     });
@@ -1580,11 +1606,13 @@ fn summary_of(error: &CompilerError) -> String {
 /// [`summary_of`] for the helper-service errors (`expand`, auxiliary files).
 fn service_summary_of(error: &FaustwasmServiceError) -> String {
     let summary = error.to_string();
+    let details = error
+        .diagnostics
+        .as_ref()
+        .map_or_else(String::new, rendered_diagnostics);
     COMPLETE_ERROR.with(|record| match error.diagnostics_report_json(BACKEND) {
-        Some(report) => {
-            record.attach_with_diagnostics(&summary, &error.rendered_diagnostics(), &report);
-        }
-        None => record.attach(&summary, &error.rendered_diagnostics()),
+        Some(report) => record.attach_with_diagnostics(&summary, &details, &report),
+        None => record.attach(&summary, &details),
     });
     summary
 }
