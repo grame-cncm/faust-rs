@@ -6,7 +6,7 @@
 //! [`normalize_legacy_args`].  Operational code should consume [`CliArgs`]
 //! rather than re-reading raw process arguments.
 
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, ColorChoice, Parser, ValueEnum};
 use compiler::SignalFirLane;
 pub use compiler::diagnostics_human::{DiagnosticPathStyle, ErrorVerbosity};
 pub use compiler::normalize_legacy_args;
@@ -252,6 +252,10 @@ pub struct CliArgs {
         default_value_t = DiagnosticPathStyle::Absolute
     )]
     pub diagnostic_paths: DiagnosticPathStyle,
+    /// When human diagnostics use color. `auto` follows `NO_COLOR`,
+    /// `CLICOLOR`, `CLICOLOR_FORCE` and whether stderr is a terminal.
+    #[arg(long = "color", value_enum, default_value_t = ColorChoice::Auto)]
+    pub color: ColorChoice,
     /// Signal->FIR compilation lane.
     #[arg(long = "signal-fir-lane", value_enum)]
     pub signal_fir_lane: Option<CliSignalFirLane>,

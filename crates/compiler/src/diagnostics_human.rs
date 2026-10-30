@@ -22,10 +22,20 @@
 //! notes and help are presentation text. The one exception is the paired
 //! `A`/`B` composition block, which is a rendering convention over notes a
 //! propagate diagnostic writes for that purpose — it classifies nothing.
+//!
+//! # Color
+//!
+//! [`HumanRenderOptions::color`] adds ANSI styles and nothing else: every style
+//! of a colorless [`Palette`] is empty, so both paths are the same code and
+//! removing the escapes gives back the plain text byte for byte. The renderer
+//! never looks at a terminal. The caller decides, which is why
+//! [`crate::CompilerError::rendered_diagnostics`] stays plain for FFI hosts.
 
 use std::collections::BTreeSet;
+use std::fmt::Display;
 use std::path::Path;
 
+use anstyle::{AnsiColor, Style};
 use clap::ValueEnum;
 use diagnostics::{
     Applicability, DiagnosticBundle, DiagnosticTrace, Label, LabelStyle, Severity, SuggestedFix,
@@ -105,6 +115,9 @@ pub struct HumanRenderOptions {
     pub verbosity: ErrorVerbosity,
     /// How source paths are spelled.
     pub path_style: DiagnosticPathStyle,
+    /// Whether to emit ANSI styles. Resolved by the caller, which knows the
+    /// stream the text goes to.
+    pub color: bool,
 }
 
 impl Default for HumanRenderOptions {
@@ -112,50 +125,112 @@ impl Default for HumanRenderOptions {
         Self {
             verbosity: ErrorVerbosity::Standard,
             path_style: DiagnosticPathStyle::Absolute,
+            color: false,
         }
     }
 }
 
+/// The styles of one render, all empty when color is off.
+///
+/// Uses the 16 ANSI colors only, which each terminal theme remaps to something
+/// readable on its own background. The gutter is the bright blue because plain
+/// blue is close to invisible on many dark themes.
+#[derive(Clone, Copy, Default)]
+struct Palette {
+    error: Style,
+    warning: Style,
+    remark: Style,
+    strong: Style,
+    gutter: Style,
+    secondary: Style,
+    note: Style,
+    help: Style,
+    fix: Style,
+    trace: Style,
+    internal: Style,
+}
+
+impl Palette {
+    fn new(color: bool) -> Self {
+        if !color {
+            return Self::default();
+        }
+        let fg = |color: AnsiColor| Style::new().fg_color(Some(color.into()));
+        Self {
+            error: fg(AnsiColor::Red).bold(),
+            warning: fg(AnsiColor::Yellow).bold(),
+            remark: fg(AnsiColor::Cyan).bold(),
+            strong: Style::new().bold(),
+            gutter: fg(AnsiColor::BrightBlue),
+            secondary: fg(AnsiColor::BrightBlue),
+            note: fg(AnsiColor::Cyan),
+            help: fg(AnsiColor::Green),
+            fix: fg(AnsiColor::Green).bold(),
+            trace: fg(AnsiColor::Magenta),
+            internal: Style::new().dimmed(),
+        }
+    }
+
+    /// The style of what is blamed, carets included.
+    const fn severity(&self, severity: Severity) -> Style {
+        match severity {
+            Severity::Error => self.error,
+            Severity::Warning => self.warning,
+            Severity::Remark => self.remark,
+        }
+    }
+}
+
+/// Wraps `text` in `style`; an empty style writes no escape at all.
+fn paint(style: Style, text: impl Display) -> String {
+    format!("{style}{text}{style:#}")
+}
+
+/// Writes one `  = tag: body` line, with only the tag styled.
+fn push_tagged(out: &mut String, style: Style, tag: &str, body: impl Display) {
+    out.push_str(&format!("  {} {body}\n", paint(style, format!("= {tag}:"))));
+}
+
 /// Formats one bundle for a terminal reader.
 pub fn format_bundle(bundle: &DiagnosticBundle, options: HumanRenderOptions) -> String {
+    let palette = Palette::new(options.color);
     let mut out = String::new();
     for diagnostic in bundle.as_slice() {
-        render_header(&mut out, diagnostic, options);
-        render_labels(&mut out, bundle, diagnostic, options);
+        render_header(&mut out, diagnostic, options, &palette);
+        render_labels(&mut out, bundle, diagnostic, options, &palette);
 
         if options.verbosity == ErrorVerbosity::Concise {
             if let Some(help) = diagnostic.help.first() {
-                out.push_str(&format!("  = help: {help}\n"));
+                push_tagged(&mut out, palette.help, "help", help);
             }
             continue;
         }
 
-        render_paired_composition(&mut out, &diagnostic.notes);
+        render_paired_composition(&mut out, &diagnostic.notes, &palette);
         for note in visible_notes(&diagnostic.notes, options.verbosity) {
-            out.push_str(&format!("  = note: {note}\n"));
+            push_tagged(&mut out, palette.note, "note", note);
         }
         for trace in &diagnostic.traces {
-            render_trace(&mut out, trace, options.verbosity);
+            render_trace(&mut out, trace, options.verbosity, &palette);
         }
         for fix in &diagnostic.fixes {
-            render_fix(&mut out, fix);
+            render_fix(&mut out, fix, &palette);
         }
         for help in &diagnostic.help {
-            out.push_str(&format!("  = help: {help}\n"));
+            push_tagged(&mut out, palette.help, "help", help);
         }
         if options.verbosity.shows_internals()
             && let Some(debug) = &diagnostic.debug
         {
             for (key, value) in &debug.fields {
-                out.push_str(&format!("  = debug: {}={value:?}\n", key.as_str()));
+                let body = format!("{}={value:?}", key.as_str());
+                push_tagged(&mut out, palette.internal, "debug", body);
             }
         }
         if options.verbosity.shows_everything() {
             for related in &diagnostic.related {
-                out.push_str(&format!(
-                    "  = related: [{}] {}\n",
-                    related.code.0, related.message
-                ));
+                let body = format!("[{}] {}", related.code.0, related.message);
+                push_tagged(&mut out, palette.internal, "related", body);
             }
         }
     }
@@ -170,25 +245,30 @@ fn render_header(
     out: &mut String,
     diagnostic: &diagnostics::Diagnostic,
     options: HumanRenderOptions,
+    palette: &Palette,
 ) {
     let severity = match diagnostic.severity {
         Severity::Error => "error",
         Severity::Warning => "warning",
         Severity::Remark => "remark",
     };
+    let tag = paint(
+        palette.severity(diagnostic.severity),
+        format!("{severity} [{}]", diagnostic.code.0),
+    );
+    let message = paint(palette.strong, &diagnostic.message);
     match primary_label(diagnostic) {
-        Some(label) => out.push_str(&format!(
-            "{}:{}:{}: {severity} [{}] {}\n",
-            display_path(&label.span.file, options.path_style),
-            label.span.line,
-            label.span.col,
-            diagnostic.code.0,
-            diagnostic.message
-        )),
-        None => out.push_str(&format!(
-            "{severity} [{}] {}\n",
-            diagnostic.code.0, diagnostic.message
-        )),
+        Some(label) => {
+            let location = format!(
+                "{}:{}:{}:",
+                display_path(&label.span.file, options.path_style),
+                label.span.line,
+                label.span.col
+            );
+            let location = paint(palette.strong, location);
+            out.push_str(&format!("{location} {tag} {message}\n"));
+        }
+        None => out.push_str(&format!("{tag} {message}\n")),
     }
 }
 
@@ -206,6 +286,7 @@ fn render_labels(
     bundle: &DiagnosticBundle,
     diagnostic: &diagnostics::Diagnostic,
     options: HumanRenderOptions,
+    palette: &Palette,
 ) {
     let mut shown = BTreeSet::new();
     let mut current_file: Option<&Path> = primary_label(diagnostic).map(|l| l.span.file.as_path());
@@ -230,8 +311,12 @@ fn render_labels(
         }
         if current_file != Some(label.span.file.as_path()) {
             out.push_str(&format!(
-                "  --> {}\n",
-                display_path(&label.span.file, options.path_style)
+                "  {} {}\n",
+                paint(palette.gutter, "-->"),
+                paint(
+                    palette.strong,
+                    display_path(&label.span.file, options.path_style)
+                )
             ));
             current_file = Some(label.span.file.as_path());
             current_line = None;
@@ -239,7 +324,18 @@ fn render_labels(
         let single_line = label.span.end_line <= label.span.line;
         let repeats_line =
             single_line && current_line == Some((label.span.file.as_path(), label.span.line));
-        render_snippet(out, bundle, label, repeats_line);
+        let label_style = match label.style {
+            LabelStyle::Primary => palette.severity(diagnostic.severity),
+            LabelStyle::Secondary => palette.secondary,
+        };
+        render_snippet(
+            out,
+            bundle,
+            label,
+            repeats_line,
+            palette.gutter,
+            label_style,
+        );
         current_line = single_line.then_some((label.span.file.as_path(), label.span.line));
     }
 }
@@ -283,33 +379,32 @@ fn render_snippet(
     bundle: &DiagnosticBundle,
     label: &Label,
     line_already_shown: bool,
+    gutter: Style,
+    label_style: Style,
 ) {
     let Some(first) = source_line(bundle, label.span.file.as_path(), label.span.line) else {
         return;
     };
     let expanded = expand_tabs(&first);
     if !line_already_shown {
-        out.push_str(&format!("  {} | {}\n", label.span.line, expanded));
+        let number = paint(gutter, format!("  {} |", label.span.line));
+        out.push_str(&format!("{number} {expanded}\n"));
     }
+    let blank = paint(gutter, "    |");
 
     if label.span.end_line > label.span.line {
-        out.push_str("    | ...\n");
+        out.push_str(&format!("{blank} ...\n"));
         if let Some(last) = source_line(bundle, label.span.file.as_path(), label.span.end_line) {
-            out.push_str(&format!(
-                "  {} | {}\n",
-                label.span.end_line,
-                expand_tabs(&last)
-            ));
+            let number = paint(gutter, format!("  {} |", label.span.end_line));
+            out.push_str(&format!("{number} {}\n", expand_tabs(&last)));
         }
-        out.push_str(&format!("    | {}\n", label.message));
+        out.push_str(&format!("{blank} {}\n", paint(label_style, &label.message)));
         return;
     }
 
-    out.push_str(&format!(
-        "    | {} {}\n",
-        caret_run(&first, label.span.col, label.span.end_col),
-        label.message
-    ));
+    let carets = caret_run(&first, label.span.col, label.span.end_col);
+    let annotation = paint(label_style, format!("{carets} {}", label.message));
+    out.push_str(&format!("{blank} {annotation}\n"));
 }
 
 /// Builds the caret run for a single-line span.
@@ -349,7 +444,12 @@ fn expand_tabs(line: &str) -> String {
 }
 
 /// Renders one typed trace as a single arrow-joined line.
-fn render_trace(out: &mut String, trace: &DiagnosticTrace, verbosity: ErrorVerbosity) {
+fn render_trace(
+    out: &mut String,
+    trace: &DiagnosticTrace,
+    verbosity: ErrorVerbosity,
+    palette: &Palette,
+) {
     if trace.frames.is_empty() {
         return;
     }
@@ -375,23 +475,25 @@ fn render_trace(out: &mut String, trace: &DiagnosticTrace, verbosity: ErrorVerbo
     } else {
         String::new()
     };
-    out.push_str(&format!(
-        "  = trace ({}): {}{elision}\n",
-        trace_kind_label(trace.kind),
-        shown.join(" -> ")
-    ));
+    push_tagged(
+        out,
+        palette.trace,
+        &format!("trace ({})", trace_kind_label(trace.kind)),
+        format!("{}{elision}", shown.join(" -> ")),
+    );
 }
 
 /// Renders one suggested fix with its applicability.
 ///
 /// The applicability is printed because it is the difference between an edit a
 /// reader can apply blindly and one they must think about.
-fn render_fix(out: &mut String, fix: &SuggestedFix) {
-    out.push_str(&format!(
-        "  = fix ({}): {}\n",
-        applicability_label(fix.applicability),
-        fix.title
-    ));
+fn render_fix(out: &mut String, fix: &SuggestedFix, palette: &Palette) {
+    push_tagged(
+        out,
+        palette.fix,
+        &format!("fix ({})", applicability_label(fix.applicability)),
+        &fix.title,
+    );
     if let Some(explanation) = &fix.explanation {
         out.push_str(&format!("    {explanation}\n"));
     }
@@ -428,7 +530,7 @@ fn has_paired_composition(notes: &[Box<str>]) -> bool {
 }
 
 /// Renders the condensed `Here A ... / while B ...` composition block.
-fn render_paired_composition(out: &mut String, notes: &[Box<str>]) {
+fn render_paired_composition(out: &mut String, notes: &[Box<str>], palette: &Palette) {
     if !has_paired_composition(notes) {
         return;
     }
@@ -447,13 +549,13 @@ fn render_paired_composition(out: &mut String, notes: &[Box<str>]) {
     let (Some(a), Some(b)) = (find("A "), find("B ")) else {
         return;
     };
-    out.push_str(&format!("  = note: Here  A = {a}\n"));
+    push_tagged(out, palette.note, "note", format!("Here  A = {a}"));
     if let Some(a_arity) = arity("A arity: ") {
-        out.push_str(&format!("  = note: has {a_arity}\n"));
+        push_tagged(out, palette.note, "note", format!("has {a_arity}"));
     }
-    out.push_str(&format!("  = note: while B = {b}\n"));
+    push_tagged(out, palette.note, "note", format!("while B = {b}"));
     if let Some(b_arity) = arity("B arity: ") {
-        out.push_str(&format!("  = note: has {b_arity}\n"));
+        push_tagged(out, palette.note, "note", format!("has {b_arity}"));
     }
 }
 

@@ -31,7 +31,9 @@ use fir::checker::verify_fir_module;
 use super::args::{
     CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, normalize_legacy_args,
 };
-use super::diagnostics::{format_diagnostics_json_with_verbosity, print_bundle};
+use super::diagnostics::{
+    format_diagnostics_json_with_verbosity, print_bundle, print_human_bundle,
+};
 use super::validate::{
     handle_early_exit_modes, handle_fixture_listing, spawn_timeout_watchdog, validate_cli_arguments,
 };
@@ -84,6 +86,7 @@ pub fn maybe_print_error_format_help(enabled: bool) {
     if enabled {
         println!("--error-format human|json");
         println!("--error-verbosity standard|debug");
+        println!("--color auto|always|never");
         println!("  human: file:line:col severity [CODE] message");
         println!("  json: structured diagnostics payload for CI/IDE tooling");
         println!("  standard: concise human notes, hides internal ids");
@@ -674,6 +677,7 @@ pub(crate) fn report_pipeline_failure(prefix: &str, err: &CompilerError, cli: &C
         cli.error_format,
         cli.error_verbosity,
         cli.diagnostic_paths,
+        cli.color,
     );
     std::process::exit(1);
 }
@@ -737,15 +741,11 @@ pub(crate) fn report_semantic_warnings(
         return;
     }
     match cli.error_format {
-        ErrorFormat::Human => eprint!(
-            "{}",
-            super::human::format_bundle(
-                &output.warnings,
-                super::human::HumanRenderOptions {
-                    verbosity: cli.error_verbosity,
-                    path_style: cli.diagnostic_paths,
-                },
-            )
+        ErrorFormat::Human => print_human_bundle(
+            &output.warnings,
+            cli.error_verbosity,
+            cli.diagnostic_paths,
+            cli.color,
         ),
         ErrorFormat::Json => eprintln!(
             "{}",

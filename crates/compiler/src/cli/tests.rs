@@ -12,8 +12,8 @@ use clap::{CommandFactory, Parser, ValueEnum};
 use compiler::{Compiler, FaustInstallPaths};
 use diagnostics::{
     Applicability, DebugContext, Diagnostic, DiagnosticBundle, DiagnosticCategory, DiagnosticCode,
-    LabelRole, Severity, SourceKind, SourceMapBuilder, SourceRange, SourceSpan, Stage,
-    SuggestedFix, TextEdit,
+    DiagnosticTrace, LabelRole, RelatedDiagnostic, Severity, SourceKind, SourceMapBuilder,
+    SourceRange, SourceSpan, Stage, SuggestedFix, TextEdit, TraceFrame, TraceKind,
 };
 use serde_json::Value;
 use signals::{SigMatch, match_sig};
@@ -1900,9 +1900,147 @@ fn human_renderer_respects_the_selected_path_style() {
         super::human::HumanRenderOptions {
             verbosity: ErrorVerbosity::Standard,
             path_style: super::args::DiagnosticPathStyle::Basename,
+            color: false,
         },
     );
     assert!(rendered.starts_with("mem.dsp:1:11:"), "{rendered}");
+}
+
+/// One diagnostic of the given severity using every section the renderer has.
+fn fully_populated_bundle(severity: Severity) -> DiagnosticBundle {
+    let mut builder = SourceMapBuilder::new();
+    let source = "process =\tfoo : \u{97f3} : bar;\nnext\nlast;\n";
+    builder.add(
+        PathBuf::from("mem.dsp"),
+        SourceKind::Memory,
+        source.to_owned(),
+    );
+    builder.add(
+        PathBuf::from("other.dsp"),
+        SourceKind::Memory,
+        "other = 1;\n".to_owned(),
+    );
+    let label = |style, span, message| diagnostics::Label::new(style, span, message);
+    let diagnostic = Diagnostic::new(
+        severity,
+        Stage::Propagate,
+        DiagnosticCode("FRS-PROP-0002"),
+        "two\nlines",
+    )
+    .with_label(label(
+        diagnostics::LabelStyle::Primary,
+        SourceSpan::new("mem.dsp", 1, 11, 1, 14),
+        "blamed",
+    ))
+    .with_label(label(
+        diagnostics::LabelStyle::Secondary,
+        SourceSpan::new("mem.dsp", 1, 1, 1, 8),
+        "context",
+    ))
+    .with_label(label(
+        diagnostics::LabelStyle::Secondary,
+        SourceSpan::new("mem.dsp", 2, 1, 3, 5),
+        "multi-line",
+    ))
+    .with_label(label(
+        diagnostics::LabelStyle::Secondary,
+        SourceSpan::new("other.dsp", 1, 1, 1, 6),
+        "elsewhere",
+    ))
+    .with_note("A = foo")
+    .with_note("A arity: inputs=0 outputs=1")
+    .with_note("B = bar")
+    .with_note("B arity: inputs=2 outputs=1")
+    .with_note("plain note")
+    .with_help("do this")
+    .with_trace(DiagnosticTrace {
+        kind: TraceKind::Binding,
+        frames: vec![TraceFrame {
+            name: Some("process".into()),
+            description: "frame".into(),
+            span: None,
+            ir: None,
+        }],
+    })
+    .with_fix(SuggestedFix {
+        title: "insert it".into(),
+        explanation: Some("because".into()),
+        applicability: Applicability::Manual,
+        edits: Vec::new(),
+    })
+    .with_related(RelatedDiagnostic {
+        code: DiagnosticCode("FRS-PROP-0001"),
+        message: "linked".into(),
+        labels: Vec::new(),
+    })
+    .with_debug_fact("node_id", "42");
+    let mut bundle = DiagnosticBundle::new();
+    bundle.push(diagnostic);
+    bundle.set_source_map(builder.finish());
+    bundle
+}
+
+/// Renders `bundle` at the given color setting and [`ErrorVerbosity::Full`].
+fn render_full(bundle: &DiagnosticBundle, color: bool) -> String {
+    super::human::format_bundle(
+        bundle,
+        super::human::HumanRenderOptions {
+            verbosity: ErrorVerbosity::Full,
+            color,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn colored_diagnostics_are_the_plain_text_plus_escapes_only() {
+    for severity in [Severity::Error, Severity::Warning, Severity::Remark] {
+        let bundle = fully_populated_bundle(severity);
+        let plain = render_full(&bundle, false);
+        let colored = render_full(&bundle, true);
+        assert!(!plain.contains('\u{1b}'), "{plain}");
+        assert!(colored.contains('\u{1b}'), "{colored}");
+        assert_eq!(anstream::adapter::strip_str(&colored).to_string(), plain);
+    }
+}
+
+#[test]
+fn library_rendering_stays_plain_for_ffi_hosts() {
+    let bundle = fully_populated_bundle(Severity::Error);
+    let rendered = super::human::format_bundle(&bundle, Default::default());
+    assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+}
+
+#[test]
+fn color_tells_severities_and_label_styles_apart() {
+    const RED: &str = "\u{1b}[31m";
+    const YELLOW: &str = "\u{1b}[33m";
+    const CYAN: &str = "\u{1b}[36m";
+    let header = |severity| {
+        let rendered = render_full(&fully_populated_bundle(severity), true);
+        rendered.lines().next().unwrap().to_owned()
+    };
+    assert!(header(Severity::Error).contains(RED));
+    assert!(header(Severity::Warning).contains(YELLOW));
+    assert!(header(Severity::Remark).contains(CYAN));
+
+    let rendered = render_full(&fully_populated_bundle(Severity::Error), true);
+    let line_with = |needle: &str| rendered.lines().find(|l| l.contains(needle)).unwrap();
+    assert!(line_with("blamed").contains(RED), "{rendered}");
+    assert!(!line_with("context").contains(RED), "{rendered}");
+}
+
+#[test]
+fn color_option_defaults_to_auto_and_rejects_unknown_values() {
+    assert_eq!(
+        CliArgs::parse_from(["faust-rs", "foo.dsp"]).color,
+        clap::ColorChoice::Auto
+    );
+    assert_eq!(
+        CliArgs::parse_from(["faust-rs", "--color", "never", "foo.dsp"]).color,
+        clap::ColorChoice::Never
+    );
+    assert!(CliArgs::try_parse_from(["faust-rs", "--color", "sometimes", "foo.dsp"]).is_err());
 }
 
 #[test]

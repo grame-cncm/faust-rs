@@ -40,6 +40,13 @@ Example interpretation:
 - If notes say `split(A, B) requires inputs(B) % outputs(A) == 0`, the fix is to make
   `inputs(B)` a multiple of `outputs(A)`.
 
+In a terminal the parts are color-coded: the severity, code and primary carets
+in red for an error, yellow for a warning and cyan for a remark; the location
+and message in bold; line gutters and secondary labels in blue; `note` in cyan;
+`help` and `fix` in green; `trace` in magenta. Use `--color always|never` to
+override the detection, or set `NO_COLOR` (see the
+[CLI guide](user-cli-guide-en.md)). Redirected output stays plain.
+
 ## 3. Error families (quick map)
 
 - `FRS-PARSE-*`: lexer/parser syntax/recovery issues.

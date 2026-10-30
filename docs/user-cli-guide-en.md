@@ -616,6 +616,21 @@ Presentation only: the JSON diagnostics channel always reports the compiled
 source path verbatim, because a tool resolving a range needs the path the
 compiler actually used.
 
+### `--color auto|always|never`
+
+When human diagnostics use color.
+
+- `auto` (default): color when stderr is a terminal that supports it. `NO_COLOR`
+  (any non-empty value) turns it off, `CLICOLOR=0` too, and `CLICOLOR_FORCE`
+  turns it on even when stderr is redirected. `NO_COLOR` wins over
+  `CLICOLOR_FORCE`.
+- `always`: color, whatever stderr is and whatever the environment says.
+- `never`: plain text.
+
+An explicit `always` or `never` takes precedence over the environment. Color
+adds escape sequences and changes nothing else, and it never applies to
+`--error-format json`.
+
 ### `--help-error-format`
 
 Print a dedicated summary for diagnostics options and exit.

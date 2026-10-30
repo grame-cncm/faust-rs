@@ -11,6 +11,8 @@ backend-wasm = ["codegen/backend-wasm"]
 network-imports = ["dep:ureq"]
 
 [dependencies]
+anstream = "0.6"
+anstyle = "1"
 clap.workspace = true
 diagnostics = { path = "../diagnostics" }
 parser = { path = "../parser" }
