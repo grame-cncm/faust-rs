@@ -307,10 +307,16 @@ pub enum EvalError {
     },
     /// Non-closure application received more arguments than the function input arity.
     TooManyArguments {
-        /// Function-like node receiving too many arguments.
+        /// The application, once the evaluation of its node has named it, and
+        /// until then the function-like node receiving too many arguments.
         node: TreeId,
         expected: usize,
         got: usize,
+        /// How the source names the function; `None` until that same point.
+        function: Option<String>,
+        /// Arguments left when the function refused them: those before were
+        /// taken by its parameters.
+        remaining: usize,
     },
     InvalidModulationLabel {
         node: TreeId,
@@ -683,6 +689,15 @@ impl Display for EvalError {
                 write!(f, "pattern arity mismatch: expected {expected}, got {got}")
             }
             Self::PatternMatchFailed { .. } => write!(f, "no case rule matches arguments"),
+            Self::TooManyArguments {
+                expected,
+                got,
+                function: Some(function),
+                ..
+            } => write!(
+                f,
+                "too many arguments for `{function}`: expected at most {expected}, got {got}"
+            ),
             Self::TooManyArguments { expected, got, .. } => {
                 write!(
                     f,

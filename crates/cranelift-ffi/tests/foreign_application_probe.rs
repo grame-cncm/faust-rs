@@ -122,7 +122,7 @@ fn an_over_applied_foreign_function_is_an_evaluation_error() {
     };
     assert!(error.contains("[FRS-EVAL-0003]"), "{error}");
     assert!(
-        error.contains("too many arguments: expected at most 3, got 4"),
+        error.contains("too many arguments for `f`: expected at most 3, got 4"),
         "{error}"
     );
 }

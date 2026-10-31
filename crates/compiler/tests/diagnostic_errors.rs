@@ -118,6 +118,76 @@ fn a_composition_prints_a_function_as_faust() {
     }
 }
 
+/// A mismatch is where two widths meet: the one that is wrong is written in the
+/// definition of an operand.
+#[test]
+fn a_composition_labels_the_definitions_of_its_operands() {
+    let labels = |source: &str| {
+        let err = Compiler::new()
+            .compile_source_to_signals("operands.dsp", source)
+            .expect_err("the composition should fail");
+        let labels: Vec<(String, u32)> = err.diagnostic_bundle().as_slice()[0]
+            .labels
+            .iter()
+            .map(|label| (label.message.to_string(), label.span.line))
+            .collect();
+        labels
+    };
+    let found = labels("stereo = _, _;\n\nf(g) = g;\nmono = f(_);\nprocess = stereo : mono;\n");
+    assert_eq!(found[0], ("failing composition".to_owned(), 5));
+    assert!(
+        found.contains(&("`stereo` is defined here".to_owned(), 1)),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&("`mono` is defined here".to_owned(), 4)),
+        "{found:?}"
+    );
+    // a group holds an operand and adds no width
+    let found = labels("stereo = _, _;\nprocess = _ : vgroup(\"x\", stereo);\n");
+    assert!(
+        found.contains(&("`stereo` is defined here".to_owned(), 1)),
+        "{found:?}"
+    );
+    // the name of a parameter is not the definition of that name
+    let found = labels("x = 1;\nf(x) = x : (_, _);\nprocess = f(_);\n");
+    assert!(
+        !found.iter().any(|(text, _)| text.contains("`x`")),
+        "{found:?}"
+    );
+}
+
+/// The application is what has one place: the function may be written in
+/// many, and a primitive is one node for all of them.
+#[test]
+fn too_many_arguments_names_the_call() {
+    let failure = |source: &str| {
+        let err = Compiler::new()
+            .compile_source_to_signals("calls.dsp", source)
+            .expect_err("the call should fail");
+        let diagnostic = err.diagnostic_bundle().as_slice()[0].clone();
+        (
+            diagnostic.message.to_string(),
+            diagnostic.labels[0].span.line,
+        )
+    };
+    assert_eq!(
+        failure("b(x) = attach(0, x);\na(x) = attach(x, 1, 2);\nprocess = a, b;\n"),
+        (
+            "too many arguments for `attach`: expected at most 2, got 3".to_owned(),
+            2
+        )
+    );
+    // the parameters count, whatever the result of the function accepts
+    assert_eq!(
+        failure("g(x, y) = x + y;\nprocess = g(1, 2, 3, 4);\n"),
+        (
+            "too many arguments for `g`: expected at most 2, got 4".to_owned(),
+            2
+        )
+    );
+}
+
 #[test]
 fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();

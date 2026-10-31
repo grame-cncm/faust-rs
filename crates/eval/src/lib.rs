@@ -841,7 +841,11 @@ fn eval_value_uncached(
             let efun = eval_value(arena, fun, env, loop_detector)?;
             let rev_args = rev_eval_list(arena, arg, env, loop_detector)?;
             let result =
-                apply_value_list_value(arena, efun, rev_args, env, loop_detector, Some(fun))?;
+                apply_value_list_value(arena, efun, rev_args, env, loop_detector, Some(fun));
+            let result = match result {
+                Err(error) => return Err(name_refused_application(arena, error, expr, rev_args)),
+                Ok(result) => result,
+            };
             // Tag result box with the applied function's name (mirrors C++ setDefNameProperty
             // after beta reduction). Extract name from: Ident("voice") or Access(os, "osc").
             // or_insert preserves the outermost/first name when results are shared.
@@ -1883,6 +1887,42 @@ enum NumericLit {
 /// Converts a parser-style list into a vector in traversal order.
 fn list_to_vec(arena: &TreeArena, list: TreeId) -> Result<Vec<TreeId>, EvalError> {
     tlib::list_to_vec(arena, list).ok_or(EvalError::MalformedListNode { node: list })
+}
+
+/// Gives a [`EvalError::TooManyArguments`] the application it comes from, the
+/// node with one place in the sources where the function is shared by all its
+/// uses. The counts become those of the whole call: `g(1, 2, 3, 4)` of a `g(x, y)`
+/// is refused with no argument left for the two inputs of a result that has
+/// none, and that is 4 arguments for 2. The innermost application is the one
+/// refused, and the ones around it leave the error alone.
+fn name_refused_application(
+    arena: &TreeArena,
+    error: EvalError,
+    application: TreeId,
+    rev_args: TreeId,
+) -> EvalError {
+    let EvalError::TooManyArguments {
+        expected,
+        got,
+        function: None,
+        remaining,
+        ..
+    } = error
+    else {
+        return error;
+    };
+    let BoxMatch::Appl(fun, _) = match_box(arena, application) else {
+        return error;
+    };
+    let arguments = tlib::list_to_vec(arena, rev_args).map_or(remaining, |list| list.len());
+    let taken = arguments.saturating_sub(remaining);
+    EvalError::TooManyArguments {
+        node: application,
+        expected: expected + taken,
+        got: got + taken,
+        function: boxes::box_pp_bounded(arena, fun, 0, boxes::FloatSize::Double, 60).ok(),
+        remaining,
+    }
 }
 
 /// Converts a vector into a parser-style list preserving order.

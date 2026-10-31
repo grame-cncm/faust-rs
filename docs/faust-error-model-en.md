@@ -210,6 +210,10 @@ its name when that is the entry point. `debug` prints them, with the box
 expression as `expr`. The JSON report keeps the labels, the three scopes and the
 binding trace as typed values at every level.
 
+A composition mismatch also labels the definitions of its operands: the failing
+token is where two widths meet, and the wrong width is usually written in one of
+them.
+
 ### 2.5 Opt-in warnings
 
 `--warn` enables the class the reference compiler reports under `-wall` / `-me`:

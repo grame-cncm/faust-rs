@@ -73,6 +73,122 @@ pub(crate) fn add_paired_propagate_context(
 
 // ─── Source label helpers ─────────────────────────────────────────────────────
 
+/// Labels the definitions of the operands of a failing composition.
+///
+/// A mismatch shows where two widths meet, and the width that is wrong is
+/// usually written in one of those definitions (`capture : *(level)` of a
+/// `capture` that gained an output). Only definitions the file of the composition
+/// has once are labelled, and at most four, the left operand first.
+fn add_operand_definition_labels(
+    mut diagnostic: Diagnostic,
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    source: BoxId,
+    composition: &SourceSpan,
+    parameters: &std::collections::HashSet<BoxId>,
+) -> Diagnostic {
+    const SHOWN: usize = 4;
+    let mut names = Vec::new();
+    collect_operand_names(arena, source, 0, &mut names);
+    names.retain(|name| !parameters.contains(name));
+    let mut shown = 0;
+    for name in names {
+        let provenance = ctx.box_provenance();
+        let mut sites = provenance
+            .origins_for(name)
+            .iter()
+            .filter_map(|id| provenance.get(*id))
+            .filter(|origin| origin.role == parser::BoxOriginRole::Definition)
+            .map(|origin| source_span_from_parser_location(&origin.location))
+            .filter(|span| span.file == composition.file);
+        let (Some(site), None) = (sites.next(), sites.next()) else {
+            continue;
+        };
+        let BoxMatch::Ident(text) = match_box(arena, name) else {
+            continue;
+        };
+        let message = format!("`{text}` is defined here");
+        diagnostic = diagnostic.with_label(
+            Label::new(LabelStyle::Secondary, site, message).with_role(LabelRole::DefinitionSite),
+        );
+        shown += 1;
+        if shown == SHOWN {
+            break;
+        }
+    }
+    diagnostic
+}
+
+/// The names an operand is made of: those it composes and the functions it
+/// calls, not their arguments, whose width is not the operand's.
+fn collect_operand_names(
+    arena: &tlib::TreeArena,
+    node: BoxId,
+    depth: usize,
+    names: &mut Vec<BoxId>,
+) {
+    const DEPTH: usize = 32;
+    if depth == DEPTH {
+        return;
+    }
+    match match_box(arena, node) {
+        BoxMatch::Ident(_) => {
+            if !names.contains(&node) {
+                names.push(node);
+            }
+        }
+        BoxMatch::Par(left, right)
+        | BoxMatch::Seq(left, right)
+        | BoxMatch::Split(left, right)
+        | BoxMatch::Merge(left, right)
+        | BoxMatch::Rec(left, right) => {
+            collect_operand_names(arena, left, depth + 1, names);
+            collect_operand_names(arena, right, depth + 1, names);
+        }
+        BoxMatch::Appl(fun, _) => collect_operand_names(arena, fun, depth + 1, names),
+        BoxMatch::VGroup(_, body)
+        | BoxMatch::HGroup(_, body)
+        | BoxMatch::TGroup(_, body)
+        | BoxMatch::WithLocalDef(body, _)
+        | BoxMatch::WithRecDef(body, _, _) => {
+            collect_operand_names(arena, body, depth + 1, names);
+        }
+        _ => {}
+    }
+}
+
+/// The names bound as parameters in the top-level definition that holds
+/// `node`, its local functions included. An operand of one of these names is no
+/// definition, whatever else the file defines under it. Walking the whole
+/// definition rather than the path to `node` may leave out a label, never add a
+/// false one.
+fn parameters_around(
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    node: BoxId,
+) -> std::collections::HashSet<BoxId> {
+    let mut parameters = std::collections::HashSet::new();
+    let found = owner_definition_name_for_node(arena, defs_root, node)
+        .and_then(|owner| find_definition_name_and_expr(arena, defs_root, &owner));
+    let Some((_, expr)) = found else {
+        return parameters;
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![expr];
+    while let Some(cur) = stack.pop() {
+        if seen.len() > 1 << 16 || !seen.insert(cur) {
+            continue;
+        }
+        if let BoxMatch::Abstr(parameter, _) = match_box(arena, cur) {
+            parameters.insert(parameter);
+        }
+        if let Some(children) = arena.children(cur) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    parameters
+}
+
 /// Attaches source labels for propagate/arity diagnostics.
 ///
 /// When the owning definition is known, this prefers that origin as primary and
@@ -98,10 +214,21 @@ pub(crate) fn maybe_add_source_label(
     // faulty `m(1) : …`). A box built from two compositions, or from one the
     // sources write at several places, gets no composition label.
     if let Some(origin) = composition_origins.and_then(|origins| origins.get(&node)) {
-        if let Some(span) = origin.and_then(|source| unique_source_span(ctx, source)) {
-            return diagnostic.with_label(
-                Label::new(LabelStyle::Primary, span, "failing composition")
+        if let Some((source, span)) =
+            origin.and_then(|source| Some((source, unique_source_span(ctx, source)?)))
+        {
+            let parameters = parameters_around(arena, defs_root, source);
+            diagnostic = diagnostic.with_label(
+                Label::new(LabelStyle::Primary, span.clone(), "failing composition")
                     .with_role(LabelRole::Operator),
+            );
+            return add_operand_definition_labels(
+                diagnostic,
+                ctx,
+                arena,
+                source,
+                &span,
+                &parameters,
             );
         }
         let fallback =
@@ -226,7 +353,12 @@ pub(crate) fn maybe_add_eval_source_labels(
     entrypoint_name: &str,
 ) -> Diagnostic {
     if let Some(owner) = owner_definition {
-        let use_span = source_span_for_node_in_definition(ctx, arena, defs_root, node, owner);
+        // An application has no place of its own: the name it calls does
+        let used = match match_box(arena, node) {
+            BoxMatch::Appl(fun, _) => fun,
+            _ => node,
+        };
+        let use_span = source_span_for_node_in_definition(ctx, arena, defs_root, used, owner);
         let origin_span = source_span_for_definition_name(ctx, arena, defs_root, owner);
         let call_span =
             source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name);

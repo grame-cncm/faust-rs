@@ -1393,9 +1393,11 @@ fn eval_box_non_closure_application_reports_too_many_arguments() {
     assert_eq!(
         err,
         EvalError::TooManyArguments {
-            node: add,
+            node: expr,
             expected: 2,
-            got: 3
+            got: 3,
+            function: Some("+".to_owned()),
+            remaining: 3,
         }
     );
 }
@@ -1834,6 +1836,8 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
         node: arena.nil(),
         expected: 2,
         got: 3,
+        function: None,
+        remaining: 3,
     }
     .to_diagnostic();
     assert_eq!(arity.code, codes::EVAL_ARITY_MISMATCH);
