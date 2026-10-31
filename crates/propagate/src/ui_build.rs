@@ -180,11 +180,10 @@ impl UiCollector {
         context_hash: u64,
         in_ad_seed: bool,
         kind: ControlKind,
-        label: String,
-        metadata: UiMetadata,
+        raw_label: &str,
         range: Option<ControlRange>,
     ) -> bool {
-        let order_key = ui::ordering_key_from_label(&label, &metadata);
+        let (label, metadata) = split_label_metadata(raw_label);
         let (id, created) = self.register_control(
             source_node,
             context_hash,
@@ -195,7 +194,8 @@ impl UiCollector {
             range,
         );
         if created {
-            self.builder.insert_input_control(path, id, order_key);
+            self.builder
+                .insert_input_control(path, id, raw_label.to_owned());
         }
         created
     }
@@ -210,11 +210,10 @@ impl UiCollector {
         context_hash: u64,
         in_ad_seed: bool,
         kind: ControlKind,
-        label: String,
-        metadata: UiMetadata,
+        raw_label: &str,
         range: Option<ControlRange>,
     ) -> bool {
-        let order_key = ui::ordering_key_from_label(&label, &metadata);
+        let (label, metadata) = split_label_metadata(raw_label);
         let (id, created) = self.register_control(
             source_node,
             context_hash,
@@ -226,8 +225,9 @@ impl UiCollector {
         );
         if created {
             self.output_leaves
-                .insert(id, (path.to_vec(), order_key.clone()));
-            self.builder.insert_output_control(path, id, order_key);
+                .insert(id, (path.to_vec(), raw_label.to_owned()));
+            self.builder
+                .insert_output_control(path, id, raw_label.to_owned());
         }
         created
     }
@@ -240,10 +240,9 @@ impl UiCollector {
         path: &[UiGroupSpec],
         context_hash: u64,
         in_ad_seed: bool,
-        label: String,
-        metadata: UiMetadata,
+        raw_label: &str,
     ) -> bool {
-        let order_key = ui::ordering_key_from_label(&label, &metadata);
+        let (label, metadata) = split_label_metadata(raw_label);
         let (id, created) = self.register_control(
             source_node,
             context_hash,
@@ -254,7 +253,8 @@ impl UiCollector {
             None,
         );
         if created {
-            self.builder.insert_soundfile(path, id, order_key);
+            self.builder
+                .insert_soundfile(path, id, raw_label.to_owned());
         }
         created
     }
@@ -475,15 +475,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::Button,
-                label,
-                metadata,
+                &normalized.raw_label,
                 None,
             );
             UiCollectSummary {
@@ -498,15 +496,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::Checkbox,
-                label,
-                metadata,
+                &normalized.raw_label,
                 None,
             );
             UiCollectSummary {
@@ -523,15 +519,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::VSlider,
-                label,
-                metadata,
+                &normalized.raw_label,
                 Some(ControlRange {
                     init: decode_box_scalar(source_arena, init),
                     min: decode_box_scalar(source_arena, min),
@@ -553,15 +547,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::HSlider,
-                label,
-                metadata,
+                &normalized.raw_label,
                 Some(ControlRange {
                     init: decode_box_scalar(source_arena, init),
                     min: decode_box_scalar(source_arena, min),
@@ -583,15 +575,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::NumEntry,
-                label,
-                metadata,
+                &normalized.raw_label,
                 Some(ControlRange {
                     init: decode_box_scalar(source_arena, init),
                     min: decode_box_scalar(source_arena, min),
@@ -613,15 +603,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.output_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::VBargraph,
-                label,
-                metadata,
+                &normalized.raw_label,
                 Some(ControlRange {
                     init: 0.0,
                     min: decode_box_scalar(source_arena, min),
@@ -643,15 +631,13 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.output_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
                 ControlKind::HBargraph,
-                label,
-                metadata,
+                &normalized.raw_label,
                 Some(ControlRange {
                     init: 0.0,
                     min: decode_box_scalar(source_arena, min),
@@ -672,14 +658,12 @@ fn collect_ui_nodes(
             let normalized =
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
-            let (label, metadata) = split_label_metadata(&normalized.raw_label);
             let placed = collector.soundfile(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
                 in_ad_seed,
-                label,
-                metadata,
+                &normalized.raw_label,
             );
             UiCollectSummary {
                 has_ui: placed,

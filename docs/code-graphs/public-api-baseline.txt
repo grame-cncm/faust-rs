@@ -3117,7 +3117,6 @@ fn group_ui_label
 fn match_ui
 fn normalize_group_label_navigation
 fn normalize_widget_label_path
-fn ordering_key_from_label
 fn split_label_metadata
 struct AnonymousWidgetNames
 struct ControlRange

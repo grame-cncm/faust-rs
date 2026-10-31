@@ -57,7 +57,7 @@ use tree_ffi::{
 pub use tree_ffi::{SOperator, SType};
 use ui::{
     ControlKind, ControlRange, ControlSpec, UiBuilder, UiProgram, UiProgramBuilder, UiRootOrigin,
-    ordering_key_from_label, split_label_metadata,
+    split_label_metadata,
 };
 
 /// FIR package exported from box/signal handles for backend FFI constructors.
@@ -100,14 +100,6 @@ fn infer_num_inputs_from_signals(arena: &TreeArena, outputs: &[TreeId]) -> usize
         }
     }
     max_input.map_or(0, |idx| idx.saturating_add(1))
-}
-
-fn control_label_and_metadata(
-    ctx: &BoxContext,
-    control: &FfiSignalControl,
-) -> (String, ui::UiMetadata) {
-    let raw = tree_to_str(&ctx.arena, control.label).unwrap_or_default();
-    split_label_metadata(raw)
 }
 
 fn control_range(ctx: &BoxContext, control: &FfiSignalControl) -> Option<ControlRange> {
@@ -172,8 +164,9 @@ pub fn signal_only_root_ui(ctx: &BoxContext, module_name: &str) -> UiProgram {
     let mut controls = Vec::with_capacity(ctx.signal_controls().len());
     let mut builder = UiProgramBuilder::new();
     for control in ctx.signal_controls() {
-        let (label, metadata) = control_label_and_metadata(ctx, control);
-        let order_key = ordering_key_from_label(&label, &metadata);
+        let raw_label = tree_to_str(&ctx.arena, control.label).unwrap_or_default();
+        let (label, metadata) = split_label_metadata(raw_label);
+        let order_key = raw_label.to_owned();
         controls.push(ControlSpec {
             id: control.id,
             kind: control_kind(control.kind),

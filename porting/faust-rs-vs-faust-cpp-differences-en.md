@@ -696,6 +696,12 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   hbargraph("", …)) + (3 : vbargraph("", …))`, fixed C++ declares
   `vbargraph0`, `hbargraph0`, `hbargraph1`, `0x00` and Rust `0x00`,
   `hbargraph0`, `hbargraph1`, `vbargraph0`, each name on the same widget.
+- That concerns labels that compare equal only. Rust compared the others on a
+  key rebuilt from the parsed `[n]`, not on the raw label as C++ does: the
+  spaces of `%2i` were lost, `[10]` came before `[ 2]`, and with 11 or more
+  bands (`an.spectral_level`) widgets were listed, and unlabelled bargraphs
+  numbered, otherwise than in C++. Fixed on 2026-10-31: the key is now the raw
+  label.
 - The names match: an unlabelled group or input widget is `0x00` and an
   unlabelled bargraph `hbargraph<n>` / `vbargraph<n>`, and two unlabelled
   input widgets in one group are refused as in C++ (`FRS-UI-0001`,
@@ -706,6 +712,7 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   Faust 2.89.3.
 - Evidence: `crates/compiler/tests/anonymous_ui_labels.rs`,
   `unlabelled_controls_are_named_as_in_cpp_and_can_conflict` and
+  `widgets_are_sorted_on_their_raw_labels_as_in_cpp`;
   `anonymous_widget_names_count_per_prefix_like_get_fresh_id` in
   `crates/ui/tests/core_api.rs`.
 

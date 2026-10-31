@@ -182,24 +182,6 @@ pub enum ControlKind {
 /// deterministic ordering, trimmed keys/values, and duplicate coalescing.
 pub type UiMetadata = Vec<(String, String)>;
 
-/// Builds the C++-parity ordering key for one widget/group: the label with
-/// its numeric ordering prefix restored (`[n] label`).
-///
-/// The C++ compiler sequences each group's children by plain byte-wise
-/// comparison of the RAW label — the `[n] ` prefix included — so `"[10]"`
-/// sorts before `"[2]"`, and unnumbered labels interleave by their own
-/// spelling (verified against C++ faust JSON output). The numeric prefix is
-/// parsed into a digits-only metadata key with an empty value during label
-/// splitting, so it can be reconstructed here for ordering purposes.
-pub fn ordering_key_from_label(label: &str, metadata: &UiMetadata) -> String {
-    for (key, value) in metadata {
-        if value.is_empty() && !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()) {
-            return format!("[{key}] {label}");
-        }
-    }
-    label.to_owned()
-}
-
 /// Numeric range metadata for slider-like controls.
 ///
 /// This is the canonical UI-side carrier for widget default/range semantics
@@ -884,9 +866,11 @@ impl UiProgramBuilder {
 
     /// Inserts one input control under the provided canonical group path.
     ///
-    /// `order_key` is the numeric ordering index extracted from the widget's
-    /// metadata (e.g. `[0:]` → `0`). Use [`ordering_key_from_label`] to
-    /// derive it. Items with equal keys are kept in insertion order.
+    /// `order_key` is the widget's raw label, metadata and spacing included:
+    /// the C++ compiler sequences each group's children by plain byte-wise
+    /// comparison of it (`isBefore`, `compiler/generator/uitree.cpp`). So
+    /// `"[10]"` sorts before `"[2]"` and after `"[ 2]"`, as `%2i` writes it.
+    /// Items with equal keys are kept in insertion order.
     pub fn insert_input_control(
         &mut self,
         path: &[UiGroupSpec],
@@ -939,7 +923,7 @@ impl UiProgramBuilder {
         if let Some(existing) = self.find_child_group(parent, &spec) {
             return existing;
         }
-        let order_key = ordering_key_from_label(&spec.label, &spec.metadata);
+        let order_key = spec.raw_label.clone();
         let id = self.push_node(UiDraftNode::Group {
             spec,
             children: Vec::new(),

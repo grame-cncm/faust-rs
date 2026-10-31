@@ -87,6 +87,53 @@ process = hslider("", 0, 0, 1, 0.1) + (1 : hbargraph("", 0, 1)) + (2 : vbargraph
     assert_eq!(labels, ["0x00", "hbargraph0", "vbargraph0"]);
 }
 
+/// C++ sorts a group on the raw labels (`isBefore`, `uitree.cpp`), so the spaces
+/// `%2i` pads a number with count, and a bargraph takes its number from its
+/// place in that order: `[ 2]` comes before `[10]`, which comes before `[2]`.
+/// Reconstructing the key from the parsed `[n]` lost the padding and put
+/// `[10]` first. The expected order is that of Faust 2.90.21.
+#[test]
+fn widgets_are_sorted_on_their_raw_labels_as_in_cpp() {
+    const PADDED: &str = r#"
+meter(i) = vbargraph("[%2i] [unit:dB]", 0, 1);
+process = _ <: par(i, 11, *(i+1) : meter(10-i)),
+    hslider("[ 2] padded", 0, 0, 1, 0.1),
+    hslider("[2] plain", 0, 0, 1, 0.1),
+    hslider("[unit:dB] [1] unit first", 0, 0, 1, 0.1);
+"#;
+    let cpp = Compiler::new()
+        .compile_source_to_cpp("padded.dsp", PADDED, &CppOptions::default())
+        .expect("the program compiles");
+    let labels: Vec<&str> = cpp
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("ui_interface->add"))
+        .filter_map(|line| line.split('"').nth(1))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "vbargraph0",
+            "vbargraph1",
+            "vbargraph2",
+            "padded",
+            "vbargraph3",
+            "vbargraph4",
+            "vbargraph5",
+            "vbargraph6",
+            "vbargraph7",
+            "vbargraph8",
+            "vbargraph9",
+            "vbargraph10",
+            "plain",
+            "unit first",
+        ]
+    );
+    // The label a bargraph shows is the band of its source position: band 10,
+    // first in the source, is the eleventh of the sort.
+    assert!(cpp.contains(r#"declare(&fVbargraph0, "10", "");"#), "{cpp}");
+}
+
 /// Faust 2.89.2 and 2.89.3 refuse this program: `ERROR : path '/anon2/0x00' is already
 /// used`, exit status 1.
 #[test]
