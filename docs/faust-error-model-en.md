@@ -88,13 +88,7 @@ seq.dsp:2:8: error [FRS-PROP-0002] sequential composition mismatch: left outputs
   = note: has inputs=2 outputs=2
   = note: while B = (_, (_, _))
   = note: has inputs=3 outputs=3
-  = note: cause: sequential composition bus widths do not match
-  = note: rule: seq(A, B) requires outputs(A) == inputs(B)
-  = note: computed: 2 == 3 -> false
   = note: suggested target: make outputs(A) and inputs(B) equal (common target: 3)
-  = help: for `A : B`, enforce outputs(A) == inputs(B)
-  = help: fix: adjust A or B channel count to same bus width
-  = help: template: process = A : B; // outputs(A) == inputs(B)
 ```
 
 and, in JSON, the same failure carries a stable code, a category, a source
@@ -168,9 +162,9 @@ raising the level never hides something you just saw.
 
 | Level | Shows | For |
 |---|---|---|
-| `concise` | Header, blamed location, first help line. | Editors, status lines, "just take me there". |
-| `standard` *(default)* | Every relevant label, `cause`/`rule`/`computed` notes, traces, fixes. | Humans at a terminal; the complete actionable cause. |
-| `debug` | Plus internal ids and IR previews, plus the typed debug object. | Bug reports, parity investigations. |
+| `concise` | Header, blamed location, first help line specific to this failure. | Editors, status lines, "just take me there". |
+| `standard` *(default)* | Every label that adds a place, notes with what was computed, traces, fixes. | Humans at a terminal; the complete actionable cause. |
+| `debug` | Plus `cause` and `rule` notes, general help, internal ids and IR previews, plus the typed debug object. | Bug reports, parity investigations. |
 | `full` | Plus untruncated traces and related diagnostics. | Deep dives. |
 
 The same undefined-symbol failure at `concise`:
@@ -179,7 +173,6 @@ The same undefined-symbol failure at `concise`:
 lowpass.dsp:3:25: error [FRS-EVAL-0002] undefined symbol `cutof`
   3 | process = fi.lowpass(1, cutof);
     |                         ^^^^^ failing use
-  = help: define the symbol in scope or fix the identifier name
 ```
 
 and at `standard`:
@@ -188,21 +181,17 @@ and at `standard`:
 lowpass.dsp:3:25: error [FRS-EVAL-0002] undefined symbol `cutof`
   3 | process = fi.lowpass(1, cutof);
     |                         ^^^^^ failing use
-  = note: cause: unresolved identifier in current lexical scope
-  = note: rule: referenced identifier must be present in visible lexical scope
-  = note: computed: `cutof` is not present in current visible scope
   = note: did you mean: cutoff?
   = note: scope.visible=20 names, the closest: cutoff; all in --error-format json
   = fix (maybe-incorrect): rename to `cutoff`
     `cutoff` is visible from this site, but renaming changes which definition runs
-  = help: define the symbol in scope or fix the identifier name
-  = help: template: cutof = ...; // define before use
-  = help: for top-level aliases: define target before first use
 ```
 
 Notes always appear in a canonical order — `cause`, `rule`, `computed`,
 `suggested target`, then context — regardless of which compiler stage produced
-them, so two failures of the same kind read the same way.
+them, so two failures of the same kind read the same way. The first two say in
+words what the header says, and `general:` and `template:` help holds for every
+failure of a kind: they are for `debug` and the JSON report, which has them all.
 
 `standard` leaves out what the reader already has: a label on a place another
 one marks, the enclosing definition when it is on the line of the error, and
@@ -228,8 +217,6 @@ $ faust-rs --check --warn sqrt.dsp
 sqrt.dsp:1:1: warning [FRS-COMP-0004] sqrt may be called outside its mathematical domain: operand interval is interval(-1,1,-24), expected [0, +infinity)
   1 | process = sqrt;
     | ^^^^^^^ related source
-  = note: cause: the operand interval extends outside the operation's domain
-  = note: rule: sqrt requires its operand to stay within [0, +infinity)
   = note: computed: inferred operand interval = interval(-1,1,-24)
   = help: constrain the operand to [0, +infinity), for example with `max`/`min`, so the domain holds for every sample
 Check OK: 0 diagnostics
@@ -609,14 +596,12 @@ faust-rs:
 e_noprocess.dsp:2:1: error [FRS-EVAL-0001] missing `process` definition
   2 | proces = *(gain);
     | ^^^^^^ call site
-  = note: cause: required top-level `process` definition is missing
   = note: did you mean: proces?
   = note: entrypoint contract: one top-level `process = ...;` definition is required
   = note: available top-level definitions: gain, proces
   = fix (maybe-incorrect): rename to `process`
     `proces` looks like a misspelling of the required `process` entry point
   = help: define `process = ...;` in the top-level definitions
-  = help: template: process = _;
 ```
 
 Note the C++ location: `????:-1`. There is no location to give, because the
@@ -708,12 +693,8 @@ e_case.dsp:5:11: error [FRS-EVAL-0099] no case rule matches `sel(2, ...)`
     |           ^^^ failing use
   1 | sel = case {
     | ^^^ the rules that do not match
-  = note: cause: no case rule matched the provided argument tuple
-  = note: rule: at least one case pattern must match the provided argument tuple
-  = note: computed: provided tuple did not match any declared case pattern
   = note: computed: no rule survived after 1 of 2 argument(s)
   = trace (evaluation): arguments -> rule 1 -> rule 2
-  = help: add a matching case rule or add a catch-all pattern
 ```
 
 The call is the failure and the rules a second place. The message cites the
@@ -779,11 +760,9 @@ e_iter.dsp:1 : ERROR : not a constant expression of type : (0->1) : +
 faust-rs:
 
 ```text
-e_iter.dsp:1:1: error [FRS-EVAL-0004] iteration count is not an int node: 5
+e_iter.dsp:1:1: error [FRS-EVAL-0004] iteration count is not an integer constant
   1 | process = par(i, +, 8);
     | ^^^^^^^ definition site
-  = note: cause: iterative combinator count is not a valid non-negative integer
-  = note: rule: iterator count must be integer, non-negative, and within supported range
   = help: iteration count must be a non-negative integer in target range
 ```
 
@@ -805,8 +784,6 @@ faust-rs:
 e_soundfile.dsp:1:16: error [FRS-COMP-0004] out of range soundfile part number (interval(-1,1,-24) instead of interval(0,255))
   1 | process = _, 0 : soundfile("foo.wav", 2);
     |                ^ source expression
-  = note: cause: an inferred signal type or interval violates a typing rule
-  = note: rule: a soundfile part selector must stay within the integer interval [0, 255]
   = note: computed: inferred interval = interval(-1,1,-24), expected integer interval [0, 255]
   = help: clamp the part selector into 0..255, for example with `min(255, max(0, part))`
 ```
@@ -836,8 +813,6 @@ faust-rs:
 e_modzero.dsp:1:1: error [FRS-COMP-0004] % by 0
   1 | process = _ % 0;
     | ^^^^^^^ related source
-  = note: cause: an inferred signal type or interval violates a typing rule
-  = note: rule: an operand must stay inside its operation's mathematical domain
   = note: computed: inferred operand intervals = interval(-1,1,-24), interval(0,0,0), expected denominator must be non-zero
   = help: constrain the operand so the domain holds for every sample, for example with `max`/`min`
 ```
@@ -871,8 +846,6 @@ e_divzero.dsp:1:1: error [FRS-EVAL-0007] division by 0 in 2.0 / 0
     | ^^^^ definition site
   2 | process = par(i, 2, _ * coef(i, 1, 1));
     | ^^^^^^^ call site
-  = note: cause: a constant expression divides by a constant zero
-  = note: rule: the divisor of a constant division must not be zero, in integers or in reals
   = note: computed: `2.0 / 0`, after the operands were folded to constants
   = note: error originates from definition 'coef'
   = help: check the value the divisor takes here: an iteration index starts at 0, and a function argument may be 0 at this call
@@ -903,8 +876,6 @@ e_uipath.dsp:2:13: error [FRS-UI-0001] UI path '/e_uipath/gain' is claimed by 2 
     |             ^^^^^^^ duplicate claim
   1 | process = *(hslider("gain", 0.5, 0, 1, 0.01))
     |             ^^^^^^^ first claim of this path
-  = note: cause: two user-interface controls resolve to the same runtime address
-  = note: rule: every UI control must have a unique group path plus label
   = note: computed: normalized path = /e_uipath/gain, claimed 2 times
   = help: rename one control, or place them in different groups
   = help: group placement example: hgroup("left", ...) and hgroup("right", ...)

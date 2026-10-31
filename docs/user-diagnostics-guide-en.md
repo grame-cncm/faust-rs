@@ -28,9 +28,8 @@ Typical human output includes:
 - header: `error [FRS-...-....] message`,
 - source label with line/caret when available,
 - notes:
-  - `cause:` why the compiler failed,
-  - `rule:` semantic rule being checked,
   - `computed:` concrete values computed by the compiler,
+  - `suggested target:` the value that would fit,
   - context notes (owner definition and alias trace, past the entry point),
 - `help:` concrete fix suggestions.
 
@@ -65,8 +64,8 @@ below it, so raising the level never hides something you just saw.
 | Level | Shows |
 |---|---|
 | `concise` | header, the blamed location, and the first help line |
-| `standard` (default) | every relevant label, `cause`/`rule`/`computed` notes, traces, and fixes |
-| `debug` | plus internal ids and previews (`node_id`, `box_expr`) and the typed debug object |
+| `standard` (default) | every label that adds a place, `computed` notes, traces, and fixes |
+| `debug` | plus `cause:` and `rule:` notes, general help, internal ids and previews (`node_id`, `box_expr`) and the typed debug object |
 | `full` | plus untruncated traces and related diagnostics |
 
 Use `standard` day to day, `concise` when you only want to be routed to the

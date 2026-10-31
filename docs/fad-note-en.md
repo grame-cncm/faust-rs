@@ -94,7 +94,6 @@ identifier because the UI program is built after propagation:
 
 ```text
 error [FRS-PROP-0005] fad seed 1 `input 0 + input 1` is computed from seeds 2 `input 0` and 3 `input 1`
-  = note: cause: a seed is differentiated as an independent variable; what computes it is a constant for every lane
   = note: lanes 2 and 3 would be 0 wherever the body reads `input 0 + input 1`, since the tangent of `input 0` and `input 1` does not pass through a seed
   = help: to differentiate with respect to `input 0` and `input 1`, drop `input 0 + input 1` from the seed list: fad(…, (input 0, input 1))
   = help: to differentiate with respect to `input 0 + input 1` as one quantity, seed it alone: fad(…, input 0 + input 1)

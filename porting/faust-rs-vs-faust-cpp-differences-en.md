@@ -253,8 +253,9 @@ must run unchanged with Faust C++ should not pass them.
   found. The line of the first error is unchanged. Scope lists past twelve names
   are summed up in the text and whole in the JSON facts. Human output starts on
   the diagnostic, with no `... pipeline failed:` line, and at `standard` carries
-  neither box node numbers nor a label on a place another one marks: the JSON
-  report keeps the labels, the scopes and the binding trace. An arity mismatch
+  neither box node numbers, nor a label on a place another one marks, nor notes
+  and help that restate the header or hold for every failure of a kind: the JSON
+  report keeps all of it. An arity mismatch
   also labels the definitions of its operands, and `too many arguments` and a
   failed `case` are reported on the call and cite it; the C++ compiler has no
   location for them. Tests:

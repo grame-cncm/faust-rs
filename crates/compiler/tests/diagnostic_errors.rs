@@ -527,8 +527,8 @@ fn eval_undefined_symbol_alias_chain_exposes_rule_computed_and_template_help() {
         first
             .notes
             .iter()
-            .any(|n| n.as_ref().starts_with("computed: `z` is not present")),
-        "undefined-symbol diagnostics should expose computed note"
+            .any(|n| n.as_ref().starts_with("cause: `z` is not present")),
+        "undefined-symbol diagnostics should expose the cause in terms of the symbol"
     );
     assert!(
         first

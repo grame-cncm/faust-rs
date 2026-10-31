@@ -7,11 +7,5 @@ faustprobe: --compare: evaluation failed for <CRATE>/tests/output/dsp/broken.dsp
 <CRATE>/tests/output/dsp/broken.dsp:1:15: error [FRS-EVAL-0002] undefined symbol `fooo`
   1 | process = _ : fooo;
     |               ^^^^ failing use
-  = note: cause: unresolved identifier in current lexical scope
-  = note: rule: referenced identifier must be present in visible lexical scope
-  = note: computed: `fooo` is not present in current visible scope
   = note: scope.visible=process
-  = help: define the symbol in scope or fix the identifier name
-  = help: template: fooo = ...; // define before use
-  = help: for top-level aliases: define target before first use
 

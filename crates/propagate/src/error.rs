@@ -251,15 +251,15 @@ impl ToDiagnostic for PropagateError {
                 .with_note("cause: sequential composition bus widths do not match")
                 .with_note("rule: seq(A, B) requires outputs(A) == inputs(B)")
                 .with_note(format!(
-                    "computed: {left_outputs} == {right_inputs} -> {}",
+                    "cause: {left_outputs} == {right_inputs} -> {}",
                     left_outputs == right_inputs
                 ))
                 .with_note(format!(
                     "suggested target: make outputs(A) and inputs(B) equal (common target: {})",
                     left_outputs.max(right_inputs)
                 ))
-                .with_help("for `A : B`, enforce outputs(A) == inputs(B)")
-                .with_help("fix: adjust A or B channel count to same bus width")
+                .with_help("general: for `A : B`, enforce outputs(A) == inputs(B)")
+                .with_help("general: adjust A or B channel count to same bus width")
                 .with_help("template: process = A : B; // outputs(A) == inputs(B)"),
             Self::SplitArityMismatch {
                 left_outputs,
@@ -288,8 +288,8 @@ impl ToDiagnostic for PropagateError {
                         "suggested target: set inputs(B) to {next} (next multiple of outputs(A)={left_outputs})"
                     )
                 })
-                .with_help("for `A <: B`, enforce inputs(B) % outputs(A) == 0")
-                .with_help("fix: make B inputs a multiple of A outputs")
+                .with_help("general: for `A <: B`, enforce inputs(B) % outputs(A) == 0")
+                .with_help("general: make B inputs a multiple of A outputs")
                 .with_help("template: process = A <: B; // inputs(B) % outputs(A) == 0"),
             Self::MergeArityMismatch {
                 left_outputs,
@@ -318,8 +318,8 @@ impl ToDiagnostic for PropagateError {
                         "suggested target: set outputs(A) to {next} (next multiple of inputs(B)={right_inputs})"
                     )
                 })
-                .with_help("for `A :> B`, enforce outputs(A) % inputs(B) == 0")
-                .with_help("fix: make A outputs a multiple of B inputs")
+                .with_help("general: for `A :> B`, enforce outputs(A) % inputs(B) == 0")
+                .with_help("general: make A outputs a multiple of B inputs")
                 .with_help("template: process = A :> B; // outputs(A) % inputs(B) == 0"),
             Self::RecArityMismatch {
                 left_inputs,
@@ -354,9 +354,9 @@ impl ToDiagnostic for PropagateError {
                 right_inputs, right_outputs
             ))
             .with_help(
-                "for `A ~ B`, enforce inputs(B) <= outputs(A) and outputs(B) <= inputs(A)",
+                "general: for `A ~ B`, enforce inputs(B) <= outputs(A) and outputs(B) <= inputs(A)",
             )
-            .with_help("fix: reduce B feedback bus or widen matching A arities")
+            .with_help("general: reduce B feedback bus or widen matching A arities")
             .with_help(
                 "template: process = A ~ B; // inputs(B)<=outputs(A), outputs(B)<=inputs(A)",
             ),

@@ -95,9 +95,7 @@ fn a_text_longer_than_the_buffer_is_whole() {
     assert!(complete.len() > 4096, "only {} bytes", complete.len());
     assert!(complete.contains(&format!("undefined symbol `{symbol}`")));
     assert!(
-        complete
-            .trim_end()
-            .ends_with("define target before first use"),
+        complete.trim_end().ends_with("scope.visible=process"),
         "{complete}"
     );
 }

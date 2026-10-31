@@ -680,8 +680,8 @@ impl Display for EvalError {
                     node.as_u32()
                 )
             }
-            Self::IterationCountNotInt { node } => {
-                write!(f, "iteration count is not an int node: {}", node.as_u32())
+            Self::IterationCountNotInt { .. } => {
+                write!(f, "iteration count is not an integer constant")
             }
             Self::IterationCountTooLarge { value } => {
                 write!(f, "iteration count too large for this target: {value}")
@@ -938,7 +938,7 @@ impl ToDiagnostic for EvalError {
             .with_note("cause: unresolved identifier in current lexical scope")
             .with_note("rule: referenced identifier must be present in visible lexical scope")
             .with_note(format!(
-                "computed: `{symbol}` is not present in current visible scope"
+                "cause: `{symbol}` is not present in current visible scope"
             ))
             .with_note(format!("scope.visible={}", scope_summary(symbol, visible_scope)))
             .with_detail_code("undefined-binding")
@@ -946,9 +946,9 @@ impl ToDiagnostic for EvalError {
             .with_fact("scope_local", local_scope.clone())
             .with_fact("scope_visible", visible_scope.clone())
             .with_fact("scope_top_level", top_level_scope.clone())
-            .with_help("define the symbol in scope or fix the identifier name")
+            .with_help("general: define the symbol in scope or fix the identifier name")
             .with_help(format!("template: {symbol} = ...; // define before use"))
-            .with_help("for top-level aliases: define target before first use"),
+            .with_help("general: for top-level aliases, define the target before its first use"),
             Self::PatternArityMismatch { expected, got, .. } => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,
@@ -977,14 +977,14 @@ impl ToDiagnostic for EvalError {
                 "rule: non-closure application requires provided arguments <= function input arity",
             )
             .with_note(format!(
-                "computed: provided={got}, expected_max={expected}, overflow={}",
+                "cause: provided={got}, expected_max={expected}, overflow={}",
                 got.saturating_sub(*expected)
             ))
             .with_note(format!(
                 "suggested target: remove {} extra argument(s)",
                 got.saturating_sub(*expected)
             ))
-            .with_help("remove extra arguments or expand the function input arity")
+            .with_help("general: remove extra arguments or expand the function input arity")
             .with_help("template: f(a, b); // keep provided args <= function input arity"),
             Self::InvalidModulationLabel { .. } => Diagnostic::new(
                 Severity::Error,
@@ -1015,7 +1015,7 @@ impl ToDiagnostic for EvalError {
                 message,
             )
             .with_note("cause: modulation circuit violates Faust box-arity constraints")
-            .with_note(format!("computed: {reason}"))
+            .with_note(format!("cause: {reason}"))
             .with_help("use a modulation circuit with at most 2 inputs and exactly 1 output"),
             Self::InvalidControlListOperand { primitive, .. } => Diagnostic::new(
                 Severity::Error,
@@ -1193,7 +1193,7 @@ impl ToDiagnostic for EvalError {
                 "rule: each symbol may appear at most once per `with {}` block or definition list",
             )
             .with_note(format!(
-                "computed: `{symbol}` first bound to node {}, then to node {} (different values)",
+                "cause: `{symbol}` first bound to node {}, then to node {} (different values)",
                 first_def.as_u32(),
                 second_def.as_u32()
             ))
@@ -1214,8 +1214,8 @@ impl ToDiagnostic for EvalError {
             )
             .with_note("cause: no case rule matched the provided argument tuple")
             .with_note("rule: at least one case pattern must match the provided argument tuple")
-            .with_note("computed: provided tuple did not match any declared case pattern")
-            .with_help("add a matching case rule or add a catch-all pattern"),
+            .with_note("cause: provided tuple did not match any declared case pattern")
+            .with_help("general: add a matching case rule or add a catch-all pattern"),
             Self::IterationCountNotInt { .. }
             | Self::IterationCountTooLarge { .. }
             | Self::NegativeIterationCount { .. } => Diagnostic::new(

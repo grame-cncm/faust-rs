@@ -8,15 +8,9 @@ tests/output/dsp/small.lib:1:1: error [FRS-EVAL-0002] undefined symbol `k`
      | ^^^^^^^^^^^^^^^^ definition site
   10 | process = __faustprobe_env.__faustprobe_eval0;
      | ^^^^^^^ call site
-  = note: cause: unresolved identifier in current lexical scope
-  = note: rule: referenced identifier must be present in visible lexical scope
-  = note: computed: `k` is not present in current visible scope
   = note: scope.visible=__faustprobe_env, __faustprobe_eval0, onepole, pair, process, scaled, twice, voice
   = note: error originates from definition '__faustprobe_env'
   = note: binding_trace=process -> __faustprobe_env
-  = help: define the symbol in scope or fix the identifier name
-  = help: template: k = ...; // define before use
-  = help: for top-level aliases: define target before first use
   = note: `k` is used by <eval 0>, `--eval 'k'`: an expression sees the file's top-level definitions, not those local to a `with` block
   = note: `__faustprobe_env = environment{...` and `process = ...` are the wrapper `--eval` puts around the file
 

@@ -10,18 +10,20 @@
 //!
 //! | Level | Adds |
 //! | --- | --- |
-//! | `Concise` | header, primary snippet, first help |
-//! | `Standard` | every label that adds a place, rule/computed notes, traces, fixes |
-//! | `Debug` | every label, internal ids, box/signal previews, typed debug context |
+//! | `Concise` | header, primary snippet, first specific help |
+//! | `Standard` | every label that adds a place, notes with computed facts, traces, fixes |
+//! | `Debug` | every label, `cause:` and `rule:` notes, general help, internal ids, box/signal previews, typed debug context |
 //! | `Full` | untruncated traces and related diagnostics |
 //!
 //! # What this module must not do
 //!
 //! It reads typed fields only. Machine information travels in
 //! [`diagnostics::Diagnostic::facts`], `traces`, `fixes`, and label roles;
-//! notes and help are presentation text. The one exception is the paired
-//! `A`/`B` composition block, which is a rendering convention over notes a
-//! propagate diagnostic writes for that purpose — it classifies nothing.
+//! notes and help are presentation text. Two exceptions are rendering
+//! conventions over that text and classify no failure: the paired `A`/`B`
+//! composition block, and the prefixes of what restates a header in words
+//! (`cause:`, `rule:`) or holds for every failure of a kind (`template:`,
+//! `general:`), left to the levels above `Standard`.
 //!
 //! # Color
 //!
@@ -268,7 +270,7 @@ pub fn format_bundle(bundle: &DiagnosticBundle, options: HumanRenderOptions) -> 
         render_labels(&mut out, bundle, diagnostic, options, &palette);
 
         if options.verbosity == ErrorVerbosity::Concise {
-            if let Some(help) = diagnostic.help.first() {
+            if let Some(help) = visible_help(&diagnostic.help, options.verbosity).first() {
                 push_tagged(&mut out, palette.help, "help", help);
             }
             continue;
@@ -284,7 +286,7 @@ pub fn format_bundle(bundle: &DiagnosticBundle, options: HumanRenderOptions) -> 
         for fix in &diagnostic.fixes {
             render_fix(&mut out, fix, &palette);
         }
-        for help in &diagnostic.help {
+        for help in visible_help(&diagnostic.help, options.verbosity) {
             push_tagged(&mut out, palette.help, "help", help);
         }
         if options.verbosity.shows_internals()
@@ -593,10 +595,29 @@ fn visible_notes(notes: &[Box<str>], verbosity: ErrorVerbosity) -> Vec<&str> {
             {
                 return false;
             }
+            // They say in words what the header says, which is for a reader
+            // who asks why.
+            if !verbosity.shows_internals()
+                && (note.starts_with("cause:") || note.starts_with("rule:"))
+            {
+                return false;
+            }
             // The A/B block below already prints these.
             !(paired && (note.starts_with("A ") || note.starts_with("B ")))
         })
         .map(AsRef::as_ref)
+        .collect()
+}
+
+/// The help of a diagnostic that depends on this failure and not only on its
+/// kind, past the levels that show everything.
+fn visible_help(help: &[Box<str>], verbosity: ErrorVerbosity) -> Vec<&str> {
+    help.iter()
+        .map(AsRef::as_ref)
+        .filter(|help: &&str| {
+            verbosity.shows_internals()
+                || !(help.starts_with("template:") || help.starts_with("general:"))
+        })
         .collect()
 }
 

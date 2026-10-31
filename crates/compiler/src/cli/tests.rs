@@ -773,7 +773,6 @@ fn diagnostics_human_renderer_snapshot_with_snippet_and_caret() {
 $TMPFILE:1:13: error [FRS-PROP-0002] split composition mismatch
   1 | process = _,_ <: _,_,_;
     |             ^^ related source
-  = note: rule: split(A, B) requires inputs(B) % outputs(A) == 0
   = note: computed: 3 % 2 = 1
   = help: make B input count a multiple of A output count
 ";
@@ -1108,7 +1107,6 @@ fn diagnostics_human_renderer_snapshots_cover_complex_phase4_failures() {
             "err_08_propagate_seq_ui_mismatch.dsp",
             vec![
                 "error [FRS-PROP-0002] sequential composition mismatch",
-                "cause: sequential composition bus widths do not match",
                 "error originates from definition 'foo'",
                 "binding_trace=process -> foo",
                 "Here  A = hslider(\"gain\", 0.5, 0, 1, 0.01)",
@@ -1120,12 +1118,10 @@ fn diagnostics_human_renderer_snapshots_cover_complex_phase4_failures() {
             "err_16_propagate_compound_with_letrec_split.dsp",
             vec![
                 "error [FRS-PROP-0002] split composition mismatch",
-                "cause: split composition divisibility rule is violated",
                 "error originates from definition 'foo'",
                 "binding_trace=process -> baz -> bar -> foo",
                 "Here  A = (_, _)",
                 "while B = (_, (_, _))",
-                "template: process = A <: B; // inputs(B) % outputs(A) == 0",
             ],
         ),
     ];
@@ -1251,7 +1247,10 @@ fn diagnostics_human_renderer_snapshot_for_eval_undefined_symbol() {
     assert!(normalized.contains("error originates from definition 'foo'"));
     assert!(normalized.contains("binding_trace=process -> foo"));
     assert!(!normalized.contains("expr="));
-    assert!(normalized.contains("define the symbol in scope or fix the identifier name"));
+    // what holds for every undefined symbol is for who asks
+    assert!(!normalized.contains("define the symbol in scope or fix the identifier name"));
+    let debug = format_diagnostics_human_with_verbosity(diagnostics, ErrorVerbosity::Debug);
+    assert!(debug.contains("general: define the symbol in scope or fix the identifier name"));
 }
 
 #[test]
@@ -1267,13 +1266,21 @@ fn diagnostics_human_renderer_snapshot_for_eval_undefined_symbol_alias_chain() {
     let normalized = rendered.replace(&path_text, "$FIXTURE");
 
     assert!(normalized.contains("error [FRS-EVAL-0002] undefined symbol `z`"));
-    assert!(normalized.contains("cause: unresolved identifier in current lexical scope"));
     assert!(normalized.contains("error originates from definition 'foo'"));
     assert!(normalized.contains("binding_trace=process -> baz -> bar -> foo"));
-    assert!(
-        normalized.contains("rule: referenced identifier must be present in visible lexical scope")
-    );
-    assert!(normalized.contains("template: z = ...; // define before use"));
+    // words for the header and what holds for every undefined symbol: at
+    // `debug`, each level a superset of the one below
+    for text in [
+        "cause: unresolved identifier in current lexical scope",
+        "rule: referenced identifier must be present in visible lexical scope",
+        "template: z = ...; // define before use",
+    ] {
+        assert!(!normalized.contains(text), "{normalized}");
+        let debug = format_diagnostics_human_with_verbosity(diagnostics, ErrorVerbosity::Debug);
+        assert!(debug.contains(text), "{debug}");
+    }
+    let concise = format_diagnostics_human_with_verbosity(diagnostics, ErrorVerbosity::Concise);
+    assert!(!concise.contains("help:"), "{concise}");
 }
 
 #[test]
@@ -1335,11 +1342,10 @@ fn diagnostics_json_renderer_snapshot_for_eval_undefined_symbol_alias_chain() {
 
     let cause_i = note_index(&notes, "cause:");
     let rule_i = note_index(&notes, "rule:");
-    let computed_i = note_index(&notes, "computed:");
     let context_i = note_index(&notes, "scope.visible=");
     assert!(
-        cause_i < rule_i && rule_i < computed_i && computed_i < context_i,
-        "eval JSON note ordering should be cause -> rule -> computed -> context"
+        cause_i < rule_i && rule_i < context_i,
+        "eval JSON note ordering should be cause -> rule -> context"
     );
 }
 

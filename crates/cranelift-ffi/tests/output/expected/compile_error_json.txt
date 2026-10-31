@@ -64,9 +64,9 @@ exit=1
       },
       "fixes": [],
       "help": [
-        "define the symbol in scope or fix the identifier name",
+        "general: define the symbol in scope or fix the identifier name",
         "template: fooo = ...; // define before use",
-        "for top-level aliases: define target before first use"
+        "general: for top-level aliases, define the target before its first use"
       ],
       "labels": [
         {
@@ -124,8 +124,8 @@ exit=1
       "message": "undefined symbol `fooo`",
       "notes": [
         "cause: unresolved identifier in current lexical scope",
+        "cause: `fooo` is not present in current visible scope",
         "rule: referenced identifier must be present in visible lexical scope",
-        "computed: `fooo` is not present in current visible scope",
         "scope.visible=process",
         "node_id=5",
         "box_expr=BOXIDENT(sym(\"fooo\"))"

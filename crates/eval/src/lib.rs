@@ -1114,7 +1114,7 @@ fn eval_value_uncached(
         // Without this arm, `outputs(…)` reaches the `_` catch-all and is
         // kept as a `BOXOUTPUTS(…)` node.  When that node is later used as
         // the iteration count of an `ipar`/`par`, `eval_non_negative_count`
-        // fails with "iteration count is not an int node".
+        // fails with "iteration count is not an integer constant".
         //
         // Example failure (softclipQuadratic1 in aanl.lib):
         //   pickN(N,O) = route(N,outputs(O), par(o,outputs(O), …))
