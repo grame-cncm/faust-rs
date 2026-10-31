@@ -858,10 +858,7 @@ impl ParserCtx {
                     ),
                 ),
             ],
-            notes: declarations
-                .iter()
-                .map(|text| format!("declaration: {text}").into_boxed_str())
-                .collect(),
+            notes: Vec::new(),
             help: vec![
                 format!("keep one `{symbol} = ...;` clause, or give the clauses distinct patterns")
                     .into_boxed_str(),

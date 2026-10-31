@@ -80,11 +80,9 @@ fn the_binary_prints_the_diagnostic_and_fails() {
     assert!(!out.status.success());
     assert!(out.stdout.is_empty(), "nothing is rendered");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.starts_with("faustprobe: parse failed for"),
-        "{stderr}"
-    );
-    assert!(stderr.contains(":2:21: error [FRS-PARSE-0001]"), "{stderr}");
+    let first = stderr.lines().next().expect("a diagnostic");
+    assert!(first.contains(":2:21: error [FRS-PARSE-0001]"), "{stderr}");
+    assert!(!stderr.contains("parse failed for"), "{stderr}");
     assert!(stderr.contains("  2 | process = _ : *(0.5 ;"), "{stderr}");
     assert!(stderr.contains("^ unexpected token"), "{stderr}");
 }

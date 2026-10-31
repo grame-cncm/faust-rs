@@ -604,10 +604,7 @@ impl ParseState {
     /// multi-line message.
     ///
     /// `variants_rev` stores payloads in parser-list reverse order, so it is
-    /// iterated in reverse to follow source order. `dump_box` renders the
-    /// clauses because this parser layer only has normalized box nodes at this
-    /// point; exact pretty-print parity matters less than preserving the
-    /// semantic error boundary.
+    /// iterated in reverse to follow source order.
     fn report_zero_arity_redefinition(&mut self, name: TreeId, variants_rev: &[TreeId]) {
         let name_text = self
             .definition_name_key(name)
@@ -617,15 +614,18 @@ impl ParseState {
             let Some((args, body)) = self.definition_payload_parts(*payload) else {
                 continue;
             };
-            if self.arena.is_nil(args) {
-                declarations.push(format!("{name_text} = {};", dump_box(&self.arena, body)));
+            let parameters = tlib::list_to_vec(&self.arena, args)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+                .map(|parameter| self.clause_text(parameter))
+                .collect::<Vec<_>>();
+            let body = self.clause_text(body);
+            declarations.push(if parameters.is_empty() {
+                format!("{name_text} = {body};")
             } else {
-                declarations.push(format!(
-                    "{name_text}{} = {};",
-                    dump_box(&self.arena, args),
-                    dump_box(&self.arena, body)
-                ));
-            }
+                format!("{name_text}({}) = {body};", parameters.join(", "))
+            });
         }
         let sites = self.declaration_sites(name);
         self.ctx.error_conflicting_declarations(
@@ -636,6 +636,11 @@ impl ParseState {
             &sites,
             &declarations,
         );
+    }
+
+    fn clause_text(&self, node: TreeId) -> String {
+        boxes::box_pp_bounded(&self.arena, node, 0, boxes::FloatSize::Double, 180)
+            .unwrap_or_else(|_| dump_box(&self.arena, node))
     }
 
     /// Returns every recorded definition-side occurrence of one identifier, in

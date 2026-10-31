@@ -669,7 +669,8 @@ pub fn emit_cli_json_companion_for_backend(
 /// their `Err` arm through this one function so the human/json split is
 /// enforced in one place instead of once per backend.
 pub(crate) fn report_pipeline_failure(prefix: &str, err: &CompilerError, cli: &CliArgs) -> ! {
-    if matches!(cli.error_format, ErrorFormat::Human) {
+    // The diagnostics say it all, and say it first in the path:line: form
+    if matches!(cli.error_format, ErrorFormat::Human) && err.diagnostic_bundle().is_empty() {
         eprintln!("{prefix}: {err}");
     }
     print_bundle(

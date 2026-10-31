@@ -60,6 +60,64 @@ fn a_local_definition_sharing_a_top_level_name_keeps_the_failing_use() {
 }
 
 /// A library's names stay in the facts, and the text keeps the close ones.
+/// The expression of a diagnostic, which the label already points at: a debug
+/// fact, for `--error-verbosity debug`.
+fn readable_expr(diagnostic: &compiler::Diagnostic) -> String {
+    let debug = diagnostic.debug.as_ref().expect("a debug context");
+    let (_, value) = debug
+        .fields
+        .iter()
+        .find(|(key, _)| key.as_str() == "expr")
+        .expect("a readable expression");
+    match value {
+        DiagnosticValue::String(text) => text.to_string(),
+        other => panic!("not a string: {other:?}"),
+    }
+}
+
+/// A message is for a reader, and a node number means nothing to one.
+#[test]
+fn a_message_names_no_node_of_the_box_tree() {
+    let err = Compiler::new()
+        .compile_source_to_signals("seq.dsp", "process = (_, _) : (_, _, _);\n")
+        .expect_err("the composition should fail");
+    let message = &err.diagnostic_bundle().as_slice()[0].message;
+    assert_eq!(
+        message.as_ref(),
+        "sequential composition mismatch: left outputs (2) != right inputs (3)"
+    );
+    assert!(!err.to_string().contains(" node "), "{err}");
+}
+
+/// A function in an expression reads as Faust, as `boxpp` writes it, and not as
+/// the tags of the box tree.
+#[test]
+fn a_composition_prints_a_function_as_faust() {
+    let source = "f(x) = x * 0.5;\nprocess = (_, _) : (_, _, _) : f;\n";
+    let err = Compiler::new()
+        .compile_source_to_signals("lambda.dsp", source)
+        .expect_err("the composition should fail");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    let expr = readable_expr(diagnostic);
+    assert!(expr.contains("\\(x1).("), "{expr}");
+    assert!(!expr.contains("BOX"), "{expr}");
+
+    // what the printer of the previews has no form of its own for
+    for (source, text) in [
+        (
+            "process = fconstant(int fSamplingFreq, <math.h>) : (_, _);\n",
+            "fconstant(int fSamplingFreq, <math.h>)",
+        ),
+        ("process = waveform{1, 2} : (_, _, _);\n", "waveform{1,2}"),
+    ] {
+        let err = Compiler::new()
+            .compile_source_to_signals("leaf.dsp", source)
+            .expect_err("the composition should fail");
+        let expr = readable_expr(&err.diagnostic_bundle().as_slice()[0]);
+        assert!(expr.contains(text), "{expr}");
+    }
+}
+
 #[test]
 fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();
@@ -71,7 +129,7 @@ fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let note = diagnostic
         .notes
         .iter()
-        .find(|note| note.starts_with("scope.top_level="))
+        .find(|note| note.starts_with("scope.visible="))
         .expect("a scope note");
     assert!(note.contains("names, the closest:"), "{note}");
     assert!(note.contains("name_3"), "{note}");
@@ -136,22 +194,23 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
         (
             "err_09_eval_undefined_symbol.dsp",
             1u32,
-            "error originates from definition 'foo'",
+            Some("error originates from definition 'foo'"),
         ),
         (
             "err_10_eval_too_many_arguments.dsp",
             2u32,
-            "error originates from definition 'process'",
+            // the snippet shows it, and a note would only repeat it
+            None,
         ),
         (
             "err_12_eval_case_no_match.dsp",
             1u32,
-            "error originates from definition 'foo'",
+            Some("error originates from definition 'foo'"),
         ),
         (
             "err_13_eval_undefined_symbol_alias_chain_nested.dsp",
             1u32,
-            "error originates from definition 'foo'",
+            Some("error originates from definition 'foo'"),
         ),
     ];
 
@@ -182,11 +241,18 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
             "{file} should point to expected source line"
         );
         assert!(
-            first.notes.iter().any(|n| n.starts_with("expr=")),
+            !readable_expr(first).is_empty(),
             "{file} should include readable expression context"
         );
         assert!(
-            first.notes.iter().any(|n| n.as_ref() == owner_note),
+            first
+                .facts
+                .iter()
+                .any(|(key, _)| key.as_str() == "owner_definition"),
+            "{file} should expose owner definition fact"
+        );
+        assert!(
+            owner_note.is_none_or(|note| first.notes.iter().any(|n| n.as_ref() == note)),
             "{file} should expose owner definition note"
         );
     }
@@ -294,23 +360,15 @@ fn eval_undefined_symbol_exposes_binding_trace() {
         first
             .notes
             .iter()
-            .any(|n| n.as_ref().starts_with("scope.local=")),
-        "undefined symbol diagnostics should include local scope context"
-    );
-    assert!(
-        first
-            .notes
-            .iter()
             .any(|n| n.as_ref().starts_with("scope.visible=")),
         "undefined symbol diagnostics should include visible scope context"
     );
-    assert!(
-        first
-            .notes
-            .iter()
-            .any(|n| n.as_ref().starts_with("scope.top_level=")),
-        "undefined symbol diagnostics should include top-level scope context"
-    );
+    for fact in ["scope_local", "scope_visible", "scope_top_level"] {
+        assert!(
+            first.facts.iter().any(|(key, _)| key.as_str() == fact),
+            "undefined symbol diagnostics should include {fact}"
+        );
+    }
 }
 
 #[test]
@@ -686,13 +744,8 @@ fn propagate_error_operator_span_points_to_composition_token() {
         primary.span.col > 1,
         "operator-level span should not point to definition column 1"
     );
-    let readable_expr = first
-        .notes
-        .iter()
-        .find(|note| note.as_ref().starts_with("expr="))
-        .expect("diagnostic should expose readable expression note");
     assert!(
-        readable_expr.contains("<:"),
+        readable_expr(first).contains("<:"),
         "readable expression note should preserve split operator context"
     );
 }
@@ -880,11 +933,7 @@ fn propagate_error_ui_expr_note_is_pretty_printed() {
         .as_slice()
         .first()
         .expect("propagate error bundle should not be empty");
-    let expr_note = first
-        .notes
-        .iter()
-        .find(|note| note.starts_with("expr="))
-        .expect("diagnostic should expose readable expression note");
+    let expr_note = readable_expr(first);
     assert!(expr_note.contains("hslider("));
     assert!(expr_note.contains(" : +"));
     assert!(!expr_note.contains("float_bits("));

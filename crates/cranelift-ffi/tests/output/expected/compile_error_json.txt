@@ -18,6 +18,10 @@ exit=1
           "type": "string",
           "value": "BOXIDENT(sym(\"fooo\"))"
         },
+        "expr": {
+          "type": "string",
+          "value": "fooo"
+        },
         "node_id": {
           "type": "unsigned",
           "value": 5
@@ -122,14 +126,9 @@ exit=1
         "cause: unresolved identifier in current lexical scope",
         "rule: referenced identifier must be present in visible lexical scope",
         "computed: `fooo` is not present in current visible scope",
-        "scope.local=process",
         "scope.visible=process",
-        "scope.top_level=process",
         "node_id=5",
-        "box_expr=BOXIDENT(sym(\"fooo\"))",
-        "expr=fooo",
-        "error originates from definition 'process'",
-        "binding_trace=process"
+        "box_expr=BOXIDENT(sym(\"fooo\"))"
       ],
       "related": [],
       "severity": "error",

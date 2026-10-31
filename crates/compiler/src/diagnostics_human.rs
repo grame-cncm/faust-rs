@@ -11,8 +11,8 @@
 //! | Level | Adds |
 //! | --- | --- |
 //! | `Concise` | header, primary snippet, first help |
-//! | `Standard` | every relevant label, rule/computed notes, traces, fixes |
-//! | `Debug` | internal ids, box/signal previews, typed debug context |
+//! | `Standard` | every label that adds a place, rule/computed notes, traces, fixes |
+//! | `Debug` | every label, internal ids, box/signal previews, typed debug context |
 //! | `Full` | untruncated traces and related diagnostics |
 //!
 //! # What this module must not do
@@ -41,7 +41,8 @@ use anstream::AutoStream;
 use anstyle::{AnsiColor, Style};
 use clap::{ColorChoice, ValueEnum};
 use diagnostics::{
-    Applicability, DiagnosticBundle, DiagnosticTrace, Label, LabelStyle, Severity, SuggestedFix,
+    Applicability, DiagnosticBundle, DiagnosticTrace, Label, LabelRole, LabelStyle, Severity,
+    SuggestedFix,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -375,15 +376,22 @@ fn render_labels(
 
     // Labels that land on one line share its snippet: echoing the same source
     // line once per label is noise, and the carets are what distinguish them.
+    let primary_line = primary_label(diagnostic).map(|l| (l.span.file.as_path(), l.span.line));
     let mut current_line: Option<(&Path, u32)> = None;
     for label in labels {
+        // One place gets one caret, and the definition a reader is looking at
+        // needs none
         let key = (
             label.span.file.clone(),
             label.span.line,
             label.span.col,
-            label.message.clone(),
+            label.span.end_col,
         );
-        if !shown.insert(key) {
+        let repeated = !shown.insert(key);
+        let on_primary_line = label.style == LabelStyle::Secondary
+            && matches!(label.role, LabelRole::DefinitionSite | LabelRole::CallSite)
+            && primary_line == Some((label.span.file.as_path(), label.span.line));
+        if !options.verbosity.shows_internals() && (repeated || on_primary_line) {
             continue;
         }
         if current_file != Some(label.span.file.as_path()) {
@@ -579,8 +587,7 @@ fn visible_notes(notes: &[Box<str>], verbosity: ErrorVerbosity) -> Vec<&str> {
         .iter()
         .filter(|note| {
             // `node_id=` and `box_expr=` are internal IR that duplicates typed
-            // debug fields. `expr=` stays: it is the readable Faust-like
-            // rendering, which is context a terminal reader wants.
+            // debug fields.
             if !verbosity.shows_internals()
                 && (note.starts_with("node_id=") || note.starts_with("box_expr="))
             {

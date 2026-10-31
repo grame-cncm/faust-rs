@@ -816,10 +816,10 @@ fn check_json_src_family_unresolved_import_is_structured() {
 
 #[test]
 fn error_format_human_still_writes_diagnostics_to_stderr_not_stdout() {
-    // D1 explicitly requires --error-format human behavior to be preserved
-    // byte for byte. This is a coarse regression guard, not a full snapshot:
-    // stdout must be empty and stderr must carry the pipeline-failed prefix
-    // plus the FRS code, on a plain (not --check) failing compile.
+    // This is a coarse regression guard, not a full snapshot: stdout must be
+    // empty and stderr must carry the FRS code, on a plain (not --check)
+    // failing compile. The diagnostic comes first, with its location at the
+    // start of the line: a `pipeline failed:` prefix would only repeat it.
     let output = Command::new(bin_path())
         .arg(corpus_path("err_09_eval_undefined_symbol.dsp"))
         .arg("--error-format")
@@ -834,8 +834,15 @@ fn error_format_human_still_writes_diagnostics_to_stderr_not_stdout() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("pipeline failed:"),
-        "expected the human-mode prefix line on stderr, got: {stderr}"
+        !stderr.contains("pipeline failed:"),
+        "expected the diagnostic alone on stderr, got: {stderr}"
+    );
+    assert!(
+        stderr
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains("err_09_eval_undefined_symbol.dsp:1:7: error")),
+        "expected the location first, got: {stderr}"
     );
     assert!(
         stderr.contains("FRS-EVAL-"),

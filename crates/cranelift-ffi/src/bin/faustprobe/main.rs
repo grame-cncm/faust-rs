@@ -155,10 +155,24 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            stderr.write(&format!("faustprobe: {error}\n"));
+            let text = match without_summary(&error) {
+                Some(diagnostics) => format!("{diagnostics}\n"),
+                None => format!("faustprobe: {error}\n"),
+            };
+            stderr.write(&text);
             ExitCode::FAILURE
         }
     }
+}
+
+/// The diagnostics of a compile failure, which begin by what its summary line
+/// says. A host of the C API needs that line, the buffer it has is the size of
+/// one; a reader of this output does not. A line that starts with an option says
+/// which program of the command line it was, and stays.
+fn without_summary(error: &str) -> Option<&str> {
+    let (summary, diagnostics) = error.split_once('\n')?;
+    let header = diagnostics.lines().next()?;
+    (header.contains("[FRS-") && !summary.starts_with("--")).then_some(diagnostics)
 }
 
 /// Under `--error-format json`, a run that ends on a compile failure prints

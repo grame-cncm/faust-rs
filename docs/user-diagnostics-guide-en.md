@@ -31,7 +31,7 @@ Typical human output includes:
   - `cause:` why the compiler failed,
   - `rule:` semantic rule being checked,
   - `computed:` concrete values computed by the compiler,
-  - context notes (`expr=...`, owner definition, alias trace),
+  - context notes (owner definition and alias trace, past the entry point),
 - `help:` concrete fix suggestions.
 
 Example interpretation:

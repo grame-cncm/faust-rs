@@ -116,11 +116,10 @@ are not declared at all. Either way it is an error, never an option ignored.
 ### When the program does not compile
 
 Nothing is rendered, the exit status is `1`, and the error on stderr is the
-compiler's complete diagnostic, the one `faust-rs` prints: a summary line, then
-the location, the source line with its markers, the notes and the suggested fix.
+compiler's complete diagnostic, the one `faust-rs` prints: the location, the
+source line with its markers, the notes and the suggested fix.
 
 ```
-faustprobe: parse failed for reverb.dsp: errors=1, recoveries=0, diagnostics=1
 reverb.dsp:2:21: error [FRS-PARSE-0001] syntax error: unexpected `;`, expected `)`
   2 | process = _ : *(0.5 ;
     |                     ^ unexpected token
@@ -211,7 +210,6 @@ error then cites the library's own line:
 ```
 $ faustprobe --eval 0 jot.lib               # passes: `gamma` is not evaluated
 $ faustprobe --eval 'gamma(2.0)' jot.lib
-faustprobe: evaluation failed for jot.lib: undefined symbol `oops`
 jot.lib:81:14: error [FRS-EVAL-0002] undefined symbol `oops`
   81 | gamma(t60) = oops + exp(0.0 - 3.0 * LN10 / (t60 * ma.SR));
 ```
@@ -228,7 +226,6 @@ expression as its source line:
 
 ```
 $ faustprobe --eval scale --eval 'third(1) + quarter' small.lib
-faustprobe: evaluation failed for small.lib: undefined symbol `quarter`
 <eval 1>:1:12: error [FRS-EVAL-0002] undefined symbol `quarter`
   8 | third(1) + quarter
     |            ^^^^^^^ failing use

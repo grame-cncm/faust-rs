@@ -852,19 +852,22 @@ pub(crate) fn enrich_diagnostic_with_node(
     diagnostic = diagnostic
         .with_note(format!("node_id={}", node.as_u32()))
         .with_note(format!("box_expr={}", compact_box_preview(arena, node)))
-        .with_note(format!("expr={}", compact_human_box_preview(arena, node)))
         .with_debug_fact("node_id", u64::from(node.as_u32()))
-        .with_debug_fact("box_expr", compact_box_preview(arena, node));
+        .with_debug_fact("box_expr", compact_box_preview(arena, node))
+        .with_debug_fact("expr", compact_human_box_preview(arena, node));
     if let Some(owner) = owner {
-        diagnostic = diagnostic
-            .with_note(format!("error originates from definition '{owner}'"))
-            .with_fact("owner_definition", owner);
+        if owner != entrypoint_name {
+            diagnostic =
+                diagnostic.with_note(format!("error originates from definition '{owner}'"));
+        }
+        diagnostic = diagnostic.with_fact("owner_definition", owner);
     }
     if let Some(trace) = alias_binding_trace_for_node(arena, root, node, entrypoint_name) {
         let path = trace.split(" -> ").map(str::to_owned).collect::<Vec<_>>();
-        diagnostic = diagnostic
-            .with_note(format!("binding_trace={trace}"))
-            .with_fact("binding_trace_path", path);
+        if path.len() > 1 {
+            diagnostic = diagnostic.with_note(format!("binding_trace={trace}"));
+        }
+        diagnostic = diagnostic.with_fact("binding_trace_path", path);
     }
     diagnostic
 }

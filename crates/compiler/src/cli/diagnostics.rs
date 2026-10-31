@@ -12,10 +12,10 @@
 //! Under `--error-format json`, [`print_bundle`] is the sole
 //! writer of stdout content: it prints exactly one well-formed JSON document,
 //! with no leading or trailing non-JSON bytes, and nothing else on stdout
-//! precedes or follows it for that invocation. Human-readable prefix lines
-//! (e.g. `"C++ pipeline failed: ..."`) belong to `--error-format human` only
-//! and are the caller's responsibility (see
-//! `runner::report_pipeline_failure`), never printed here in JSON mode.
+//! precedes or follows it for that invocation. The `"C++ pipeline failed: ..."`
+//! line of an error with no diagnostics belongs to `--error-format human` only
+//! and is the caller's responsibility (see `runner::report_pipeline_failure`),
+//! never printed here in JSON mode.
 //! Diagnostics always go to stdout in JSON mode and to stderr in human mode
 //! -- this asymmetry is intentional: JSON mode targets automated consumers
 //! (CI, IDE tooling, a future MCP server) that read one stream, while human

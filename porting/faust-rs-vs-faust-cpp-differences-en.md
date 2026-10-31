@@ -228,7 +228,8 @@ must run unchanged with Faust C++ should not pass them.
   `--color always` is passed, and color only adds escapes, so removing them
   gives the plain text byte for byte. The JSON channel and the text the FFI
   layers return (`rendered_diagnostics`, `getCCompleteCraneliftDSPFactoryError`)
-  are plain for every C host. The one-line `... pipeline failed:` prefix and the
+  are plain for every C host. The `... pipeline failed:` line of an error with
+  no diagnostics and the
   option-validation messages are outside the diagnostic renderer and stay plain.
   `faustprobe` takes the same option with the same rules, also for the summary
   line and for any error other than a compile failure, which stay plain; the
@@ -250,7 +251,10 @@ must run unchanged with Faust C++ should not pass them.
   and the errors its recovery produces are dropped when a parse of the repaired
   text does not have them, so faust-rs can report fewer errors than its recovery
   found. The line of the first error is unchanged. Scope lists past twelve names
-  are summed up in the text and whole in the JSON facts. Tests:
+  are summed up in the text and whole in the JSON facts. Human output starts on
+  the diagnostic, with no `... pipeline failed:` line, and at `standard` carries
+  neither box node numbers nor a label on a place another one marks: the JSON
+  report keeps the labels, the scopes and the binding trace. Tests:
   `crates/parser/tests/parse_error_order.rs`,
   `a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts` in
   `crates/compiler/tests/diagnostic_errors.rs`.

@@ -81,7 +81,7 @@ message itself as data rather than text. The same sequential-composition failure
 becomes:
 
 ```text
-seq.dsp:2:8: error [FRS-PROP-0002] sequential composition mismatch at node 20: left outputs (2) != right inputs (3)
+seq.dsp:2:8: error [FRS-PROP-0002] sequential composition mismatch: left outputs (2) != right inputs (3)
   2 | B = _,_,_;
     |        ^ related source
   = note: Here  A = (_, _)
@@ -188,15 +188,11 @@ and at `standard`:
 lowpass.dsp:3:25: error [FRS-EVAL-0002] undefined symbol `cutof`
   3 | process = fi.lowpass(1, cutof);
     |                         ^^^^^ failing use
-    | ^^^^^^^ enclosing definition
-    | ^^^^^^^ call site
   = note: cause: unresolved identifier in current lexical scope
   = note: rule: referenced identifier must be present in visible lexical scope
   = note: computed: `cutof` is not present in current visible scope
   = note: did you mean: cutoff?
-  = note: scope.local=aa, an, ba, co, cutoff, db, ...
-  = note: error originates from definition 'process'
-  = note: binding_trace=process
+  = note: scope.visible=20 names, the closest: cutoff; all in --error-format json
   = fix (maybe-incorrect): rename to `cutoff`
     `cutoff` is visible from this site, but renaming changes which definition runs
   = help: define the symbol in scope or fix the identifier name
@@ -207,6 +203,12 @@ lowpass.dsp:3:25: error [FRS-EVAL-0002] undefined symbol `cutof`
 Notes always appear in a canonical order — `cause`, `rule`, `computed`,
 `suggested target`, then context — regardless of which compiler stage produced
 them, so two failures of the same kind read the same way.
+
+`standard` leaves out what the reader already has: a label on a place another
+one marks, the enclosing definition when it is on the line of the error, and
+its name when that is the entry point. `debug` prints them, with the box
+expression as `expr`. The JSON report keeps the labels, the three scopes and the
+binding trace as typed values at every level.
 
 ### 2.5 Opt-in warnings
 
@@ -706,7 +708,6 @@ e_case.dsp:1:1: error [FRS-EVAL-0099] no case rule matches arguments
   = note: rule: at least one case pattern must match the provided argument tuple
   = note: computed: provided tuple did not match any declared case pattern
   = note: computed: no rule survived after 1 of 2 argument(s)
-  = note: expr=…
   = note: error originates from definition 'sel'
   = note: binding_trace=process -> sel
   = trace (evaluation): arguments -> rule 1 -> rule 2
@@ -779,7 +780,6 @@ e_iter.dsp:1:1: error [FRS-EVAL-0004] iteration count is not an int node: 5
     | ^^^^^^^ definition site
   = note: cause: iterative combinator count is not a valid non-negative integer
   = note: rule: iterator count must be integer, non-negative, and within supported range
-  = note: error originates from definition 'process'
   = help: iteration count must be a non-negative integer in target range
 ```
 
@@ -801,7 +801,6 @@ faust-rs:
 e_soundfile.dsp:1:16: error [FRS-COMP-0004] out of range soundfile part number (interval(-1,1,-24) instead of interval(0,255))
   1 | process = _, 0 : soundfile("foo.wav", 2);
     |                ^ source expression
-    | ^^^^^^^ enclosing definition
   = note: cause: an inferred signal type or interval violates a typing rule
   = note: rule: a soundfile part selector must stay within the integer interval [0, 255]
   = note: computed: inferred interval = interval(-1,1,-24), expected integer interval [0, 255]
@@ -871,13 +870,13 @@ e_divzero.dsp:1:1: error [FRS-EVAL-0007] division by 0 in 2.0 / 0
   = note: cause: a constant expression divides by a constant zero
   = note: rule: the divisor of a constant division must not be zero, in integers or in reals
   = note: computed: `2.0 / 0`, after the operands were folded to constants
-  = note: expr=(2 / n)
   = note: error originates from definition 'coef'
   = help: check the value the divisor takes here: an iteration index starts at 0, and a function argument may be 0 at this call
 ```
 
-`expr=(2 / n)` is the division as written, `computed` the one that was folded:
-between the two, `n` took the value of an iteration index that starts at 0.
+The source line shows the division as written and `computed` the one that was
+folded: between the two, `n` took the value of an iteration index that starts
+at 0.
 
 ### 6.12 Duplicate user-interface paths
 

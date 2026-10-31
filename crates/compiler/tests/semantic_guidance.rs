@@ -221,6 +221,26 @@ fn a_redefined_symbol_labels_both_declarations() {
         fact(diagnostic, "symbol"),
         Some(&DiagnosticValue::String("a".into()))
     );
+    assert_eq!(
+        fact(diagnostic, "declarations"),
+        Some(&DiagnosticValue::StringList(vec![
+            "a = 1;".into(),
+            "a = 2;".into()
+        ]))
+    );
+    // the snippets show the clauses
+    assert!(diagnostic.notes.is_empty(), "{:?}", diagnostic.notes);
+
+    let diagnostics = failing_diagnostics("f(x, y) = x + y;\nf = 1;\nprocess = f;\n");
+    let Some(DiagnosticValue::StringList(declarations)) = fact(&diagnostics[0], "declarations")
+    else {
+        panic!("{:?}", diagnostics[0].facts);
+    };
+    assert!(
+        declarations[0].starts_with("f(x, y) = "),
+        "{declarations:?}"
+    );
+    assert!(!declarations[0].contains("BOX"), "{declarations:?}");
 }
 
 #[test]

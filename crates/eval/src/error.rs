@@ -689,9 +689,7 @@ impl Display for EvalError {
                     "too many arguments: expected at most {expected}, got {got}"
                 )
             }
-            Self::InvalidModulationLabel { node } => {
-                write!(f, "invalid modulation label at node {}", node.as_u32())
-            }
+            Self::InvalidModulationLabel { .. } => write!(f, "invalid modulation label"),
             Self::InvalidLabelInterpolation { ident, reason, .. } => {
                 write!(
                     f,
@@ -920,9 +918,7 @@ impl ToDiagnostic for EvalError {
             .with_note(format!(
                 "computed: `{symbol}` is not present in current visible scope"
             ))
-            .with_note(format!("scope.local={}", scope_summary(symbol, local_scope)))
             .with_note(format!("scope.visible={}", scope_summary(symbol, visible_scope)))
-            .with_note(format!("scope.top_level={}", scope_summary(symbol, top_level_scope)))
             .with_detail_code("undefined-binding")
             .with_fact("symbol", symbol.clone())
             .with_fact("scope_local", local_scope.clone())

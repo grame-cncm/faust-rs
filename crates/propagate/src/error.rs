@@ -117,12 +117,8 @@ impl Display for PropagateError {
             Self::UnsupportedBox { node, kind } => {
                 write!(f, "unsupported box node {} ({kind})", node.as_u32())
             }
-            Self::InvalidIntegerValue { node, field } => {
-                write!(
-                    f,
-                    "invalid integer value for `{field}` at node {}",
-                    node.as_u32()
-                )
+            Self::InvalidIntegerValue { field, .. } => {
+                write!(f, "invalid integer value for `{field}`")
             }
             Self::NegativeIntegerValue { field, value } => {
                 write!(f, "negative integer value for `{field}`: {value}")
@@ -130,67 +126,49 @@ impl Display for PropagateError {
             Self::IntegerTooLarge { field, value } => {
                 write!(f, "integer value too large for `{field}`: {value}")
             }
-            Self::InputArityMismatch {
-                node,
-                expected,
-                got,
-            } => write!(
-                f,
-                "input arity mismatch at node {}: expected {expected}, got {got}",
-                node.as_u32()
-            ),
-            Self::OutputArityMismatch {
-                node,
-                expected,
-                got,
-            } => write!(
-                f,
-                "output arity mismatch at node {}: expected {expected}, got {got}",
-                node.as_u32()
-            ),
+            Self::InputArityMismatch { expected, got, .. } => {
+                write!(f, "input arity mismatch: expected {expected}, got {got}")
+            }
+            Self::OutputArityMismatch { expected, got, .. } => {
+                write!(f, "output arity mismatch: expected {expected}, got {got}")
+            }
             Self::SeqArityMismatch {
-                node,
                 left_outputs,
                 right_inputs,
+                ..
             } => write!(
                 f,
-                "sequential composition mismatch at node {}: left outputs ({left_outputs}) != right inputs ({right_inputs})",
-                node.as_u32()
+                "sequential composition mismatch: left outputs ({left_outputs}) != right inputs ({right_inputs})"
             ),
             Self::SplitArityMismatch {
-                node,
                 left_outputs,
                 right_inputs,
+                ..
             } => write!(
                 f,
-                "split composition mismatch at node {}: left outputs ({left_outputs}) must divide right inputs ({right_inputs})",
-                node.as_u32()
+                "split composition mismatch: left outputs ({left_outputs}) must divide right inputs ({right_inputs})"
             ),
             Self::MergeArityMismatch {
-                node,
                 left_outputs,
                 right_inputs,
+                ..
             } => write!(
                 f,
-                "merge composition mismatch at node {}: left outputs ({left_outputs}) must be a multiple of right inputs ({right_inputs})",
-                node.as_u32()
+                "merge composition mismatch: left outputs ({left_outputs}) must be a multiple of right inputs ({right_inputs})"
             ),
             Self::RecArityMismatch {
-                node,
                 left_inputs,
                 left_outputs,
                 right_inputs,
                 right_outputs,
+                ..
             } => write!(
                 f,
-                "recursive composition mismatch at node {}: right inputs ({right_inputs}) <= left outputs ({left_outputs}) and right outputs ({right_outputs}) <= left inputs ({left_inputs}) are required",
-                node.as_u32()
+                "recursive composition mismatch: right inputs ({right_inputs}) <= left outputs ({left_outputs}) and right outputs ({right_outputs}) <= left inputs ({left_inputs}) are required"
             ),
-            Self::FadSeedArity { node, outputs } => write!(
-                f,
-                "fad seed at node {} must produce at least 1 output, got {outputs}",
-                node.as_u32()
-            ),
+            Self::FadSeedArity { outputs, .. } => {
+                write!(f, "fad seed must produce at least 1 output, got {outputs}")
+            }
             Self::AdDependentSeed(details) => write!(
                 f,
                 "{} seed {} `{}` is computed from {}",
@@ -199,16 +177,12 @@ impl Display for PropagateError {
                 details.seed_text,
                 dependent_seed_list(&details.depends_on)
             ),
-            Self::RadBodyArity { node, outputs } => write!(
-                f,
-                "rad body at node {} must produce at least 1 output, got {outputs}",
-                node.as_u32()
-            ),
-            Self::RadSeedArity { node, outputs } => write!(
-                f,
-                "rad seeds at node {} must produce at least 1 output, got {outputs}",
-                node.as_u32()
-            ),
+            Self::RadBodyArity { outputs, .. } => {
+                write!(f, "rad body must produce at least 1 output, got {outputs}")
+            }
+            Self::RadSeedArity { outputs, .. } => {
+                write!(f, "rad seeds must produce at least 1 output, got {outputs}")
+            }
             Self::DeBruijnCoherence { pass, detail } => {
                 write!(f, "De Bruijn coherence error in {pass} transform: {detail}")
             }
@@ -277,9 +251,6 @@ impl ToDiagnostic for PropagateError {
                 .with_note("cause: sequential composition bus widths do not match")
                 .with_note("rule: seq(A, B) requires outputs(A) == inputs(B)")
                 .with_note(format!(
-                    "sequential composition requires left outputs ({left_outputs}) == right inputs ({right_inputs})"
-                ))
-                .with_note(format!(
                     "computed: {left_outputs} == {right_inputs} -> {}",
                     left_outputs == right_inputs
                 ))
@@ -297,9 +268,6 @@ impl ToDiagnostic for PropagateError {
             } => Diagnostic::new(Severity::Error, Stage::Propagate, codes::PROP_ARITY_MISMATCH, message)
                 .with_note("cause: split composition divisibility rule is violated")
                 .with_note("rule: split(A, B) requires inputs(B) % outputs(A) == 0")
-                .with_note(format!(
-                    "split composition requires right inputs ({right_inputs}) to be divisible by left outputs ({left_outputs})"
-                ))
                 .with_note(if *left_outputs == 0 {
                     "computed: divisor outputs(A)=0 is invalid".to_owned()
                 } else {
@@ -330,9 +298,6 @@ impl ToDiagnostic for PropagateError {
             } => Diagnostic::new(Severity::Error, Stage::Propagate, codes::PROP_ARITY_MISMATCH, message)
                 .with_note("cause: merge composition multiple rule is violated")
                 .with_note("rule: merge(A, B) requires outputs(A) % inputs(B) == 0")
-                .with_note(format!(
-                    "merge composition requires left outputs ({left_outputs}) to be a multiple of right inputs ({right_inputs})"
-                ))
                 .with_note(if *right_inputs == 0 {
                     "computed: divisor inputs(B)=0 is invalid".to_owned()
                 } else {

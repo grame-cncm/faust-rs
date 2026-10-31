@@ -1250,7 +1250,7 @@ fn diagnostics_human_renderer_snapshot_for_eval_undefined_symbol() {
     assert!(normalized.contains("error [FRS-EVAL-0002] undefined symbol `bar`"));
     assert!(normalized.contains("error originates from definition 'foo'"));
     assert!(normalized.contains("binding_trace=process -> foo"));
-    assert!(normalized.contains("expr=bar"));
+    assert!(!normalized.contains("expr="));
     assert!(normalized.contains("define the symbol in scope or fix the identifier name"));
 }
 
@@ -1295,7 +1295,7 @@ fn diagnostics_json_renderer_snapshot_for_eval_undefined_symbol() {
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
     assert_eq!(diag["code"], "FRS-EVAL-0002");
-    assert!(notes.iter().any(|n| n.starts_with("expr=")));
+    assert!(!notes.iter().any(|n| n.starts_with("expr=")));
     assert!(notes.contains(&"error originates from definition 'foo'"));
     assert!(notes.contains(&"binding_trace=process -> foo"));
 }
@@ -1336,7 +1336,7 @@ fn diagnostics_json_renderer_snapshot_for_eval_undefined_symbol_alias_chain() {
     let cause_i = note_index(&notes, "cause:");
     let rule_i = note_index(&notes, "rule:");
     let computed_i = note_index(&notes, "computed:");
-    let context_i = note_index(&notes, "scope.local=");
+    let context_i = note_index(&notes, "scope.visible=");
     assert!(
         cause_i < rule_i && rule_i < computed_i && computed_i < context_i,
         "eval JSON note ordering should be cause -> rule -> computed -> context"
@@ -2142,4 +2142,39 @@ fn dash_uim_enables_user_interface_macros_and_is_echoed() {
     assert!(long.user_interface_macros);
     let off = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
     assert!(!off.user_interface_macros);
+}
+
+/// One place gets one caret, and a definition on the line of the error gets
+/// none. The labels stay in the bundle, and the debug level prints them.
+#[test]
+fn a_label_that_adds_nothing_is_not_printed() {
+    let err = Compiler::new()
+        .compile_source_to_signals("f.dsp", "process = nope;\n")
+        .expect_err("the undefined symbol should fail");
+    let diagnostics = err.diagnostic_bundle();
+    let messages: Vec<&str> = diagnostics.as_slice()[0]
+        .labels
+        .iter()
+        .map(|label| label.message.as_ref())
+        .collect();
+    assert_eq!(
+        messages,
+        ["failing use", "enclosing definition", "call site"]
+    );
+    let rendered = format_diagnostics_human(diagnostics);
+    assert!(!rendered.contains("enclosing definition"), "{rendered}");
+    assert!(!rendered.contains("call site"), "{rendered}");
+    let debug = format_diagnostics_human_with_verbosity(diagnostics, ErrorVerbosity::Debug);
+    assert!(debug.contains("enclosing definition"), "{debug}");
+    assert!(debug.contains("call site"), "{debug}");
+    // a definition elsewhere is worth its line, once
+    let err = Compiler::new()
+        .compile_source_to_signals("f.dsp", "foo =\n  nope;\nprocess = foo;\n")
+        .expect_err("the undefined symbol should fail");
+    let rendered = format_diagnostics_human(err.diagnostic_bundle());
+    assert_eq!(
+        rendered.matches("enclosing definition").count(),
+        1,
+        "{rendered}"
+    );
 }

@@ -36,8 +36,8 @@ pub(crate) fn compact_human_box_preview(arena: &tlib::TreeArena, node: BoxId) ->
 /// Renders one box subtree to a human-oriented Faust-like expression string.
 ///
 /// The output intentionally trades completeness for readability: composite
-/// boxes are rendered as infix expressions when possible, and unknown shapes
-/// fall back to a compact [`compact_box_preview`].
+/// boxes are rendered as infix expressions when possible, and other shapes
+/// fall back to [`boxes::box_pp_bounded`].
 ///
 /// Recursion is bounded at depth 96 to prevent stack overflow on pathological
 /// or cyclically-aliased box graphs; deeper sub-trees are replaced with `"..."`.
@@ -237,7 +237,10 @@ pub(crate) fn render_human_box_expr(arena: &tlib::TreeArena, node: BoxId, depth:
             .or_else(|| prim_readable_name(arena, node))
             .unwrap_or("?")
             .to_owned(),
-        _ => compact_box_preview(arena, node),
+        // as `boxpp` writes them, which leaves the tags of the tree to what is
+        // no box
+        _ => boxes::box_pp_bounded(arena, node, 0, boxes::FloatSize::Double, 180)
+            .unwrap_or_else(|_| compact_box_preview(arena, node)),
     }
 }
 

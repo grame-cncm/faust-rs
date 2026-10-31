@@ -3,7 +3,6 @@ exit=1
 --- stdout
 
 --- stderr
-faustprobe: parse failed for tests/output/dsp/broken.lib: errors=1, recoveries=0, diagnostics=1
 tests/output/dsp/broken.lib:2:10: error [FRS-PARSE-0001] syntax error: unexpected `;`
   2 | bad = 1 +;
     |          ^ unexpected token
