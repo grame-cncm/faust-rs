@@ -59,6 +59,31 @@ fn a_local_definition_sharing_a_top_level_name_keeps_the_failing_use() {
     assert_eq!(diagnostic.labels[0].span.col, 7);
 }
 
+/// A library's names stay in the facts, and the text keeps the close ones.
+#[test]
+fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
+    let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();
+    let source = format!("{}\nprocess = name_3x;\n", names.join("\n"));
+    let err = Compiler::new()
+        .compile_source_to_signals("scope.dsp", &source)
+        .expect_err("the undefined symbol should fail");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    let note = diagnostic
+        .notes
+        .iter()
+        .find(|note| note.starts_with("scope.top_level="))
+        .expect("a scope note");
+    assert!(note.contains("names, the closest:"), "{note}");
+    assert!(note.contains("name_3"), "{note}");
+    assert!(!note.contains("name_17"), "{note}");
+    assert!(
+        diagnostic
+            .facts
+            .iter()
+            .any(|(key, _)| key.as_str() == "scope_top_level")
+    );
+}
+
 #[test]
 fn parse_error_fixture_exposes_frs_parse_code() {
     let compiler = Compiler::new();

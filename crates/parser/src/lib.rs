@@ -2271,8 +2271,14 @@ fn render_repair_sequence(
 #[derive(Clone, Debug, Default)]
 struct ParseRecoveryDetails {
     expected_tokens: Vec<Box<str>>,
+    /// The token each repair starts with: what can come next, where
+    /// `expected_tokens` also holds what follows it.
+    next_tokens: Vec<Box<str>>,
     unexpected_token: Option<Box<str>>,
     unambiguous_insert: Option<Box<str>>,
+    /// `;` is one of the repairs and the statement ended on an earlier line:
+    /// what the other repairs (a `[` of metadata) rarely mean.
+    missing_semicolon: bool,
     typo_suggestion: Option<Box<str>>,
     opening_delimiter: Option<(usize, char)>,
     previous_token: Option<(usize, usize)>,
@@ -2290,6 +2296,7 @@ struct EngineParseDiagnostic {
 fn parse_recovery_details(
     error: &lrpar::LexParseError<u32, lrlex::DefaultLexerTypes<u32>>,
     input: &str,
+    lexer: &dyn lrpar::NonStreamingLexer<'_, lrlex::DefaultLexerTypes<u32>>,
 ) -> ParseRecoveryDetails {
     let lrpar::LexParseError::ParseError(error) = error else {
         return ParseRecoveryDetails::default();
@@ -2300,8 +2307,17 @@ fn parse_recovery_details(
         .filter(|token| !token.is_empty())
         .map(|token| token.into());
     let mut expected = Vec::<Box<str>>::new();
+    let mut next_tokens = Vec::<Box<str>>::new();
     let mut singleton_inserts = Vec::new();
     for sequence in error.repairs() {
+        if let Some(lrpar::ParseRepair::Insert(token)) = sequence.first()
+            && let Some(name) = faustparser_y::token_epp(*token)
+        {
+            let name = normalize_expected_token(name);
+            if !next_tokens.contains(&name) {
+                next_tokens.push(name);
+            }
+        }
         if let [lrpar::ParseRepair::Insert(token)] = sequence.as_slice()
             && let Some(name) = faustparser_y::token_epp(*token)
         {
@@ -2319,6 +2335,7 @@ fn parse_recovery_details(
         }
     }
     expected.sort();
+    next_tokens.sort();
     let unambiguous_insert = singleton_inserts
         .first()
         .filter(|first| {
@@ -2342,14 +2359,140 @@ fn parse_recovery_details(
         .as_deref()
         .and_then(closing_delimiter)
         .and_then(|opening| unmatched_opening_delimiter(input, span.start(), opening));
+    let previous_token = previous_lexeme_range(lexer, span.start());
+    let missing_semicolon = singleton_inserts.iter().any(|token| token.as_ref() == ";")
+        && previous_token.is_some_and(|(_, end)| {
+            input
+                .get(end..span.start())
+                .is_some_and(|gap| gap.contains('\n'))
+        });
     ParseRecoveryDetails {
         expected_tokens: expected,
+        next_tokens,
         unexpected_token: unexpected,
         unambiguous_insert,
+        missing_semicolon,
         typo_suggestion,
         opening_delimiter,
-        previous_token: previous_token_range(input, span.start()),
+        previous_token,
     }
+}
+
+/// The message of a syntax error, in the tokens of the language.
+///
+/// The repair sequences of lrpar name the tokens of the grammar (`Insert
+/// ENDDEF`), up to sixty lines of them; they stay in `ParseOutput::errors`, and
+/// the tokens in the facts of the diagnostic. The line and the column are in the
+/// label, and in `--eval` the ones of the text would be those of the wrapper.
+fn readable_parse_message(recovery: &ParseRecoveryDetails) -> String {
+    const SHOWN: usize = 6;
+    let found = recovery.unexpected_token.as_deref().map_or_else(
+        || "unexpected end of input".to_owned(),
+        |token| format!("unexpected `{}`", token.replace('\n', " ")),
+    );
+    let mut expected: Vec<String> = Vec::new();
+    for token in &recovery.next_tokens {
+        let shown = match token.as_ref() {
+            "IDENT" => "a name".to_owned(),
+            "STRING" | "FSTRING" => "a string".to_owned(),
+            "INT" | "FLOAT" => "a number".to_owned(),
+            other => format!("`{other}`"),
+        };
+        if !expected.contains(&shown) {
+            expected.push(shown);
+        }
+    }
+    match expected.as_slice() {
+        [] => format!("syntax error: {found}"),
+        [only] => format!("syntax error: {found}, expected {only}"),
+        [first @ .., last] if expected.len() <= SHOWN => {
+            format!(
+                "syntax error: {found}, expected {} or {last}",
+                first.join(", ")
+            )
+        }
+        // nearly anything can come next: the list would say nothing
+        _ => format!("syntax error: {found}"),
+    }
+}
+
+/// The errors of `input` that a missing `;` does not explain.
+///
+/// lrpar repairs a missing `;` as it pleases, and when it opens a `[` instead
+/// the end of the file gets an error of its own. So each `;` is inserted and the
+/// text parsed again, and an error stays only if it stays there too: an insertion
+/// ends a line and moves nothing after it, so positions can be compared. Errors of
+/// a program without a missing `;` are left alone.
+fn drop_cascaded_errors(
+    errors: Vec<lrpar::LexParseError<u32, lrlex::DefaultLexerTypes<u32>>>,
+    input: &str,
+    lexer: &dyn lrpar::NonStreamingLexer<'_, lrlex::DefaultLexerTypes<u32>>,
+    source_file: &str,
+) -> Vec<lrpar::LexParseError<u32, lrlex::DefaultLexerTypes<u32>>> {
+    const INSERTIONS: usize = 16;
+    if errors.len() < 2 {
+        return errors;
+    }
+    let first = parse_recovery_details(&errors[0], input, lexer);
+    if !first.missing_semicolon {
+        return errors;
+    }
+    let mut real = vec![parse_error_position(lexer, &errors[0])];
+    let mut text = input.to_owned();
+    let mut position = first.previous_token;
+    for _ in 0..INSERTIONS {
+        let Some((_, end)) = position else { break };
+        text.insert(end, ';');
+        let (positions, next) = parse_error_positions(&text, source_file);
+        position = next;
+        // Past a missing `;` the errors of this parse are not to be trusted either
+        real.extend(
+            positions
+                .into_iter()
+                .take(if position.is_some() { 1 } else { usize::MAX }),
+        );
+    }
+    errors
+        .into_iter()
+        .filter(|error| real.contains(&parse_error_position(lexer, error)))
+        .collect()
+}
+
+fn parse_error_position(
+    lexer: &dyn lrpar::NonStreamingLexer<'_, lrlex::DefaultLexerTypes<u32>>,
+    error: &lrpar::LexParseError<u32, lrlex::DefaultLexerTypes<u32>>,
+) -> (usize, usize) {
+    let span = match error {
+        lrpar::LexParseError::LexError(e) => e.span(),
+        lrpar::LexParseError::ParseError(e) => e.lexeme().span(),
+    };
+    lexer.line_col(span).0
+}
+
+type LineColumn = (usize, usize);
+type ByteRange = (usize, usize);
+
+/// Where the syntax errors of `text` are, and where its first error wants a `;`
+/// if it does.
+fn parse_error_positions(text: &str, source_file: &str) -> (Vec<LineColumn>, Option<ByteRange>) {
+    let lexer = combined_lexer(text);
+    let state = RefCell::new(ParseState::new_with_origins_and_metadata(
+        source_file,
+        text,
+        None,
+        CompilationMetadataStore::new(source_file),
+    ));
+    let (_, errors) = faustparser_y::parse(&lexer, &state);
+    let positions = errors
+        .iter()
+        .map(|error| parse_error_position(&lexer, error))
+        .collect();
+    let next = errors
+        .first()
+        .map(|error| parse_recovery_details(error, text, &lexer))
+        .filter(|details| details.missing_semicolon)
+        .and_then(|details| details.previous_token);
+    (positions, next)
 }
 
 fn normalize_expected_token(token: &str) -> Box<str> {
@@ -2635,6 +2778,34 @@ fn build_engine_parse_diagnostics(
             }
         } else if let Some(insert) = &error.recovery.unambiguous_insert {
             diagnostic = diagnostic.with_help(format!("insert `{insert}` before this token"));
+        } else if error.recovery.missing_semicolon
+            && let Some((start, end)) = error.recovery.previous_token
+        {
+            let span = source_span_for_offsets(
+                &primary_span,
+                input,
+                u32::try_from(start).unwrap_or(u32::MAX),
+                u32::try_from(end).unwrap_or(u32::MAX),
+            );
+            diagnostic = diagnostic.with_label(
+                Label::new(
+                    LabelStyle::Secondary,
+                    span,
+                    "the previous statement may need `;`",
+                )
+                .with_role(LabelRole::PreviousToken),
+            );
+            if direct_source && let Ok(offset) = u32::try_from(end) {
+                diagnostic = diagnostic.with_fix(SuggestedFix {
+                    title: "insert `;` at the end of the previous statement".into(),
+                    applicability: Applicability::MaybeIncorrect,
+                    edits: vec![TextEdit {
+                        range: SourceRange::new(source_id, offset, offset),
+                        replacement: ";".into(),
+                    }],
+                    explanation: Some("the next statement starts on a new line".into()),
+                });
+            }
         }
 
         if direct_source
@@ -2790,6 +2961,22 @@ fn previous_char_is_minus(input: &str, end: usize) -> bool {
             .is_some_and(|ch| matches!(ch, '-' | '<' | '>'))
 }
 
+/// The last token that ends by `end`. Unlike the text before `end`, this skips
+/// comments, and a `;` written at the end of one would not count.
+fn previous_lexeme_range(
+    lexer: &dyn lrpar::NonStreamingLexer<'_, lrlex::DefaultLexerTypes<u32>>,
+    end: usize,
+) -> Option<(usize, usize)> {
+    use lrpar::Lexeme as _;
+    lexer
+        .iter()
+        .filter_map(Result::ok)
+        .map(|lexeme| lexeme.span())
+        .take_while(|span| span.end() <= end)
+        .last()
+        .map(|span| (span.start(), span.end()))
+}
+
 fn previous_token_range(input: &str, end: usize) -> Option<(usize, usize)> {
     let prefix = input.get(..end)?;
     let last = prefix
@@ -2836,6 +3023,7 @@ fn parse_program_with_origins_and_precision(
     let state = RefCell::new(parse_state);
     let (root, errors) = faustparser_y::parse(&lexer, &state);
     let mut state = state.into_inner();
+    let errors = drop_cascaded_errors(errors, input, &lexer, source_file);
 
     let mut rendered_errors = Vec::with_capacity(errors.len());
     let mut engine_diagnostics = Vec::with_capacity(errors.len());
@@ -2866,10 +3054,13 @@ fn parse_program_with_origins_and_precision(
             );
         }
         let message = render_lex_parse_error(&err, &lexer, &faustparser_y::token_epp);
-        let recovery = parse_recovery_details(&err, input);
+        let recovery = parse_recovery_details(&err, input, &lexer);
         engine_diagnostics.push(EngineParseDiagnostic {
             code: parser_code_for_lex_parse_error(&err),
-            message: message.clone(),
+            message: match err {
+                lrpar::LexParseError::ParseError(_) => readable_parse_message(&recovery),
+                lrpar::LexParseError::LexError(_) => message.clone(),
+            },
             location: state.ctx.cursor().clone(),
             span,
             recovery,

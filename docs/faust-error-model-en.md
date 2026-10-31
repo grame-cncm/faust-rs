@@ -516,16 +516,21 @@ error.dsp:2 : ERROR : syntax error, unexpected IDENT
 faust-rs:
 
 ```text
-e_semicolon.dsp:2:1: error [FRS-PARSE-0001] Parsing error at line 2 column 1. Repair sequences found:
-   1: Insert ENDDEF
-   2: Insert LCROC
+e_semicolon.dsp:2:1: error [FRS-PARSE-0001] syntax error: unexpected `box2`, expected `;` or `[`
   2 | box2 = 2;
     | ^^^^ unexpected token
+  1 | box1 = 1
+    |        ^ the previous statement may need `;`
+  = fix (maybe-incorrect): insert `;` at the end of the previous statement
+    the next statement starts on a new line
 ```
 
 Both point at line 2, which is where the parser *noticed*. The Faust manual
 calls this out explicitly: a missing semicolon only becomes visible at the next
-token.
+token. faust-rs also labels the end of the previous statement and proposes the
+`;` there, as a repair that needs a reader: the parser has a second one, a `[`
+of metadata. What its recovery made of the rest of the file is checked against a
+text with the `;` inserted, and an error that goes away there is not reported.
 
 ### 6.2 Syntax — an unmatched delimiter
 
@@ -543,8 +548,7 @@ errors.dsp:1 : ERROR : syntax error, unexpected ENDDEF
 faust-rs:
 
 ```text
-e_paren.dsp:1:13: error [FRS-PARSE-0001] Parsing error at line 1 column 13. Repair sequences found:
-   1: Insert RPAR
+e_paren.dsp:1:13: error [FRS-PARSE-0001] syntax error: unexpected `;`, expected `)`
   1 | t1 = _~(+(1);
     |             ^ unexpected token
     |        ^ `(` opened here

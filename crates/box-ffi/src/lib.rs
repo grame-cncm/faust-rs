@@ -2820,21 +2820,15 @@ mod tests {
     #[test]
     fn complete_error_keeps_a_text_longer_than_the_buffer_whole() {
         let _guard = fresh_test_context();
-        let mut source = String::new();
-        for index in 0..200 {
-            source.push_str(&format!(
-                "a_rather_long_definition_name_{index:03} = {index};\n"
-            ));
-        }
-        source.push_str("process = _ : missing_symbol;\n");
+        let symbol = "missing_symbol_".repeat(400);
+        let source = format!("process = _ : {symbol};\n");
 
         let (ok, summary) = dsp_to_boxes(&source);
         assert!(!ok);
         assert!(summary.len() < 4096);
         let complete = complete_error().unwrap();
         assert!(complete.len() > 4096, "only {} bytes", complete.len());
-        assert!(complete.contains("undefined symbol `missing_symbol`"));
-        assert!(complete.contains("a_rather_long_definition_name_199"));
+        assert!(complete.contains(&format!("undefined symbol `{symbol}`")));
     }
 
     #[test]

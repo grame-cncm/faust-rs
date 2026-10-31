@@ -84,23 +84,17 @@ fn a_syntax_error_is_located_and_shown() {
 
 #[test]
 fn a_text_longer_than_the_buffer_is_whole() {
-    // An undefined symbol lists the visible scope; two hundred long names
-    // make that list longer than the buffer.
-    let mut source = String::new();
-    for index in 0..200 {
-        source.push_str(&format!(
-            "a_rather_long_definition_name_{index:03} = {index};\n"
-        ));
-    }
-    source.push_str("process = _ : missing_symbol;\n");
+    // The message and the source line quote the name; six thousand characters
+    // of it make the text longer than the buffer.
+    let symbol = "missing_symbol_".repeat(400);
+    let source = format!("process = _ : {symbol};\n");
 
     let (ok, summary) = compile(Some(&source));
     assert!(!ok);
     assert!(summary.len() < 4096);
     let complete = complete().unwrap();
     assert!(complete.len() > 4096, "only {} bytes", complete.len());
-    assert!(complete.contains("undefined symbol `missing_symbol`"));
-    assert!(complete.contains("a_rather_long_definition_name_199"));
+    assert!(complete.contains(&format!("undefined symbol `{symbol}`")));
     assert!(
         complete
             .trim_end()

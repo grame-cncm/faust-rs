@@ -532,6 +532,37 @@ pub enum EvalError {
     Cancelled,
 }
 
+/// A list of names as the text of a diagnostic shows it. A library brings
+/// hundreds of them into scope, which buried the message: past `SHOWN` names the
+/// text keeps the count and the ones close to `symbol`. The facts of the
+/// diagnostic keep them all.
+fn scope_summary(symbol: &str, names: &[String]) -> String {
+    const SHOWN: usize = 12;
+    if names.is_empty() {
+        return "<none>".to_owned();
+    }
+    if names.len() <= SHOWN {
+        return names.join(", ");
+    }
+    let near: Vec<String> = rank_similar_names(symbol, names.iter().map(String::as_str))
+        .into_iter()
+        .take(SHOWN)
+        .map(|suggestion| suggestion.name)
+        .collect();
+    if near.is_empty() {
+        format!(
+            "{} names, none close; all in --error-format json",
+            names.len()
+        )
+    } else {
+        format!(
+            "{} names, the closest: {}; all in --error-format json",
+            names.len(),
+            near.join(", ")
+        )
+    }
+}
+
 impl EvalError {
     /// Ranked near-name candidates for an unresolved identifier.
     ///
@@ -849,11 +880,7 @@ impl ToDiagnostic for EvalError {
             ))
             .with_note(format!(
                 "available top-level definitions: {}",
-                if available_defs.is_empty() {
-                    "<none>".to_owned()
-                } else {
-                    available_defs.join(", ")
-                }
+                scope_summary(entrypoint, available_defs)
             ))
             .with_detail_code("missing-entrypoint")
             .with_fact("entrypoint", entrypoint.clone())
@@ -893,30 +920,9 @@ impl ToDiagnostic for EvalError {
             .with_note(format!(
                 "computed: `{symbol}` is not present in current visible scope"
             ))
-            .with_note(format!(
-                "scope.local={}",
-                if local_scope.is_empty() {
-                    "<none>".to_owned()
-                } else {
-                    local_scope.join(", ")
-                }
-            ))
-            .with_note(format!(
-                "scope.visible={}",
-                if visible_scope.is_empty() {
-                    "<none>".to_owned()
-                } else {
-                    visible_scope.join(", ")
-                }
-            ))
-            .with_note(format!(
-                "scope.top_level={}",
-                if top_level_scope.is_empty() {
-                    "<none>".to_owned()
-                } else {
-                    top_level_scope.join(", ")
-                }
-            ))
+            .with_note(format!("scope.local={}", scope_summary(symbol, local_scope)))
+            .with_note(format!("scope.visible={}", scope_summary(symbol, visible_scope)))
+            .with_note(format!("scope.top_level={}", scope_summary(symbol, top_level_scope)))
             .with_detail_code("undefined-binding")
             .with_fact("symbol", symbol.clone())
             .with_fact("scope_local", local_scope.clone())

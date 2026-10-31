@@ -319,8 +319,7 @@ examples above prints the location, the source line and the suggested fix:
 
 ```
 parse failed for gain: errors=1, recoveries=0, diagnostics=1
-gain:1:21: error [FRS-PARSE-0001] Parsing error at line 1 column 21. Repair sequences found:
-   1: Insert RPAR
+gain:1:21: error [FRS-PARSE-0001] syntax error: unexpected `;`, expected `)`
   1 | process = _ : *(0.5 ;
     |                     ^ unexpected token
     |                ^ `(` opened here

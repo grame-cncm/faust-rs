@@ -121,8 +121,7 @@ the location, the source line with its markers, the notes and the suggested fix.
 
 ```
 faustprobe: parse failed for reverb.dsp: errors=1, recoveries=0, diagnostics=1
-reverb.dsp:2:21: error [FRS-PARSE-0001] Parsing error at line 2 column 21. Repair sequences found:
-   1: Insert RPAR
+reverb.dsp:2:21: error [FRS-PARSE-0001] syntax error: unexpected `;`, expected `)`
   2 | process = _ : *(0.5 ;
     |                     ^ unexpected token
     |                ^ `(` opened here

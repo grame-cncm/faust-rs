@@ -89,3 +89,101 @@ fn a_literal_the_recovery_inserted_is_its_default_without_a_diagnostic() {
     let _ = state.int_from_token(&lexer, read);
     assert!(!state.ctx.diagnostics_is_empty(), "`1.5` is not an INT");
 }
+
+/// The diagnostics say it in the tokens of the language, and the first repair
+/// of each sequence is what is expected next.
+#[test]
+fn a_diagnostic_names_the_tokens_of_the_language() {
+    let first = |source: &str| {
+        let output = parse_program(source, "readable.dsp");
+        output.diagnostics.as_slice()[0].message.to_string()
+    };
+    assert_eq!(
+        first("a = 1\nprocess = a;\n"),
+        "syntax error: unexpected `process`, expected `;` or `[`"
+    );
+    assert_eq!(
+        first("g = hslider(\"g\", 0.5, 0, 1);\n"),
+        "syntax error: unexpected `)`, expected `,`"
+    );
+    assert_eq!(first("process = 1 +;\n"), "syntax error: unexpected `;`");
+}
+
+/// The `;` is proposed at the end of the statement, as the repair the parser
+/// cannot single out, and what recovery made of the rest is not reported.
+#[test]
+fn a_missing_semicolon_has_a_fix_and_no_cascade() {
+    let output = parse_program("a = 1\nb = 2;\nprocess = a + b;\n", "semi.dsp");
+    let diagnostics = output.diagnostics.as_slice();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].labels[0].span.line, 2);
+    let fix = &diagnostics[0].fixes[0];
+    assert_eq!(fix.edits[0].range.start, 5);
+    assert_eq!(fix.edits[0].replacement.as_ref(), ";");
+}
+
+/// Two statements without `;` are two errors: the check against a repaired text
+/// keeps what is really there.
+#[test]
+fn two_missing_semicolons_stay_two_errors() {
+    let source = "a = 1\nb = 2;\nc = 3\nd = 4;\nprocess = a + b + c + d;\n";
+    let output = parse_program(source, "semi.dsp");
+    let lines: Vec<u32> = output
+        .diagnostics
+        .as_slice()
+        .iter()
+        .map(|diagnostic| diagnostic.labels[0].span.line)
+        .collect();
+    assert_eq!(lines, [2, 4]);
+}
+
+fn error_lines(source: &str) -> Vec<u32> {
+    let output = parse_program(source, "semi.dsp");
+    output
+        .diagnostics
+        .as_slice()
+        .iter()
+        .map(|diagnostic| diagnostic.labels[0].span.line)
+        .collect()
+}
+
+/// The `;` goes after the last token, not after the comment that ends the line,
+/// where it would change nothing.
+#[test]
+fn a_missing_semicolon_is_inserted_before_a_comment() {
+    for source in [
+        "a = 1 // one\nb = 2;\nprocess = a + b;\n",
+        "a = 1 /* one\n   two */\nb = 2;\nprocess = a + b;\n",
+    ] {
+        let output = parse_program(source, "semi.dsp");
+        let diagnostics = output.diagnostics.as_slice();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].fixes[0].edits[0].range.start, 5);
+    }
+    // what looks like a comment in a string is the string
+    let source = "a = hslider(\"//\", 0, 0, 1, 0.1)\nb = 2;\n";
+    let output = parse_program(source, "semi.dsp");
+    let fix = &output.diagnostics.as_slice()[0].fixes[0];
+    assert_eq!(
+        fix.edits[0].range.start as usize,
+        source.find('\n').unwrap()
+    );
+}
+
+/// Dropping what a missing `;` explains keeps the errors further down.
+#[test]
+fn the_errors_after_a_missing_semicolon_stay() {
+    let source = "a = 1 // one\nb = 2;\nc = (3;\nprocess = a + b + c;\n";
+    for _ in 0..16 {
+        assert_eq!(error_lines(source), [2, 3]);
+    }
+}
+
+/// The end of the input errs on the line of the last missing `;`, and only the
+/// position tells them apart.
+#[test]
+fn a_cascade_on_the_line_of_a_real_error_goes() {
+    for _ in 0..16 {
+        assert_eq!(error_lines("a = 1\nb = 2\nprocess = a + b;\n"), [2, 3]);
+    }
+}
