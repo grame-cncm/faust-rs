@@ -45,6 +45,20 @@ fn identical_unresolved_nodes_blame_the_reachable_occurrence() {
     );
 }
 
+/// `a` is both local to `process` and top-level: its local site does not end
+/// the definition of `process`, as a top-level site would.
+#[test]
+fn a_local_definition_sharing_a_top_level_name_keeps_the_failing_use() {
+    let source = "process = b\nwith {\n  a = 2;\n  b = missing + a;\n};\na = 1;\n";
+    let err = Compiler::new()
+        .compile_source_to_signals("shadowing.dsp", source)
+        .expect_err("the undefined symbol should fail");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    assert_eq!(diagnostic.labels[0].role, compiler::LabelRole::UseSite);
+    assert_eq!(diagnostic.labels[0].span.line, 4);
+    assert_eq!(diagnostic.labels[0].span.col, 7);
+}
+
 #[test]
 fn parse_error_fixture_exposes_frs_parse_code() {
     let compiler = Compiler::new();

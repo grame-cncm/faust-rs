@@ -156,9 +156,10 @@ fn color_always_changes_nothing_but_the_escapes() {
 #[test]
 fn color_survives_the_rewriting_of_an_eval_error() {
     // Not located in the expression, then located in it: `--eval` searches the
-    // text of both, for the symbol and for the location.
+    // text of both, for the symbol and for the location. Two uses of `nope` are
+    // one node, which no single place can stand for.
     for (tag, expr, expected) in [
-        ("eval_symbol", "nope + 1", "`nope` is used by <eval 0>"),
+        ("eval_symbol", "nope + nope", "`nope` is used by <eval 0>"),
         ("eval_location", "1 + (", "<eval 0>:1:"),
     ] {
         let source = "process = _;\n";
@@ -170,6 +171,19 @@ fn color_survives_the_rewriting_of_an_eval_error() {
         let stripped = String::from_utf8_lossy(&stripped);
         assert!(stripped.contains(expected), "{stripped}");
     }
+}
+
+#[test]
+fn an_undefined_symbol_of_an_expression_is_located_in_it() {
+    let out = failing_run(
+        "eval_located",
+        "process = _;\n",
+        &["--eval", "nope + 1"],
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("<eval 0>:1:1: error"), "{text}");
+    assert!(text.contains("nope + 1"), "{text}");
 }
 
 #[test]

@@ -426,7 +426,8 @@ pub(crate) fn source_span_for_node_in_definition(
     node: BoxId,
     owner: &str,
 ) -> Option<SourceSpan> {
-    let (owner_name, _) = find_definition_name_and_expr(arena, defs_root, owner)?;
+    let (owner_name, owner_expr) = find_definition_name_and_expr(arena, defs_root, owner)?;
+    let local_names = local_definition_names(arena, owner_expr);
     let owner_start = ctx
         .box_provenance()
         .origins_for(owner_name)
@@ -441,6 +442,12 @@ pub(crate) fn source_span_for_node_in_definition(
     while !arena.is_nil(defs) {
         let def = arena.hd(defs)?;
         let name = arena.hd(def)?;
+        defs = arena.tl(defs)?;
+        // A `with` of the owner may define a name that is also a top-level one,
+        // often in a library: its site is inside the owner and ends nothing.
+        if local_names.contains(&name) {
+            continue;
+        }
         for id in ctx.box_provenance().origins_for(name) {
             let Some(origin) = ctx.box_provenance().get(*id) else {
                 continue;
@@ -458,7 +465,6 @@ pub(crate) fn source_span_for_node_in_definition(
                 next_start = Some(origin.location.clone());
             }
         }
-        defs = arena.tl(defs)?;
     }
 
     let candidates = ctx
@@ -699,6 +705,40 @@ pub(crate) fn source_span_for_definition_name(
 /// infinite loops on DAG-shared or aliased subtrees.  The conservative bound
 /// means very large subtrees may produce a false negative; callers that use
 /// this for ownership detection already tolerate that with a `None` fallback.
+/// The names defined by the `with` and `letrec` blocks under `root`, at any
+/// depth. Bounded like the other walks of this file: it serves diagnostics only.
+fn local_definition_names(
+    arena: &tlib::TreeArena,
+    root: BoxId,
+) -> std::collections::HashSet<BoxId> {
+    let mut names = std::collections::HashSet::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![root];
+    while let Some(cur) = stack.pop() {
+        if seen.len() > 1 << 16 || !seen.insert(cur) {
+            continue;
+        }
+        let blocks = match match_box(arena, cur) {
+            BoxMatch::WithLocalDef(_, definitions) => [Some(definitions), None],
+            BoxMatch::WithRecDef(_, definitions, others) => [Some(definitions), Some(others)],
+            _ => [None, None],
+        };
+        for mut list in blocks.into_iter().flatten() {
+            while !arena.is_nil(list) {
+                let Some(next) = arena.tl(list) else { break };
+                if let Some(name) = arena.hd(list).and_then(|def| arena.hd(def)) {
+                    names.insert(name);
+                }
+                list = next;
+            }
+        }
+        if let Some(children) = arena.children(cur) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    names
+}
+
 pub(crate) fn subtree_contains_node(arena: &tlib::TreeArena, root: BoxId, needle: BoxId) -> bool {
     if root == needle {
         return true;
