@@ -254,7 +254,10 @@ must run unchanged with Faust C++ should not pass them.
   are summed up in the text and whole in the JSON facts. Human output starts on
   the diagnostic, with no `... pipeline failed:` line, and at `standard` carries
   neither box node numbers nor a label on a place another one marks: the JSON
-  report keeps the labels, the scopes and the binding trace. Tests:
+  report keeps the labels, the scopes and the binding trace. An arity mismatch
+  also labels the definitions of its operands, and `too many arguments` and a
+  failed `case` are reported on the call and cite it; the C++ compiler has no
+  location for them. Tests:
   `crates/parser/tests/parse_error_order.rs`,
   `a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts` in
   `crates/compiler/tests/diagnostic_errors.rs`.

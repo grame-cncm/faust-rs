@@ -1637,6 +1637,20 @@ impl Compiler {
                     root,
                 );
             }
+            if let eval::EvalError::PatternMatchFailed {
+                node: rules,
+                application: Some(_),
+                ..
+            } = &error
+            {
+                diagnostic = add_case_rules_label(
+                    diagnostic,
+                    &output.state.ctx,
+                    &output.state.arena,
+                    root,
+                    *rules,
+                );
+            }
             // Guidance runs after labeling: a rename edit needs the primary
             // label that `maybe_add_eval_source_labels` (or, for a missing
             // entry point, `maybe_add_missing_entrypoint_label`) just resolved.

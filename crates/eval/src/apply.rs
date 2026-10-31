@@ -310,6 +310,8 @@ pub(crate) fn apply_pattern_matcher_value(
             return Err(EvalError::PatternMatchFailed {
                 node: pm.original_rules,
                 arguments,
+                application: None,
+                call: None,
             });
         };
         pm.state = new_state;
@@ -340,6 +342,8 @@ pub(crate) fn apply_pattern_matcher_value(
         Err(EvalError::PatternMatchFailed {
             node: pm.original_rules,
             arguments: pm.rev_param_list.clone(),
+            application: None,
+            call: None,
         })
     });
     if dispatched {

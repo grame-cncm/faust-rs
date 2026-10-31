@@ -359,14 +359,21 @@ pub(crate) fn maybe_add_eval_source_labels(
             _ => node,
         };
         let use_span = source_span_for_node_in_definition(ctx, arena, defs_root, used, owner);
+        let definition_primary = if used == node {
+            "definition site"
+        } else {
+            "failing call"
+        };
         let origin_span = source_span_for_definition_name(ctx, arena, defs_root, owner);
         let call_span =
             source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name);
         if let Some(primary_span) = use_span.clone().or_else(|| origin_span.clone()) {
             let primary_role = if use_span.is_some() {
                 LabelRole::UseSite
-            } else {
+            } else if used == node {
                 LabelRole::DefinitionSite
+            } else {
+                LabelRole::CallSite
             };
             diagnostic = diagnostic.with_label(
                 Label::new(
@@ -375,7 +382,7 @@ pub(crate) fn maybe_add_eval_source_labels(
                     if use_span.is_some() {
                         "failing use"
                     } else {
-                        "definition site"
+                        definition_primary
                     },
                 )
                 .with_role(primary_role),
@@ -448,6 +455,32 @@ pub(crate) fn maybe_add_eval_source_labels(
         );
     }
     diagnostic
+}
+
+/// Labels the rules of a `case` that refused a call, which stays the failure.
+pub(crate) fn add_case_rules_label(
+    diagnostic: Diagnostic,
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    rules: BoxId,
+) -> Diagnostic {
+    let primary = primary_span_of(&diagnostic);
+    match source_span_for_definition_of_expr(ctx, arena, defs_root, rules) {
+        Some(span) if Some(&span) != primary.as_ref() => diagnostic.with_label(
+            Label::new(LabelStyle::Secondary, span, "the rules that do not match")
+                .with_role(LabelRole::DefinitionSite),
+        ),
+        _ => diagnostic,
+    }
+}
+
+fn primary_span_of(diagnostic: &Diagnostic) -> Option<SourceSpan> {
+    diagnostic
+        .labels
+        .iter()
+        .find(|label| label.style == LabelStyle::Primary)
+        .map(|label| label.span.clone())
 }
 
 /// The span of `node` when the sources mention it at a single place.

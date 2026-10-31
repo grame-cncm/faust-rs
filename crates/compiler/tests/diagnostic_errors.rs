@@ -188,6 +188,41 @@ fn too_many_arguments_names_the_call() {
     );
 }
 
+/// The call is what is wrong or what shows it: the rules are a second place.
+/// The message cites the arguments the rules saw, simplified, as C++ does.
+#[test]
+fn a_case_failure_names_the_call_and_its_arguments() {
+    let failure = |source: &str| {
+        let err = Compiler::new()
+            .compile_source_to_signals("case.dsp", source)
+            .expect_err("no rule should match");
+        err.diagnostic_bundle().as_slice()[0].clone()
+    };
+    let diagnostic = failure("f(1) = 2;\ng = f(1 + 2);\nprocess = g;\n");
+    assert_eq!(diagnostic.message.as_ref(), "no case rule matches `f(3)`");
+    assert_eq!(diagnostic.labels[0].span.line, 2);
+    assert_eq!(diagnostic.labels[0].span.col, 5);
+    assert!(
+        diagnostic.labels.iter().any(|label| label.message.as_ref()
+            == "the rules that do not match"
+            && label.span.line == 1),
+        "{:?}",
+        diagnostic.labels
+    );
+    // the rules stop at the argument no rule takes
+    let diagnostic = failure("f(0, x) = x;\nf(1, x) = x;\nprocess = f(2, _);\n");
+    assert_eq!(
+        diagnostic.message.as_ref(),
+        "no case rule matches `f(2, ...)`"
+    );
+    // and the call that fails among others is the one cited
+    let source = "f(1) = 2;\nprocess = f(1), f(2);\n";
+    assert_eq!(
+        failure(source).message.as_ref(),
+        "no case rule matches `f(2)`"
+    );
+}
+
 #[test]
 fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();
@@ -272,11 +307,7 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
             // the snippet shows it, and a note would only repeat it
             None,
         ),
-        (
-            "err_12_eval_case_no_match.dsp",
-            1u32,
-            Some("error originates from definition 'foo'"),
-        ),
+        ("err_12_eval_case_no_match.dsp", 2u32, None),
         (
             "err_13_eval_undefined_symbol_alias_chain_nested.dsp",
             1u32,
@@ -1593,7 +1624,7 @@ fn a_failure_in_a_library_is_not_labelled_on_a_shared_identifier() {
         .compile_file_to_signals(&program, &[])
         .expect_err("no rule of k matches 5");
     let first = &err.diagnostic_bundle().as_slice()[0];
-    assert_eq!(first.message.as_ref(), "no case rule matches arguments");
+    assert_eq!(first.message.as_ref(), "no case rule matches `m.k(5)`");
     let labels: Vec<_> = first
         .labels
         .iter()
@@ -1601,12 +1632,7 @@ fn a_failure_in_a_library_is_not_labelled_on_a_shared_identifier() {
         .collect();
     assert_eq!(
         labels,
-        [(
-            "the call that leads here".to_owned(),
-            LabelRole::CallSite,
-            3,
-            1
-        )]
+        [("failing call".to_owned(), LabelRole::CallSite, 3, 1)]
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -703,22 +703,22 @@ ERROR : pattern matching failed, no rule of case {(<x>,1) => x,0.5f : *; (<x>,0)
 faust-rs:
 
 ```text
-e_case.dsp:1:1: error [FRS-EVAL-0099] no case rule matches arguments
-  1 | sel = case {
-    | ^^^ definition site
+e_case.dsp:5:11: error [FRS-EVAL-0099] no case rule matches `sel(2, ...)`
   5 | process = sel(2, _);
-    | ^^^^^^^ call site
+    |           ^^^ failing use
+  1 | sel = case {
+    | ^^^ the rules that do not match
   = note: cause: no case rule matched the provided argument tuple
   = note: rule: at least one case pattern must match the provided argument tuple
   = note: computed: provided tuple did not match any declared case pattern
   = note: computed: no rule survived after 1 of 2 argument(s)
-  = note: error originates from definition 'sel'
-  = note: binding_trace=process -> sel
   = trace (evaluation): arguments -> rule 1 -> rule 2
   = help: add a matching case rule or add a catch-all pattern
 ```
 
-Both the definition and the call site are located. The C++ message renders the
+The call is the failure and the rules a second place. The message cites the
+arguments the rules saw, simplified, up to the one none of them takes: `f(1 + 2)`
+reads `f(3)`, as in C++. The C++ message renders the
 rules in *reverse* internal order with evaluator wrappers (`<x>`); `faust-rs`
 exposes them as the typed fact `pattern_rules = ["(0, x)", "(1, x)"]`, in
 written order, with pattern variables as bare names. The `computed:` line

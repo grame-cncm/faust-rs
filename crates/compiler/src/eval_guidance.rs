@@ -173,7 +173,10 @@ fn add_pattern_attempt_trace(
     error: &eval::EvalError,
     arena: &tlib::TreeArena,
 ) -> Diagnostic {
-    let eval::EvalError::PatternMatchFailed { node, arguments } = error else {
+    let eval::EvalError::PatternMatchFailed {
+        node, arguments, ..
+    } = error
+    else {
         return diagnostic;
     };
 

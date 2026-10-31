@@ -680,6 +680,8 @@ fn lower_pattern_matcher_to_symbolic(
         return Err(EvalError::PatternMatchFailed {
             node: pm.original_rules,
             arguments: pm.rev_param_list.clone(),
+            application: None,
+            call: None,
         });
     }
     let total = case_expected_arity(arena, pm.original_rules)?;
@@ -1889,39 +1891,69 @@ fn list_to_vec(arena: &TreeArena, list: TreeId) -> Result<Vec<TreeId>, EvalError
     tlib::list_to_vec(arena, list).ok_or(EvalError::MalformedListNode { node: list })
 }
 
-/// Gives a [`EvalError::TooManyArguments`] the application it comes from, the
-/// node with one place in the sources where the function is shared by all its
-/// uses. The counts become those of the whole call: `g(1, 2, 3, 4)` of a `g(x, y)`
-/// is refused with no argument left for the two inputs of a result that has
-/// none, and that is 4 arguments for 2. The innermost application is the one
-/// refused, and the ones around it leave the error alone.
+/// Gives an error that refuses an application that application, the node with
+/// one place in the sources where the function is shared by all its uses, and
+/// how the source writes it. The innermost application is the one refused, and
+/// the ones around it leave the error alone.
+///
+/// The counts of [`EvalError::TooManyArguments`] become those of the whole call:
+/// `g(1, 2, 3, 4)` of a `g(x, y)` is refused with no argument left for the two
+/// inputs of a result that has none, and that is 4 arguments for 2.
+///
+/// [`EvalError::PatternMatchFailed`] gets the arguments the rules saw, simplified.
+/// The rules stop at the first one none of them matches, which `...` says.
 fn name_refused_application(
     arena: &TreeArena,
     error: EvalError,
     application: TreeId,
     rev_args: TreeId,
 ) -> EvalError {
-    let EvalError::TooManyArguments {
-        expected,
-        got,
-        function: None,
-        remaining,
-        ..
-    } = error
-    else {
-        return error;
-    };
     let BoxMatch::Appl(fun, _) = match_box(arena, application) else {
         return error;
     };
-    let arguments = tlib::list_to_vec(arena, rev_args).map_or(remaining, |list| list.len());
-    let taken = arguments.saturating_sub(remaining);
-    EvalError::TooManyArguments {
-        node: application,
-        expected: expected + taken,
-        got: got + taken,
-        function: boxes::box_pp_bounded(arena, fun, 0, boxes::FloatSize::Double, 60).ok(),
-        remaining,
+    let text = |node, size| boxes::box_pp_bounded(arena, node, 0, boxes::FloatSize::Double, size);
+    let total = tlib::list_to_vec(arena, rev_args).map(|list| list.len());
+    match error {
+        EvalError::TooManyArguments {
+            expected,
+            got,
+            function: None,
+            remaining,
+            ..
+        } => {
+            let taken = total.unwrap_or(remaining).saturating_sub(remaining);
+            EvalError::TooManyArguments {
+                node: application,
+                expected: expected + taken,
+                got: got + taken,
+                function: text(fun, 60).ok(),
+                remaining,
+            }
+        }
+        EvalError::PatternMatchFailed {
+            node,
+            arguments,
+            application: None,
+            ..
+        } => {
+            let shown = arguments
+                .iter()
+                .map(|argument| text(*argument, 40))
+                .collect::<Result<Vec<_>, _>>();
+            let call = shown.ok().zip(text(fun, 60).ok()).map(|(mut shown, fun)| {
+                if total.is_some_and(|total| total > shown.len()) {
+                    shown.push("...".to_owned());
+                }
+                format!("{fun}({})", shown.join(", "))
+            });
+            EvalError::PatternMatchFailed {
+                node,
+                arguments,
+                application: Some(application),
+                call,
+            }
+        }
+        other => other,
     }
 }
 

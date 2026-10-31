@@ -304,6 +304,10 @@ pub enum EvalError {
         /// dispatched on. They let the compiler facade render a rule/attempt
         /// trace without exposing evaluator environments or automaton state.
         arguments: Vec<TreeId>,
+        /// The application refused, once the evaluation of its node knows it.
+        application: Option<TreeId>,
+        /// That application with the arguments the rules saw, as Faust.
+        call: Option<String>,
     },
     /// Non-closure application received more arguments than the function input arity.
     TooManyArguments {
@@ -688,6 +692,9 @@ impl Display for EvalError {
             Self::PatternArityMismatch { expected, got, .. } => {
                 write!(f, "pattern arity mismatch: expected {expected}, got {got}")
             }
+            Self::PatternMatchFailed {
+                call: Some(call), ..
+            } => write!(f, "no case rule matches `{call}`"),
             Self::PatternMatchFailed { .. } => write!(f, "no case rule matches arguments"),
             Self::TooManyArguments {
                 expected,

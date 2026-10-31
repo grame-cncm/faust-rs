@@ -560,7 +560,16 @@ pub(crate) fn eval_error_node(error: &eval::EvalError) -> Option<BoxId> {
     match error {
         // A missing entry point has no offending node: the definition list
         // it carries is not a site (see `maybe_add_missing_entrypoint_label`).
-        eval::EvalError::UndefinedSymbol { node, .. }
+        eval::EvalError::PatternMatchFailed {
+            application: Some(node),
+            ..
+        }
+        | eval::EvalError::PatternMatchFailed {
+            node,
+            application: None,
+            ..
+        }
+        | eval::EvalError::UndefinedSymbol { node, .. }
         | eval::EvalError::MalformedDefinitionNode { node }
         | eval::EvalError::MalformedListNode { node }
         | eval::EvalError::MalformedCaseNode { node }
@@ -569,7 +578,6 @@ pub(crate) fn eval_error_node(error: &eval::EvalError) -> Option<BoxId> {
         | eval::EvalError::NonIdentifierIterationVariable { node }
         | eval::EvalError::IterationCountNotInt { node }
         | eval::EvalError::PatternArityMismatch { node, .. }
-        | eval::EvalError::PatternMatchFailed { node, .. }
         | eval::EvalError::CaseArgumentNotConstant { node, .. }
         | eval::EvalError::TooManyArguments { node, .. }
         | eval::EvalError::DivisionByZero { node, .. }
