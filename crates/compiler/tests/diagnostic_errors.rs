@@ -1015,6 +1015,75 @@ fn a_zero_divisor_that_is_no_literal_is_reported_by_whoever_needs_the_constant()
     }
 }
 
+/// The checks of the `isBoxRoute` branch of C++ `eval.cpp`. Each program below
+/// has the same fate with Faust 2.84.3 and 2.91.0.
+#[test]
+fn route_parameters_are_refused_as_in_cpp() {
+    const SHAPE: &str = "invalid route expression, first two parameters should be blocks";
+    const NUMBERS: &str = "invalid route expression, parameters should be numbers";
+    for (source, expected) in [
+        ("process = route(2,2,1,3,2,1,5);", SHAPE),
+        ("process = route(2,2,1);", SHAPE),
+        ("process = route(2,2,par(i,3,i+1));", SHAPE),
+        ("process = route((1,2),2,1,1);", SHAPE),
+        ("process = route(2,(1,2),1,1);", SHAPE),
+        ("process = route(2,2,+,1);", SHAPE),
+        ("f(a) = route(2,2,a); process = f(1);", SHAPE),
+        ("process = route(hslider(\"x\",2,1,4,1),2,1,1);", NUMBERS),
+        ("process = route(2,2,1,hslider(\"x\",2,1,4,1));", NUMBERS),
+        (
+            "process = route(2,2,1,fvariable(int count, <math.h>));",
+            NUMBERS,
+        ),
+    ] {
+        let error = Compiler::new()
+            .compile_source_to_signals("route.dsp", source)
+            .expect_err(source);
+        let message = error.diagnostic_bundle().as_slice()[0].message.clone();
+        assert!(message.starts_with(expected), "{source}: {message}");
+    }
+}
+
+#[test]
+fn a_route_is_refused_at_its_definition() {
+    let source = "swap = route(2,2,1,3,2,1,5);\nprocess = _, _ : swap;\n";
+    let error = Compiler::new()
+        .compile_source_to_signals("route.dsp", source)
+        .expect_err("five values are no list of pairs");
+    let diagnostic = &error.diagnostic_bundle().as_slice()[0];
+    assert!(
+        diagnostic
+            .notes
+            .iter()
+            .any(|note| note.contains("`pairs` is 0→5")),
+        "{:?}",
+        diagnostic.notes
+    );
+    assert_eq!(diagnostic.labels[0].span.line, 1);
+}
+
+#[test]
+fn the_routes_cpp_accepts_still_compile() {
+    for source in [
+        "process = route(2,2,1,2,2,1);",
+        "process = route(2.5,2,1,1);",
+        "process = route(2,2,1.5,1);",
+        "process = route(2,2,0,0);",
+        "process = route(2,2,par(i,2,(i+1,i+1)));",
+        "process = route(1,1,sqrt(1),1);",
+        "process = route(2,2,(1,1:+,2));",
+        "f(n) = route(n,n,1,1); process = f(2);",
+        "f(a,b) = route(2,2,a,b); process = f(1,2);",
+        "f = route(2,2); process = f(1,2);",
+        "f(route(a,b,c)) = a+b; process = f(route(1,1,1,1));",
+        "g = case{ (route(a,b,c)) => a; }; process = g(route(3,1,1,1));",
+    ] {
+        Compiler::new()
+            .compile_source_to_signals("route.dsp", source)
+            .unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+}
+
 #[test]
 fn a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument() {
     // The reference fails here (`ERROR : division by 0 in 1 / 0`): it simplifies

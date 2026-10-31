@@ -1096,7 +1096,7 @@ fn eval_value_uncached(
             loop_detector,
         )?)),
         BoxMatch::Route(ins, outs, routes) => {
-            eval_route_value(arena, ins, outs, routes, env, loop_detector)
+            eval_route_value(arena, expr, ins, outs, routes, env, loop_detector)
         }
         BoxMatch::Seq(e1, e2) => eval_seq_value(arena, expr, e1, e2, env, loop_detector),
         // ── outputs(expr) / inputs(expr) ────────────────────────────────────
@@ -1259,8 +1259,15 @@ fn eval_ident_value(
 /// route spec (`normalizeRouteList`). Rust mirrors this with
 /// `eval_box_to_int_node` (propagate + simplify → `i32` → `boxInt`) and
 /// `normalize_route_spec`.
+///
+/// C++ refuses a route whose sizes are not two 0→1 boxes, or whose routes are
+/// not an even number of values, and one whose parameters do not fold to
+/// numbers, unless a parameter is a pattern variable, a wire or a slot: such a
+/// route is a pattern of a `case`. A parameter of unknown arity is left to
+/// propagation.
 fn eval_route_value(
     arena: &mut TreeArena,
+    expr: TreeId,
     ins: TreeId,
     outs: TreeId,
     routes: TreeId,
@@ -1279,6 +1286,7 @@ fn eval_route_value(
     };
     let ins_node = size_node(eval_ins)?;
     let outs_node = size_node(eval_outs)?;
+    check_route_parameters(arena, expr, eval_ins, eval_outs, eval_routes, loop_detector)?;
     let routes_node = a2sb(arena, eval_routes, loop_detector).unwrap_or(eval_routes);
     let spec_node = eval_box_to_int_list_node(arena, routes_node).unwrap_or_else(|| {
         let simplified_routes = box_simplification(arena, routes_node);
@@ -1287,6 +1295,57 @@ fn eval_route_value(
 
     let mut bld = BoxBuilder::new(arena);
     Ok(EvalValue::Box(bld.route(ins_node, outs_node, spec_node)))
+}
+
+/// The checks of the C++ `isBoxRoute` branch, on evaluated parameters.
+fn check_route_parameters(
+    arena: &mut TreeArena,
+    expr: TreeId,
+    ins: TreeId,
+    outs: TreeId,
+    routes: TreeId,
+    loop_detector: &mut LoopDetector,
+) -> Result<(), EvalError> {
+    let mut parameters = [ins, outs, routes];
+    for parameter in &mut parameters {
+        *parameter = a2sb(arena, *parameter, loop_detector).unwrap_or(*parameter);
+    }
+    let is_pattern = parameters.iter().any(|&parameter| {
+        matches!(
+            match_box(arena, parameter),
+            BoxMatch::PatternVar(_) | BoxMatch::Wire | BoxMatch::Slot(_)
+        )
+    });
+    if is_pattern {
+        return Ok(());
+    }
+    let cache = &mut loop_detector.box_arity_cache;
+    let [Some(ins_arity), Some(outs_arity), Some(routes_arity)] =
+        parameters.map(|parameter| infer_box_arity_cached(arena, parameter, cache))
+    else {
+        return Ok(());
+    };
+    let (route_inputs, route_values) = routes_arity;
+    let well_formed = ins_arity == (0, 1)
+        && outs_arity == (0, 1)
+        && route_inputs == 0
+        && route_values > 1
+        && route_values.is_multiple_of(2);
+    if !well_formed {
+        return Err(EvalError::InvalidRouteShape {
+            node: expr,
+            ins: ins_arity,
+            outs: outs_arity,
+            routes: routes_arity,
+        });
+    }
+    if parameters
+        .iter()
+        .any(|&parameter| constant_list_signals(arena, parameter).is_none())
+    {
+        return Err(EvalError::InvalidRouteParameters { node: expr });
+    }
+    Ok(())
 }
 
 /// Evaluates a `seq(e1, e2)` box, folding numeric tuples where possible.

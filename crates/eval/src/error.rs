@@ -461,6 +461,25 @@ pub enum EvalError {
     NotAConstantExpression {
         node: TreeId,
     },
+    /// The sizes of a `route` are not two 0→1 boxes, or its routes are not an
+    /// even number of values. Each arity is `(inputs, outputs)`.
+    ///
+    /// C++ equivalent: `evalerror("invalid route expression, first two parameters
+    /// should be blocks producing a value, third parameter a list of input/output
+    /// pairs", …)` in `eval.cpp`.
+    InvalidRouteShape {
+        node: TreeId,
+        ins: (usize, usize),
+        outs: (usize, usize),
+        routes: (usize, usize),
+    },
+    /// The parameters of a `route` have the right shape but do not fold to numbers.
+    ///
+    /// C++ equivalent: `evalerror("invalid route expression, parameters should be
+    /// numbers", …)` in `eval.cpp`.
+    InvalidRouteParameters {
+        node: TreeId,
+    },
     /// Slider or numentry init value is outside the declared [min, max] range.
     ///
     /// C++ equivalent (upstream Faust; absent from the pinned reference
@@ -744,6 +763,15 @@ impl Display for EvalError {
                     f,
                     "expression is not a compile-time numeric constant (type 0→1)"
                 )
+            }
+            Self::InvalidRouteShape { .. } => {
+                write!(
+                    f,
+                    "invalid route expression, first two parameters should be blocks producing a value, third parameter a list of input/output pairs"
+                )
+            }
+            Self::InvalidRouteParameters { .. } => {
+                write!(f, "invalid route expression, parameters should be numbers")
             }
             Self::WidgetParameterNotConstant {
                 widget,
@@ -1310,6 +1338,28 @@ impl ToDiagnostic for EvalError {
             .with_note("cause: an expression the compiler evaluates at compile time does not fold to a number")
             .with_note("rule: it must reduce to a single number: a literal, a constant expression, or a constant definition")
             .with_help("pass a constant; a UI control, an input, or the argument of a function applied with `:` is a signal known only at run time"),
+            Self::InvalidRouteShape {
+                ins, outs, routes, ..
+            } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_GENERIC_FAILURE,
+                message,
+            )
+            .with_note("rule: `route(ins, outs, pairs)` takes one value for `ins`, one for `outs`, and an even number of values for `pairs`")
+            .with_note(format!(
+                "computed: `ins` is {}→{}, `outs` is {}→{}, `pairs` is {}→{}",
+                ins.0, ins.1, outs.0, outs.1, routes.0, routes.1
+            ))
+            .with_help("list `pairs` as input, output, input, output: `route(2, 2, 1, 2, 2, 1)` swaps two signals"),
+            Self::InvalidRouteParameters { .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_GENERIC_FAILURE,
+                message,
+            )
+            .with_note("rule: the parameters of `route` are compile-time numbers")
+            .with_help("pass constants; a UI control or an input is a signal known only at run time"),
             Self::Cancelled => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,

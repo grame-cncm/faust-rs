@@ -215,13 +215,10 @@ pub(crate) fn eval_box_to_int_node(
     Ok(BoxBuilder::new(arena).int(n))
 }
 
-/// Converts a 0→N constant box into a canonical right-spine `Par` tree of
-/// `boxInt` leaves.
-///
-/// This follows the C++ `isBoxRoute` path in `eval.cpp`, where the route
-/// specification is propagated as a whole and then converted back from the
-/// resulting integer signal list.
-pub(crate) fn eval_box_to_int_list_node(arena: &mut TreeArena, box_id: TreeId) -> Option<TreeId> {
+/// The simplified signals of a 0→N box, when it has outputs and each one folds
+/// to a number. C++ `sigList2vecInt` accepts the same lists (`eval.cpp`,
+/// `isBoxRoute` branch), reals included.
+pub(crate) fn constant_list_signals(arena: &mut TreeArena, box_id: TreeId) -> Option<Vec<TreeId>> {
     let (inputs, outputs) = infer_box_arity(arena, box_id)?;
     if inputs != 0 || outputs == 0 {
         return None;
@@ -232,10 +229,27 @@ pub(crate) fn eval_box_to_int_list_node(arena: &mut TreeArena, box_id: TreeId) -
     if signals.len() != outputs {
         return None;
     }
-
-    let mut ints = Vec::with_capacity(outputs);
+    let mut constants = Vec::with_capacity(outputs);
     for sig in signals {
         let sig = try_simplify_const(arena, sig).ok()?;
+        if !matches!(match_sig(arena, sig), SigMatch::Int(_) | SigMatch::Real(_)) {
+            return None;
+        }
+        constants.push(sig);
+    }
+    Some(constants)
+}
+
+/// Converts a 0→N constant box into a canonical right-spine `Par` tree of
+/// `boxInt` leaves.
+///
+/// This follows the C++ `isBoxRoute` path in `eval.cpp`, where the route
+/// specification is propagated as a whole and then converted back from the
+/// resulting integer signal list.
+pub(crate) fn eval_box_to_int_list_node(arena: &mut TreeArena, box_id: TreeId) -> Option<TreeId> {
+    let signals = constant_list_signals(arena, box_id)?;
+    let mut ints = Vec::with_capacity(signals.len());
+    for sig in signals {
         let value = match match_sig(arena, sig) {
             SigMatch::Int(i) => i,
             SigMatch::Real(x) => {

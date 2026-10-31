@@ -573,6 +573,8 @@ pub(crate) fn eval_error_node(error: &eval::EvalError) -> Option<BoxId> {
         | eval::EvalError::CaseArgumentNotConstant { node, .. }
         | eval::EvalError::TooManyArguments { node, .. }
         | eval::EvalError::DivisionByZero { node, .. }
+        | eval::EvalError::InvalidRouteShape { node, .. }
+        | eval::EvalError::InvalidRouteParameters { node }
         | eval::EvalError::InvalidControlListOperand { node, .. }
         | eval::EvalError::ControlIndexOutOfRange { node, .. }
         | eval::EvalError::ControlIndexNotConstant { node, .. }

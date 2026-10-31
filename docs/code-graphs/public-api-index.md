@@ -1461,7 +1461,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `struct` | `DepthLimit` | `crates/eval/src/error.rs:110` |
 | `struct` | `DepthContext` | `crates/eval/src/error.rs:119` |
 | `enum` | `EvalError` | `crates/eval/src/error.rs:243` |
-| `fn` | `EvalError::symbol_suggestions` | `crates/eval/src/error.rs:526` |
+| `fn` | `EvalError::symbol_suggestions` | `crates/eval/src/error.rs:545` |
 | `mod` | `suggestions` | `crates/eval/src/lib.rs:178` |
 | `use` | `environment::Environment` | `crates/eval/src/lib.rs:194` |
 | `use` | `error` | `crates/eval/src/lib.rs:195` |
@@ -1479,7 +1479,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `EvalRequest::with_cancel` | `crates/eval/src/lib.rs:366` |
 | `fn` | `eval` | `crates/eval/src/lib.rs:382` |
 | `fn` | `eval_box` | `crates/eval/src/lib.rs:721` |
-| `fn` | `crate_id` | `crates/eval/src/lib.rs:1836` |
+| `fn` | `crate_id` | `crates/eval/src/lib.rs:1895` |
 | `struct` | `LoopDetector` | `crates/eval/src/loop_detector.rs:58` |
 | `fn` | `LoopDetector::new` | `crates/eval/src/loop_detector.rs:446` |
 | `fn` | `LoopDetector::with_cancel` | `crates/eval/src/loop_detector.rs:461` |
