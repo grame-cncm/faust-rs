@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------
 name: "gain_bias_ui_meta"
-Code generated with Faust 0.9.4 (https://faust.grame.fr)
+Code generated with Faust 0.9.5 (https://faust.grame.fr)
 Compilation options: -lang cpp -single
 ------------------------------------------------------------ */
 

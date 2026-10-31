@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------
 name: "table_state_delay"
-Code generated with Faust 0.9.4 (https://faust.grame.fr)
+Code generated with Faust 0.9.5 (https://faust.grame.fr)
 Compilation options: -lang c -single
 ------------------------------------------------------------ */
 

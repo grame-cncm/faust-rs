@@ -1,4 +1,4 @@
-// Code generated with faust-rs 0.9.4
+// Code generated with faust-rs 0.9.5
 // Compilation options: -lang codebox -double
 // Additional functions
 // Params
