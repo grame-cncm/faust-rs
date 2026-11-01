@@ -291,6 +291,32 @@ fn a_symbol_nothing_reaches_stays_out_of_it() {
     );
 }
 
+/// A width that `<:` or `:>` would connect is often one of them written `:`.
+#[test]
+fn a_mismatch_names_the_operator_that_would_fit() {
+    let help = |source: &str| {
+        let err = Compiler::new()
+            .compile_source_to_signals("operator.dsp", source)
+            .expect_err("the composition should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        diagnostic
+            .help
+            .iter()
+            .find(|help| help.contains("would"))
+            .map(ToString::to_string)
+    };
+    assert_eq!(
+        help("process = _ : (_, _);\n").as_deref(),
+        Some("`A <: B` would split the 1 output(s) of A over the 2 inputs of B")
+    );
+    assert_eq!(
+        help("process = (_, _, _, _) : (_, _);\n").as_deref(),
+        Some("`A :> B` would merge the 4 outputs of A into the 2 input(s) of B")
+    );
+    // neither fits, so nothing is said
+    assert_eq!(help("process = (_, _) : (_, _, _);\n"), None);
+}
+
 #[test]
 fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();

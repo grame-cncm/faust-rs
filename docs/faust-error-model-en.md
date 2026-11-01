@@ -205,7 +205,7 @@ evaluation that reads each undefined symbol as `_`, and a note says so.
 
 A composition mismatch also labels the definitions of its operands: the failing
 token is where two widths meet, and the wrong width is usually written in one of
-them.
+them. When `<:` or `:>` would connect the two widths, the help says so.
 
 ### 2.5 Opt-in warnings
 
