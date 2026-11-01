@@ -73,44 +73,58 @@ pub(crate) fn add_paired_propagate_context(
 
 // ─── Source label helpers ─────────────────────────────────────────────────────
 
+/// How deep the search for a section of `-` goes into a composition.
+const SECTION_DEPTH: usize = 32;
+
 /// Says what a composition mismatch may have meant.
 ///
-/// A section of `-` in an argument comes first: `*(-(x))` reads as a negation,
-/// has two inputs, and no operator would connect it. Otherwise, a mismatch of
-/// `:` whose widths divide is often a `<:` or a `:>` written `:`.
+/// A section of `-` in an argument comes first: `*(-(x))` or `max(-(x))` reads
+/// as a negation, keeps an input, and writing the negation would connect the
+/// widths. Otherwise, a mismatch of `:` whose widths divide is often a `<:` or
+/// a `:>` written `:`.
 pub(crate) fn add_composition_guidance(
     diagnostic: Diagnostic,
     error: &PropagateError,
     arena: &tlib::TreeArena,
 ) -> Diagnostic {
-    let node = match error {
-        PropagateError::SeqArityMismatch { node, .. }
-        | PropagateError::SplitArityMismatch { node, .. }
-        | PropagateError::MergeArityMismatch { node, .. } => *node,
+    let (node, left_outputs, right_inputs) = match error {
+        PropagateError::SeqArityMismatch {
+            node,
+            left_outputs,
+            right_inputs,
+        }
+        | PropagateError::SplitArityMismatch {
+            node,
+            left_outputs,
+            right_inputs,
+        }
+        | PropagateError::MergeArityMismatch {
+            node,
+            left_outputs,
+            right_inputs,
+        } => (*node, *left_outputs, *right_inputs),
         _ => return diagnostic,
     };
-    let operands = match match_box(arena, node) {
-        BoxMatch::Seq(left, right)
-        | BoxMatch::Split(left, right)
-        | BoxMatch::Merge(left, right) => Some((left, right)),
-        _ => None,
+    let sections = match match_box(arena, node) {
+        BoxMatch::Seq(_, right) | BoxMatch::Split(_, right) | BoxMatch::Merge(_, right) => {
+            minus_sections_at_inputs(arena, right, 0)
+        }
+        _ => 0,
     };
-    if operands.is_some_and(|(left, right)| {
-        holds_minus_section(arena, left, 0) || holds_minus_section(arena, right, 0)
-    }) {
+    let connects = |inputs: usize| match error {
+        PropagateError::SeqArityMismatch { .. } => left_outputs == inputs,
+        PropagateError::SplitArityMismatch { .. } => inputs.is_multiple_of(left_outputs),
+        _ => left_outputs.is_multiple_of(inputs),
+    };
+    if (1..=sections.min(right_inputs)).any(|negated| connects(right_inputs - negated)) {
         return diagnostic
             .with_note("`-(x)` as an argument is the section `_ - x`, not a negation: it keeps an input of its own")
             .with_help("write the negation as `0 - x`");
     }
-    let PropagateError::SeqArityMismatch {
-        left_outputs,
-        right_inputs,
-        ..
-    } = error
-    else {
+    if !matches!(error, PropagateError::SeqArityMismatch { .. }) {
         return diagnostic;
-    };
-    match composition_operator_hint(*left_outputs, *right_inputs) {
+    }
+    match composition_operator_hint(left_outputs, right_inputs) {
         Some(hint) => diagnostic.with_help(hint),
         None => diagnostic,
     }
@@ -135,46 +149,66 @@ fn composition_operator_hint(left_outputs: usize, right_inputs: usize) -> Option
     }
 }
 
-/// Whether a binary operator of this expression takes a section of `-` as an
-/// argument: `*(-(x))` is evaluated to `_, (_, x : -) : *`.
-fn holds_minus_section(arena: &tlib::TreeArena, node: BoxId, depth: usize) -> bool {
-    const DEPTH: usize = 32;
-    if depth == DEPTH {
-        return false;
+/// How many inputs of this expression come from a section of `-` given to a
+/// primitive: `*(-(x))` is evaluated to `_, (_, x : -) : *`, `max(-(x))` to
+/// `_, (_, x : -) : max`, and `select2(-(x))` to `(_, x : -), (_, _) : select2`.
+///
+/// Only what reaches the inputs counts: a section further down a composition is
+/// fed by what precedes it, and is often a `_ - x` written on purpose.
+fn minus_sections_at_inputs(arena: &tlib::TreeArena, node: BoxId, depth: usize) -> usize {
+    if depth == SECTION_DEPTH {
+        return 0;
     }
-    let is_section = |box_id| {
-        let BoxMatch::Seq(pair, op) = match_box(arena, box_id) else {
-            return false;
-        };
-        let BoxMatch::Par(first, _) = match_box(arena, pair) else {
-            return false;
-        };
-        matches!(match_box(arena, op), BoxMatch::Sub)
-            && matches!(match_box(arena, first), BoxMatch::Wire)
-    };
     match match_box(arena, node) {
         BoxMatch::Seq(left, right) => {
-            if let BoxMatch::Par(first, second) = match_box(arena, left)
-                && matches!(
-                    match_box(arena, right),
-                    BoxMatch::Add | BoxMatch::Sub | BoxMatch::Mul | BoxMatch::Div
-                )
-                && (is_section(first) || is_section(second))
-            {
-                return true;
+            if is_primitive(arena, right) && matches!(match_box(arena, left), BoxMatch::Par(..)) {
+                minus_sections_in_arguments(arena, left, depth + 1)
+            } else {
+                minus_sections_at_inputs(arena, left, depth + 1)
             }
-            holds_minus_section(arena, left, depth + 1)
-                || holds_minus_section(arena, right, depth + 1)
         }
-        BoxMatch::Par(left, right)
-        | BoxMatch::Split(left, right)
-        | BoxMatch::Merge(left, right)
-        | BoxMatch::Rec(left, right) => {
-            holds_minus_section(arena, left, depth + 1)
-                || holds_minus_section(arena, right, depth + 1)
+        BoxMatch::Par(left, right) => {
+            minus_sections_at_inputs(arena, left, depth + 1)
+                + minus_sections_at_inputs(arena, right, depth + 1)
         }
-        _ => false,
+        BoxMatch::Split(left, _) | BoxMatch::Merge(left, _) | BoxMatch::Rec(left, _) => {
+            minus_sections_at_inputs(arena, left, depth + 1)
+        }
+        _ => 0,
     }
+}
+
+/// The same count over the arguments of a primitive, a tree of `Par`.
+fn minus_sections_in_arguments(arena: &tlib::TreeArena, args: BoxId, depth: usize) -> usize {
+    if depth == SECTION_DEPTH {
+        return 0;
+    }
+    if let BoxMatch::Par(left, right) = match_box(arena, args) {
+        return minus_sections_in_arguments(arena, left, depth + 1)
+            + minus_sections_in_arguments(arena, right, depth + 1);
+    }
+    if is_minus_section(arena, args) {
+        1
+    } else {
+        minus_sections_at_inputs(arena, args, depth + 1)
+    }
+}
+
+/// Whether this box is `_, x : -`, as `-(x)` is evaluated.
+fn is_minus_section(arena: &tlib::TreeArena, node: BoxId) -> bool {
+    let BoxMatch::Seq(pair, op) = match_box(arena, node) else {
+        return false;
+    };
+    let BoxMatch::Par(first, _) = match_box(arena, pair) else {
+        return false;
+    };
+    matches!(match_box(arena, op), BoxMatch::Sub)
+        && matches!(match_box(arena, first), BoxMatch::Wire)
+}
+
+/// Whether this box is a primitive, under its infix symbol or its name.
+fn is_primitive(arena: &tlib::TreeArena, node: BoxId) -> bool {
+    prim_infix_symbol(arena, node).is_some() || prim_readable_name(arena, node).is_some()
 }
 
 /// Labels the definitions of the operands of a failing composition.

@@ -334,6 +334,119 @@ fn a_section_of_minus_is_named_instead_of_an_operator() {
     );
 }
 
+/// The same reading holds for every primitive, in any place of its arguments.
+#[test]
+fn a_section_of_minus_is_named_beside_any_primitive() {
+    for program in [
+        "max(-(x))",
+        "min(-(x))",
+        "pow(-(x))",
+        "fmod(-(x))",
+        "atan2(-(x))",
+        "remainder(-(x))",
+        "%(-(x))",
+        "&(-(x))",
+        "<(-(x))",
+        "@(-(x))",
+        "attach(-(x))",
+        "prefix(-(x))",
+        "min(-(x), _)",
+        "pow(_, -(x))",
+        "select2(0, -(x))",
+        "select3(0, 1, -(x))",
+    ] {
+        let source = format!("x = 0.5;\nprocess = _ : {program};\n");
+        let err = Compiler::new()
+            .compile_source_to_signals("minus.dsp", &source)
+            .expect_err("the composition should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        assert!(
+            diagnostic.help.iter().any(|help| help.contains("`0 - x`")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+        assert!(
+            !diagnostic.help.iter().any(|help| help.contains("would")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+    }
+}
+
+/// The negation is proposed where it connects the widths, for each operator.
+#[test]
+fn a_section_of_minus_is_named_when_the_negation_connects() {
+    for program in [
+        "_, _ : (max(-(x)), _)",
+        "_, _, _ :> max(-(x))",
+        "_, _ <: select2(-(x))",
+        "_, _ : select2(-(x))",
+        "_ : max(-(x), -(x))",
+    ] {
+        let source = format!("x = 0.5;\nprocess = {program};\n");
+        let err = Compiler::new()
+            .compile_source_to_signals("minus.dsp", &source)
+            .expect_err("the composition should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        assert!(
+            diagnostic.help.iter().any(|help| help.contains("`0 - x`")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+    }
+}
+
+/// A section that does not explain the widths leaves the operator alone: one
+/// in the left operand, as a library's `(_ - _') < 0`, or beside an input too many.
+#[test]
+fn a_section_of_minus_that_does_not_connect_is_not_named() {
+    for program in [
+        "(_, _ - 1 : max) : _, _",
+        "(_ <: _, _ - 1 : max) : _, _",
+        "_ : (max(-(0.5)), _)",
+        "_ : select2(-(0.5))",
+    ] {
+        let source = format!("process = {program};\n");
+        let err = Compiler::new()
+            .compile_source_to_signals("minus.dsp", &source)
+            .expect_err("the composition should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        assert!(
+            diagnostic.help.iter().any(|help| help.contains("`A <: B`")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+        assert!(
+            !diagnostic.help.iter().any(|help| help.contains("`0 - x`")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+    }
+}
+
+/// A section that no primitive takes as an argument says nothing of a negation,
+/// and neither does an argument that is another section.
+#[test]
+fn other_sections_keep_the_operator() {
+    for program in ["(_ - 1, _)", "max(*(0.5))", "max(/(2))", "max(+(1))"] {
+        let source = format!("process = _ : {program};\n");
+        let err = Compiler::new()
+            .compile_source_to_signals("minus.dsp", &source)
+            .expect_err("the composition should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        assert!(
+            diagnostic.help.iter().any(|help| help.contains("`A <: B`")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+        assert!(
+            !diagnostic.help.iter().any(|help| help.contains("`0 - x`")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+    }
+}
+
 /// A subtraction of two sections is no section in an argument.
 #[test]
 fn a_plain_minus_still_gets_the_operator() {

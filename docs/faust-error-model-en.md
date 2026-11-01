@@ -206,8 +206,9 @@ evaluation that reads each undefined symbol as `_`, and a note says so.
 A composition mismatch also labels the definitions of its operands: the failing
 token is where two widths meet, and the wrong width is usually written in one of
 them. When `<:` or `:>` would connect the two widths, the help says so, unless
-an operand holds `*(-(x))`, whose `-(x)` is the section `_ - x`: the help then
-says to write `0 - x`. A symbol redefined against an imported file names that
+the mismatch comes from a primitive given `-(x)`, as in `*(-(x))` or
+`max(-(x))`: `-(x)` is the section `_ - x`, and when `0 - x` would connect the
+widths, the help says to write that. A symbol redefined against an imported file names that
 file and proposes a rename, and a table given a size beside a `waveform` is told
 that a waveform carries its own.
 
