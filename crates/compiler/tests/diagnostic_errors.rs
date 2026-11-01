@@ -317,6 +317,87 @@ fn a_mismatch_names_the_operator_that_would_fit() {
     assert_eq!(help("process = (_, _) : (_, _, _);\n"), None);
 }
 
+/// `-(x)` in an argument reads as a negation, and no operator would connect it.
+#[test]
+fn a_section_of_minus_is_named_instead_of_an_operator() {
+    let err = Compiler::new()
+        .compile_source_to_signals("minus.dsp", "x = 0.5;\nprocess = _ : *(-(x));\n")
+        .expect_err("the composition should fail");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    assert!(diagnostic.help.iter().any(|help| help.contains("`0 - x`")));
+    assert!(!diagnostic.help.iter().any(|help| help.contains("would")));
+    assert!(
+        diagnostic
+            .notes
+            .iter()
+            .any(|note| note.contains("the section `_ - x`"))
+    );
+}
+
+/// A subtraction of two sections is no section in an argument.
+#[test]
+fn a_plain_minus_still_gets_the_operator() {
+    let err = Compiler::new()
+        .compile_source_to_signals("minus.dsp", "process = _ : (_ - 1, _);\n")
+        .expect_err("the composition should fail");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    assert!(diagnostic.help.iter().any(|help| help.contains("`A <: B`")));
+}
+
+/// A waveform carries its size, and "too many arguments" does not say so.
+#[test]
+fn a_size_beside_a_waveform_is_explained() {
+    let err = Compiler::new()
+        .compile_source_to_signals(
+            "table.dsp",
+            "process = rdtable(4, waveform{1, 2, 3, 4}, 0);\n",
+        )
+        .expect_err("the table should be refused");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    assert!(
+        diagnostic
+            .help
+            .iter()
+            .any(|help| help.contains("`rdtable(waveform{...}, ...)`"))
+    );
+    assert!(
+        diagnostic
+            .notes
+            .iter()
+            .any(|note| note.contains("two signals"))
+    );
+}
+
+/// A name of an imported file is no duplicate to remove.
+#[test]
+fn a_name_of_an_imported_file_is_said_to_be_one() {
+    let dir = std::env::temp_dir().join(format!("faust-rs-clash-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("directory");
+    std::fs::write(dir.join("mine.lib"), "pm = 1;\n").expect("write");
+    let file = dir.join("clash.dsp");
+    std::fs::write(&file, "import(\"mine.lib\");\npm = 2;\nprocess = pm;\n").expect("write");
+    let err = Compiler::new()
+        .compile_file_to_cpp(&file, std::slice::from_ref(&dir), &Default::default())
+        .expect_err("the name is taken");
+    std::fs::remove_dir_all(&dir).expect("remove");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    assert!(
+        diagnostic
+            .help
+            .iter()
+            .any(|help| help.contains("imported `mine.lib`")),
+        "help: {:?}",
+        diagnostic.help
+    );
+    assert!(
+        !diagnostic
+            .help
+            .iter()
+            .any(|help| help.contains("remove the duplicate"))
+    );
+    assert_eq!(diagnostic.labels.len(), 2, "both definitions are shown");
+}
+
 #[test]
 fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();

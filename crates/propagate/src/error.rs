@@ -137,26 +137,6 @@ impl PropagateError {
     }
 }
 
-/// The operator that would connect these widths, if `:` was not meant: the
-/// widths of `<:` and `:>` are what a mismatch of `:` often is.
-fn composition_operator_hint(left_outputs: usize, right_inputs: usize) -> Option<String> {
-    if left_outputs > 0 && right_inputs > left_outputs && right_inputs.is_multiple_of(left_outputs)
-    {
-        Some(format!(
-            "`A <: B` would split the {left_outputs} output(s) of A over the {right_inputs} inputs of B"
-        ))
-    } else if right_inputs > 0
-        && left_outputs > right_inputs
-        && left_outputs.is_multiple_of(right_inputs)
-    {
-        Some(format!(
-            "`A :> B` would merge the {left_outputs} outputs of A into the {right_inputs} input(s) of B"
-        ))
-    } else {
-        None
-    }
-}
-
 impl Display for PropagateError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -299,7 +279,7 @@ impl ToDiagnostic for PropagateError {
                 right_inputs,
                 ..
             } => {
-                let diagnostic = Diagnostic::new(Severity::Error, Stage::Propagate, codes::PROP_ARITY_MISMATCH, message)
+                Diagnostic::new(Severity::Error, Stage::Propagate, codes::PROP_ARITY_MISMATCH, message)
                 .with_note("cause: sequential composition bus widths do not match")
                 .with_note("rule: seq(A, B) requires outputs(A) == inputs(B)")
                 .with_note(format!(
@@ -312,11 +292,7 @@ impl ToDiagnostic for PropagateError {
                 ))
                 .with_help("general: for `A : B`, enforce outputs(A) == inputs(B)")
                 .with_help("general: adjust A or B channel count to same bus width")
-                .with_help("template: process = A : B; // outputs(A) == inputs(B)");
-                match composition_operator_hint(*left_outputs, *right_inputs) {
-                    Some(hint) => diagnostic.with_help(hint),
-                    None => diagnostic,
-                }
+                .with_help("template: process = A : B; // outputs(A) == inputs(B)")
             }
             Self::SplitArityMismatch {
                 left_outputs,

@@ -411,6 +411,9 @@ pub enum EvalError {
     RedefinedSymbol {
         /// The symbol name that was defined more than once.
         symbol: String,
+        /// The name as the definition holds it, which carries the provenance of
+        /// every definition of the symbol.
+        name_node: TreeId,
         /// The `TreeId` of the first (original) definition.
         first_def: TreeId,
         /// The `TreeId` of the conflicting second definition.
@@ -1184,6 +1187,7 @@ impl ToDiagnostic for EvalError {
                 symbol,
                 first_def,
                 second_def,
+                ..
             } => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,

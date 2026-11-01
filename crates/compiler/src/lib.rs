@@ -1661,6 +1661,7 @@ impl Compiler {
                     &output.state.ctx,
                     &output.state.arena,
                     root,
+                    self.entrypoint_name.as_ref(),
                     &source_map,
                 )
             };

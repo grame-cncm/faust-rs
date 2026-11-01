@@ -10,7 +10,10 @@
 //!   candidate wins unambiguously;
 //! - `add_pattern_attempt_trace` — the declared `case` rules and the arguments
 //!   actually dispatched on, without evaluator environments or automaton state;
-//! - `add_redefinition_labels` — both conflicting declaration sites;
+//! - `add_redefinition_labels` — both conflicting declaration sites, and what
+//!   to do when the first one comes from an imported file;
+//! - `add_waveform_table_guidance` — a size given to a table beside a
+//!   `waveform`, which carries its own;
 //! - `add_nonconstant_case_argument` — the argument a recursion dispatched on
 //!   without ever reaching a numeric rule, and the rules it was matched
 //!   against;
@@ -35,6 +38,7 @@ pub(crate) fn add_eval_guidance(
     ctx: &parser::ParserCtx,
     arena: &tlib::TreeArena,
     defs_root: BoxId,
+    entrypoint_name: &str,
     source_map: &SourceMap,
 ) -> Diagnostic {
     diagnostic = add_symbol_rename_fix(diagnostic, error, source_map);
@@ -42,7 +46,43 @@ pub(crate) fn add_eval_guidance(
     diagnostic = add_nonconstant_case_argument(diagnostic, error, arena);
     diagnostic = add_cycle_labels(diagnostic, error, ctx, arena, defs_root);
     diagnostic = add_unary_minus_access(diagnostic, error, arena);
-    add_redefinition_labels(diagnostic, error, ctx)
+    diagnostic = add_waveform_table_guidance(diagnostic, error, arena);
+    add_redefinition_labels(diagnostic, error, ctx, arena, defs_root, entrypoint_name)
+}
+
+/// Explains a table refused for its size: `waveform{...}` is two signals, its
+/// size and its contents, so `rdtable(8, waveform{...}, i)` is one too many.
+fn add_waveform_table_guidance(
+    diagnostic: Diagnostic,
+    error: &eval::EvalError,
+    arena: &tlib::TreeArena,
+) -> Diagnostic {
+    let eval::EvalError::TooManyArguments {
+        node,
+        function: Some(function),
+        ..
+    } = error
+    else {
+        return diagnostic;
+    };
+    if !matches!(function.as_str(), "rdtable" | "rwtable") {
+        return diagnostic;
+    }
+    let BoxMatch::Appl(_, args) = match_box(arena, *node) else {
+        return diagnostic;
+    };
+    let has_waveform = tlib::list_to_vec(arena, args).is_some_and(|args| {
+        args.iter()
+            .any(|arg| matches!(match_box(arena, *arg), BoxMatch::Waveform(_)))
+    });
+    if !has_waveform {
+        return diagnostic;
+    }
+    diagnostic
+        .with_note("`waveform{...}` is two signals, its size and its contents, so it counts for two arguments")
+        .with_help(format!(
+            "leave the size out, as a waveform carries it: `{function}(waveform{{...}}, ...)`"
+        ))
 }
 
 /// Explains an access into a unary minus: `-L.g(2, k)` reads
@@ -459,23 +499,65 @@ fn add_redefinition_labels(
     mut diagnostic: Diagnostic,
     error: &eval::EvalError,
     ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    entrypoint_name: &str,
 ) -> Diagnostic {
     let eval::EvalError::RedefinedSymbol {
+        symbol,
+        name_node,
         first_def,
         second_def,
-        ..
     } = error
     else {
         return diagnostic;
     };
 
-    if let Some(span) = source_span_for_definition_node(ctx, *second_def) {
+    // The value of a definition may be shared, or have no site: the sites of
+    // the name are the definitions themselves, in the order they were read.
+    let provenance = ctx.box_provenance();
+    let sites: Vec<SourceSpan> = provenance
+        .origins_for(*name_node)
+        .iter()
+        .filter_map(|id| provenance.get(*id))
+        .filter(|origin| origin.role == parser::BoxOriginRole::Definition)
+        .map(|origin| source_span_from_parser_location(&origin.location))
+        .collect();
+    let mut second =
+        source_span_for_definition_node(ctx, *second_def).or_else(|| sites.last().cloned());
+    let mut first =
+        source_span_for_definition_node(ctx, *first_def).or_else(|| sites.first().cloned());
+
+    // Imported definitions are bound after those of the file that imports
+    // them, whatever the order of the source: the conflict the programmer
+    // introduced is the one in the program.
+    let program = source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name)
+        .map(|span| span.file);
+    if let (Some(a), Some(b), Some(program)) = (&first, &second, &program)
+        && a.file != b.file
+        && (a.file == *program || b.file == *program)
+    {
+        if a.file == *program {
+            std::mem::swap(&mut first, &mut second);
+        }
+        let imported = first.as_ref().map_or_else(String::new, |span| {
+            span.file.file_name().map_or_else(
+                || span.file.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            )
+        });
+        diagnostic.help.clear();
+        diagnostic = diagnostic.with_help(format!(
+            "`{symbol}` already belongs to the imported `{imported}`: rename yours, or define it in a `with {{}}` block"
+        ));
+    }
+    if let Some(span) = second {
         diagnostic = diagnostic.with_label(
             Label::new(LabelStyle::Primary, span, "conflicting definition")
                 .with_role(LabelRole::PrimaryCause),
         );
     }
-    if let Some(span) = source_span_for_definition_node(ctx, *first_def) {
+    if let Some(span) = first {
         diagnostic = diagnostic.with_label(
             Label::new(LabelStyle::Secondary, span, "first definition")
                 .with_role(LabelRole::ConflictsWith),

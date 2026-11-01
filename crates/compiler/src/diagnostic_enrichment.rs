@@ -73,6 +73,110 @@ pub(crate) fn add_paired_propagate_context(
 
 // ─── Source label helpers ─────────────────────────────────────────────────────
 
+/// Says what a composition mismatch may have meant.
+///
+/// A section of `-` in an argument comes first: `*(-(x))` reads as a negation,
+/// has two inputs, and no operator would connect it. Otherwise, a mismatch of
+/// `:` whose widths divide is often a `<:` or a `:>` written `:`.
+pub(crate) fn add_composition_guidance(
+    diagnostic: Diagnostic,
+    error: &PropagateError,
+    arena: &tlib::TreeArena,
+) -> Diagnostic {
+    let node = match error {
+        PropagateError::SeqArityMismatch { node, .. }
+        | PropagateError::SplitArityMismatch { node, .. }
+        | PropagateError::MergeArityMismatch { node, .. } => *node,
+        _ => return diagnostic,
+    };
+    let operands = match match_box(arena, node) {
+        BoxMatch::Seq(left, right)
+        | BoxMatch::Split(left, right)
+        | BoxMatch::Merge(left, right) => Some((left, right)),
+        _ => None,
+    };
+    if operands.is_some_and(|(left, right)| {
+        holds_minus_section(arena, left, 0) || holds_minus_section(arena, right, 0)
+    }) {
+        return diagnostic
+            .with_note("`-(x)` as an argument is the section `_ - x`, not a negation: it keeps an input of its own")
+            .with_help("write the negation as `0 - x`");
+    }
+    let PropagateError::SeqArityMismatch {
+        left_outputs,
+        right_inputs,
+        ..
+    } = error
+    else {
+        return diagnostic;
+    };
+    match composition_operator_hint(*left_outputs, *right_inputs) {
+        Some(hint) => diagnostic.with_help(hint),
+        None => diagnostic,
+    }
+}
+
+/// The operator that would connect these widths, if `:` was not meant.
+fn composition_operator_hint(left_outputs: usize, right_inputs: usize) -> Option<String> {
+    if left_outputs > 0 && right_inputs > left_outputs && right_inputs.is_multiple_of(left_outputs)
+    {
+        Some(format!(
+            "`A <: B` would split the {left_outputs} output(s) of A over the {right_inputs} inputs of B"
+        ))
+    } else if right_inputs > 0
+        && left_outputs > right_inputs
+        && left_outputs.is_multiple_of(right_inputs)
+    {
+        Some(format!(
+            "`A :> B` would merge the {left_outputs} outputs of A into the {right_inputs} input(s) of B"
+        ))
+    } else {
+        None
+    }
+}
+
+/// Whether a binary operator of this expression takes a section of `-` as an
+/// argument: `*(-(x))` is evaluated to `_, (_, x : -) : *`.
+fn holds_minus_section(arena: &tlib::TreeArena, node: BoxId, depth: usize) -> bool {
+    const DEPTH: usize = 32;
+    if depth == DEPTH {
+        return false;
+    }
+    let is_section = |box_id| {
+        let BoxMatch::Seq(pair, op) = match_box(arena, box_id) else {
+            return false;
+        };
+        let BoxMatch::Par(first, _) = match_box(arena, pair) else {
+            return false;
+        };
+        matches!(match_box(arena, op), BoxMatch::Sub)
+            && matches!(match_box(arena, first), BoxMatch::Wire)
+    };
+    match match_box(arena, node) {
+        BoxMatch::Seq(left, right) => {
+            if let BoxMatch::Par(first, second) = match_box(arena, left)
+                && matches!(
+                    match_box(arena, right),
+                    BoxMatch::Add | BoxMatch::Sub | BoxMatch::Mul | BoxMatch::Div
+                )
+                && (is_section(first) || is_section(second))
+            {
+                return true;
+            }
+            holds_minus_section(arena, left, depth + 1)
+                || holds_minus_section(arena, right, depth + 1)
+        }
+        BoxMatch::Par(left, right)
+        | BoxMatch::Split(left, right)
+        | BoxMatch::Merge(left, right)
+        | BoxMatch::Rec(left, right) => {
+            holds_minus_section(arena, left, depth + 1)
+                || holds_minus_section(arena, right, depth + 1)
+        }
+        _ => false,
+    }
+}
+
 /// Labels the definitions of the operands of a failing composition.
 ///
 /// A mismatch shows where two widths meet, and the width that is wrong is
@@ -731,7 +835,7 @@ pub(crate) fn source_span_for_definition_node(
     Some(source_span_from_parser_location(loc))
 }
 
-fn source_span_from_parser_location(loc: &parser::SourceLocation) -> SourceSpan {
+pub(crate) fn source_span_from_parser_location(loc: &parser::SourceLocation) -> SourceSpan {
     SourceSpan::new(
         loc.file(),
         loc.line(),

@@ -1846,6 +1846,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
 
     let redef = EvalError::RedefinedSymbol {
         symbol: "x".to_owned(),
+        name_node: arena.nil(),
         first_def: arena.nil(),
         second_def: arena.nil(),
     }

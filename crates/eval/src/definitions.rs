@@ -132,6 +132,9 @@ pub(crate) fn bind_definitions(
             if existing != captured {
                 return Err(EvalError::RedefinedSymbol {
                     symbol: name,
+                    name_node: arena
+                        .hd(def)
+                        .ok_or(EvalError::MalformedDefinitionNode { node: def })?,
                     first_def: existing.display_tree(),
                     second_def: captured.display_tree(),
                 });
