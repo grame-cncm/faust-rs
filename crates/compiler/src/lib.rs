@@ -1571,97 +1571,100 @@ impl Compiler {
             }
         });
         let (process_box, eval_stats) = eval_result.map_err(|error| {
-            let node = eval_error_node(&error);
-            // The use that closes a cycle is in the body of its last
-            // definition, `c` in `a → b → c → a`: the identifier is shared by
-            // every use of `a`, so a search for its owner could find another.
-            let cycle_owner = match &error {
-                eval::EvalError::LoopDetected { cycle, .. } => cycle
-                    .len()
-                    .checked_sub(2)
-                    .map(|last| cycle[last].as_str())
-                    .filter(|name| {
-                        find_definition_name_and_expr(&output.state.arena, root, name).is_some()
+            let diagnostic_of = |error: &eval::EvalError| {
+                let node = eval_error_node(error);
+                // The use that closes a cycle is in the body of its last
+                // definition, `c` in `a → b → c → a`: the identifier is shared by
+                // every use of `a`, so a search for its owner could find another.
+                let cycle_owner = match &error {
+                    eval::EvalError::LoopDetected { cycle, .. } => cycle
+                        .len()
+                        .checked_sub(2)
+                        .map(|last| cycle[last].as_str())
+                        .filter(|name| {
+                            find_definition_name_and_expr(&output.state.arena, root, name).is_some()
+                        })
+                        .map(Box::<str>::from),
+                    _ => None,
+                };
+                let owner = cycle_owner.or_else(|| {
+                    node.and_then(|n| {
+                        reachable_owner_definition_name_for_node(
+                            &output.state.arena,
+                            root,
+                            n,
+                            self.entrypoint_name.as_ref(),
+                        )
                     })
-                    .map(Box::<str>::from),
-                _ => None,
-            };
-            let owner = cycle_owner.or_else(|| {
-                node.and_then(|n| {
-                    reachable_owner_definition_name_for_node(
-                        &output.state.arena,
-                        root,
-                        n,
-                        self.entrypoint_name.as_ref(),
-                    )
-                })
-            });
-            let mut diagnostic = error.to_diagnostic();
-            if let Some(n) = node {
-                diagnostic = enrich_diagnostic_with_node(
-                    diagnostic,
-                    &output.state.arena,
-                    root,
-                    n,
-                    owner.as_deref(),
-                    self.entrypoint_name.as_ref(),
-                );
-                diagnostic = if matches!(error, eval::EvalError::CaseArgumentNotConstant { .. })
-                    && owner.is_none()
-                {
-                    add_library_recursion_call_label(
+                });
+                let mut diagnostic = error.to_diagnostic();
+                if let Some(n) = node {
+                    diagnostic = enrich_diagnostic_with_node(
                         diagnostic,
-                        &output.state.ctx,
-                        &output.state.arena,
-                        root,
-                        self.entrypoint_name.as_ref(),
-                    )
-                } else {
-                    maybe_add_eval_source_labels(
-                        diagnostic,
-                        &output.state.ctx,
                         &output.state.arena,
                         root,
                         n,
                         owner.as_deref(),
                         self.entrypoint_name.as_ref(),
-                    )
-                };
-            }
-            if matches!(error, eval::EvalError::MissingProcessDefinition { .. }) {
-                diagnostic = maybe_add_missing_entrypoint_label(
+                    );
+                    diagnostic = if matches!(error, eval::EvalError::CaseArgumentNotConstant { .. })
+                        && owner.is_none()
+                    {
+                        add_library_recursion_call_label(
+                            diagnostic,
+                            &output.state.ctx,
+                            &output.state.arena,
+                            root,
+                            self.entrypoint_name.as_ref(),
+                        )
+                    } else {
+                        maybe_add_eval_source_labels(
+                            diagnostic,
+                            &output.state.ctx,
+                            &output.state.arena,
+                            root,
+                            n,
+                            owner.as_deref(),
+                            self.entrypoint_name.as_ref(),
+                        )
+                    };
+                }
+                if matches!(error, eval::EvalError::MissingProcessDefinition { .. }) {
+                    diagnostic = maybe_add_missing_entrypoint_label(
+                        diagnostic,
+                        error,
+                        &output.state.ctx,
+                        &output.state.arena,
+                        root,
+                    );
+                }
+                if let eval::EvalError::PatternMatchFailed {
+                    node: rules,
+                    application: Some(_),
+                    ..
+                } = &error
+                {
+                    diagnostic = add_case_rules_label(
+                        diagnostic,
+                        &output.state.ctx,
+                        &output.state.arena,
+                        root,
+                        *rules,
+                    );
+                }
+                // Guidance runs after labeling: a rename edit needs the primary
+                // label that `maybe_add_eval_source_labels` (or, for a missing
+                // entry point, `maybe_add_missing_entrypoint_label`) just resolved.
+                add_eval_guidance(
                     diagnostic,
-                    &error,
+                    error,
                     &output.state.ctx,
                     &output.state.arena,
                     root,
-                );
-            }
-            if let eval::EvalError::PatternMatchFailed {
-                node: rules,
-                application: Some(_),
-                ..
-            } = &error
-            {
-                diagnostic = add_case_rules_label(
-                    diagnostic,
-                    &output.state.ctx,
-                    &output.state.arena,
-                    root,
-                    *rules,
-                );
-            }
-            // Guidance runs after labeling: a rename edit needs the primary
-            // label that `maybe_add_eval_source_labels` (or, for a missing
-            // entry point, `maybe_add_missing_entrypoint_label`) just resolved.
-            diagnostic = add_eval_guidance(
-                diagnostic,
-                &error,
-                &output.state.ctx,
-                &output.state.arena,
-                root,
-                &source_map,
-            );
+                    &source_map,
+                )
+            };
+            let diagnostic = diagnostic_of(&error);
             let mut diagnostics =
                 if let eval::EvalError::SourceParseFailure { diagnostics, .. } = &error {
                     let mut preserved = diagnostics.clone();
@@ -1672,6 +1675,13 @@ impl Compiler {
                     bundle.set_source_map(source_map.clone());
                     bundle
                 };
+            if let eval::EvalError::UndefinedSymbol { further, .. } = &error {
+                for other in further {
+                    diagnostics.push(diagnostic_of(other).with_note(
+                        "found by evaluating on, with the undefined symbols before it read as `_`",
+                    ));
+                }
+            }
             if diagnostics.source_map().is_empty() {
                 diagnostics.set_source_map(source_map.clone());
             }

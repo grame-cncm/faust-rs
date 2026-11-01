@@ -196,7 +196,7 @@ pub use error::{
     DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalError, EvalStats, EvalWarning,
 };
 pub use loop_detector::LoopDetector;
-use loop_detector::on_deep_stack;
+use loop_detector::{UndefinedCollection, on_deep_stack};
 pub use source_context::{EvalSourceContext, SamplePrecision};
 pub use suggestions::{SymbolSuggestion, rank_similar_names, unambiguous_suggestion};
 
@@ -427,8 +427,17 @@ fn eval_entrypoint_full(
         None => LoopDetector::new(),
     };
     let entry = BoxBuilder::new(arena).ident(entrypoint);
-    let result = eval_value(arena, entry, &env, &mut loop_detector)?;
-    let result = a2sb_value(arena, result, &mut loop_detector)?;
+    let started = std::time::Instant::now();
+    let result = match eval_and_lower(arena, entry, &env, &mut loop_detector) {
+        Ok(result) => result,
+        Err(error) => {
+            let budget = started.elapsed().saturating_mul(2).max(FURTHER_RUN_MINIMUM);
+            let flag = Arc::clone(&loop_detector.cancel);
+            return Err(with_further_undefined_symbols(
+                arena, error, entry, &env, flag, budget,
+            ));
+        }
+    };
     loop_detector.report_apply_memo();
     // Remap def_names keys through a2sb's symbolic_box_cache: pre-a2sb IDs that were
     // rebuilt by a2sb (because their subtree contained residual Abstr nodes) get new IDs.
@@ -454,6 +463,86 @@ fn eval_entrypoint_full(
 
 /// Lowers an [`EvalValue`] to box IR, guarded by the structural-depth budget.
 ///
+fn eval_and_lower(
+    arena: &mut TreeArena,
+    entry: TreeId,
+    env: &Environment,
+    loop_detector: &mut LoopDetector,
+) -> Result<TreeId, EvalError> {
+    let value = eval_value(arena, entry, env, loop_detector)?;
+    a2sb_value(arena, value, loop_detector)
+}
+
+/// The shortest budget of a further run, for what fails at once.
+const FURTHER_RUN_MINIMUM: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// `error`, if it is an undefined symbol, with the others of the program.
+///
+/// The run that failed is an ordinary one and stands: this cannot change which
+/// programs are accepted, or their first error. Only then is the program
+/// evaluated again, each undefined symbol recorded and read as `_`, for the
+/// budget at most. Going on in the first run would not do: evaluation tries some
+/// things and drops their error (`a2sb(...).ok()` of an argument), and a symbol
+/// met there does not fail the program.
+///
+/// A `_` can take a path the repaired program would not, so a symbol found this
+/// way may be in code that stays out of reach. It is undefined all the same.
+/// Whatever else fails in this run is dropped: the `_` may have caused it.
+fn with_further_undefined_symbols(
+    arena: &mut TreeArena,
+    error: EvalError,
+    entry: TreeId,
+    env: &Environment,
+    cancel: Arc<AtomicBool>,
+    budget: std::time::Duration,
+) -> EvalError {
+    let EvalError::UndefinedSymbol {
+        symbol,
+        node,
+        local_scope,
+        visible_scope,
+        top_level_scope,
+        ..
+    } = error
+    else {
+        return error;
+    };
+    let further =
+        further_undefined_symbols(arena, &symbol, entry, env, cancel, budget).into_boxed_slice();
+    EvalError::UndefinedSymbol {
+        symbol,
+        node,
+        local_scope,
+        visible_scope,
+        top_level_scope,
+        further,
+    }
+}
+
+/// The undefined symbols of a further run, but for `first`, see
+/// [`with_further_undefined_symbols`].
+fn further_undefined_symbols(
+    arena: &mut TreeArena,
+    first: &str,
+    entry: TreeId,
+    env: &Environment,
+    cancel: Arc<AtomicBool>,
+    budget: std::time::Duration,
+) -> Vec<EvalError> {
+    let mut detector = LoopDetector::with_cancel(cancel);
+    detector.collection = Some(UndefinedCollection {
+        deadline: std::time::Instant::now() + budget,
+        found: Vec::new(),
+    });
+    // What this run fails on is not an error of the program
+    let _ = eval_and_lower(arena, entry, env, &mut detector);
+    let mut found = detector.collection.map_or_else(Vec::new, |c| c.found);
+    found.retain(
+        |error| !matches!(error, EvalError::UndefinedSymbol { symbol, .. } if symbol == first),
+    );
+    found
+}
+
 /// Thin wrapper that brackets [`a2sb_value_inner`] with
 /// [`enter_structural`](LoopDetector::enter_structural) /
 /// [`leave_structural`](LoopDetector::leave_structural), so deep closure chains
@@ -1204,19 +1293,25 @@ fn eval_ident_value(
     loop_detector: &mut LoopDetector,
 ) -> Result<EvalValue, EvalError> {
     // get_symbol takes &self — safe while `name` no longer borrows `arena` mutably.
-    let ((binding_env_id, binding_sym), value) = arena
-        .get_symbol(name)
-        .and_then(|sym| {
-            env.lookup_value(sym)
-                .map(|(env_id, value)| ((env_id, sym), value))
-        })
-        .ok_or_else(|| EvalError::UndefinedSymbol {
+    let found = arena.get_symbol(name).and_then(|sym| {
+        env.lookup_value(sym)
+            .map(|(env_id, value)| ((env_id, sym), value))
+    });
+    let Some(((binding_env_id, binding_sym), value)) = found else {
+        let error = EvalError::UndefinedSymbol {
             symbol: name.to_owned(),
             node: expr,
             local_scope: env.local_names(arena),
             visible_scope: env.visible_names(arena),
             top_level_scope: env.top_level_names(arena),
-        })?;
+            further: Box::default(),
+        };
+        return if loop_detector.record_undefined(&error) {
+            Ok(EvalValue::Box(BoxBuilder::new(arena).wire()))
+        } else {
+            Err(error)
+        };
+    };
     match value {
         EvalValue::Box(value) => {
             if value == expr {
@@ -2694,5 +2789,51 @@ process = case {
             cached_len,
             "repeated apply-time arity probing should reuse cached a2sb lowering"
         );
+    }
+}
+
+#[cfg(test)]
+mod further_undefined_symbols_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn names(found: &[EvalError]) -> Vec<&str> {
+        found
+            .iter()
+            .filter_map(|error| match error {
+                EvalError::UndefinedSymbol { symbol, .. } => Some(symbol.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn search(budget: Duration) -> Vec<String> {
+        let mut arena = TreeArena::new();
+        let mut b = BoxBuilder::new(&mut arena);
+        let (first, second, third) = (b.ident("first"), b.ident("second"), b.ident("third"));
+        let tail = b.par(second, third);
+        let expr = b.par(first, tail);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let found = further_undefined_symbols(
+            &mut arena,
+            "first",
+            expr,
+            &Environment::empty(),
+            cancel,
+            budget,
+        );
+        names(&found).iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn the_first_symbol_is_not_found_again() {
+        assert_eq!(search(Duration::from_secs(60)), ["second", "third"]);
+    }
+
+    /// The budget is what keeps an error fast when the rest of the program is
+    /// not: a run past it ends with what it has.
+    #[test]
+    fn a_run_past_its_budget_stops() {
+        assert!(search(Duration::ZERO).is_empty());
     }
 }

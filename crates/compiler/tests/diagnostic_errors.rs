@@ -223,6 +223,74 @@ fn a_case_failure_names_the_call_and_its_arguments() {
     );
 }
 
+/// One compilation for the undefined symbols of a program, not one each.
+#[test]
+fn every_undefined_symbol_reached_is_reported() {
+    let source = "a = 1;\nb = 2;\nprocess = ax + bx + c;\n";
+    let err = Compiler::new()
+        .compile_source_to_signals("names.dsp", source)
+        .expect_err("the symbols are undefined");
+    let diagnostics = err.diagnostic_bundle().as_slice();
+    let found: Vec<(&str, u32)> = diagnostics
+        .iter()
+        .map(|d| (d.message.as_ref(), d.labels[0].span.col))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("undefined symbol `ax`", 11),
+            ("undefined symbol `bx`", 16),
+            ("undefined symbol `c`", 21)
+        ]
+    );
+    // the failure is the first, and the others say how they were found
+    assert!(err.to_string().ends_with("undefined symbol `ax`"), "{err}");
+    let note = |d: &compiler::Diagnostic| d.notes.iter().any(|n| n.contains("evaluating on"));
+    assert!(!note(&diagnostics[0]));
+    assert!(note(&diagnostics[1]) && note(&diagnostics[2]));
+
+    // the same name twice is one error
+    let err = Compiler::new()
+        .compile_source_to_signals("names.dsp", "process = ax + ax;\n")
+        .expect_err("the symbol is undefined");
+    assert_eq!(err.diagnostic_bundle().as_slice().len(), 1);
+
+    // past a limit, the rest waits for the next compilation
+    let names: Vec<String> = (0..12).map(|i| format!("missing_{i}")).collect();
+    let source = format!("process = {};\n", names.join(" + "));
+    let err = Compiler::new()
+        .compile_source_to_signals("names.dsp", &source)
+        .expect_err("the symbols are undefined");
+    assert_eq!(err.diagnostic_bundle().as_slice().len(), 8);
+}
+
+/// Evaluation is lazy, and the search for further symbols comes after a failure:
+/// what compiles still does, and another failure gets no search.
+#[test]
+fn a_symbol_nothing_reaches_stays_out_of_it() {
+    let compiler = Compiler::new();
+    for source in [
+        "unused = nope;\nprocess = _;\n",
+        "f(x) = x with { dead = nope; };\nprocess = f(_);\n",
+    ] {
+        assert!(
+            compiler
+                .compile_source_to_signals("lazy.dsp", source)
+                .is_ok(),
+            "{source}"
+        );
+    }
+    let err = compiler
+        .compile_source_to_signals("lazy.dsp", "f(1) = 2;\nprocess = f(3), nope;\n")
+        .expect_err("no rule matches");
+    let diagnostics = err.diagnostic_bundle().as_slice();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].message.as_ref(),
+        "no case rule matches `f(3)`"
+    );
+}
+
 #[test]
 fn a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts() {
     let names: Vec<String> = (0..40).map(|i| format!("name_{i} = {i};")).collect();

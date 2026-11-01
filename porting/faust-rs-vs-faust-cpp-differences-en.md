@@ -258,7 +258,9 @@ must run unchanged with Faust C++ should not pass them.
   report keeps all of it. An arity mismatch
   also labels the definitions of its operands, and `too many arguments` and a
   failed `case` are reported on the call and cite it; the C++ compiler has no
-  location for them. Tests:
+  location for them. After an undefined symbol, a further evaluation reports the
+  others the evaluator reaches, where the C++ compiler stops at the first; which
+  programs are accepted and the first error are unchanged. Tests:
   `crates/parser/tests/parse_error_order.rs`,
   `a_long_scope_is_summed_up_in_the_text_and_whole_in_the_facts` in
   `crates/compiler/tests/diagnostic_errors.rs`.

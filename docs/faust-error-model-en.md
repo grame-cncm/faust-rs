@@ -199,6 +199,10 @@ its name when that is the entry point. `debug` prints them, with the box
 expression as `expr`. The JSON report keeps the labels, the three scopes and the
 binding trace as typed values at every level.
 
+An undefined symbol does not stop at the first: each one the evaluator reaches
+gets its diagnostic. The first is what failed; the others come from a further
+evaluation that reads each undefined symbol as `_`, and a note says so.
+
 A composition mismatch also labels the definitions of its operands: the failing
 token is where two widths meet, and the wrong width is usually written in one of
 them.

@@ -3,6 +3,7 @@
 use std::ffi::OsStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use tlib::TreeId;
 
@@ -12,6 +13,15 @@ use crate::environment::{
     ApplyMemoKey, ClosureValue, EnvFrameKey, EvalCacheKey, EvalValue, PatternMatcherValue,
 };
 use crate::error::{DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalError};
+
+/// What a run collecting undefined symbols holds.
+#[derive(Clone, Debug)]
+pub(crate) struct UndefinedCollection {
+    /// When the run ends, whatever it reached by then.
+    pub(crate) deadline: Instant,
+    /// The symbols met, each once, in the order of evaluation.
+    pub(crate) found: Vec<EvalError>,
+}
 
 /// Infinite loop detector for recursive symbol expansion.
 ///
@@ -90,6 +100,9 @@ pub struct LoopDetector {
     /// configured `--timeout`, and libfaust hosts can set it from any thread
     /// (e.g. on user abort).
     pub(crate) cancel: Arc<AtomicBool>,
+    /// The undefined symbols of a run that goes on past them, when this is
+    /// one; see [`crate::further_undefined_symbols`].
+    pub(crate) collection: Option<UndefinedCollection>,
     /// Compiled automata keyed by the `TreeId` of the evaluated `Case` rule-list.
     /// Definition-name map populated during eval: `box_id → definition_name`.
     ///
@@ -504,6 +517,7 @@ impl LoopDetector {
             nesting_max_depth: nesting.value,
             structural_max_depth: structural.value,
             cancel,
+            collection: None,
             def_names: std::collections::HashMap::new(),
             composition_origins: std::collections::HashMap::new(),
             warnings: Vec::new(),
@@ -627,8 +641,28 @@ impl LoopDetector {
 
     /// Returns `Err(EvalError::Cancelled)` if the cancel flag has been set.
     #[inline]
+    fn past_collection_deadline(&self) -> bool {
+        self.collection
+            .as_ref()
+            .is_some_and(|collection| Instant::now() >= collection.deadline)
+    }
+
+    /// Records an undefined symbol in a run that collects them, and says
+    /// whether the run goes on past it. A full list ends the run.
+    pub(crate) fn record_undefined(&mut self, error: &EvalError) -> bool {
+        /// Enough to see that a pass over the file is needed.
+        const LIMIT: usize = 8;
+        let Some(collection) = &mut self.collection else {
+            return false;
+        };
+        if !collection.found.contains(error) {
+            collection.found.push(error.clone());
+        }
+        collection.found.len() < LIMIT
+    }
+
     pub(crate) fn check_cancel(&self) -> Result<(), EvalError> {
-        if self.cancel.load(Ordering::Relaxed) {
+        if self.cancel.load(Ordering::Relaxed) || self.past_collection_deadline() {
             Err(EvalError::Cancelled)
         } else {
             Ok(())

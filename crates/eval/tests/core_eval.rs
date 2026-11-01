@@ -1806,6 +1806,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
     );
 
     let undef = EvalError::UndefinedSymbol {
+        further: Box::default(),
         symbol: "foo".to_owned(),
         node: arena.nil(),
         local_scope: vec!["x".to_owned()],

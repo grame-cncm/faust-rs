@@ -260,6 +260,10 @@ pub enum EvalError {
         visible_scope: Vec<String>,
         /// Names bound at top-level.
         top_level_scope: Vec<String>,
+        /// The other undefined symbols a further run reached. They do not
+        /// decide anything: this error is the failure, and a symbol here may
+        /// be in code the repaired program would not reach.
+        further: Box<[EvalError]>,
     },
     MalformedDefinitionNode {
         node: TreeId,
