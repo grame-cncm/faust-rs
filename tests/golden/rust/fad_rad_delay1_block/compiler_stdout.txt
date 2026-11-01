@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=fad_rad_delay1_block.dsp
+bytes=416
+lines=7
+fnv1a64=e1e010dd01d39919

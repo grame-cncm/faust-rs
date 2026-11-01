@@ -416,7 +416,12 @@ fn check_json_compiler_type_family_failure_is_clean() {
 
 #[test]
 fn check_json_sfir_family_failure_is_clean() {
-    let result = run_and_assert_clean_json(&corpus_path("err_fad_rad_temporal.dsp"), &[]);
+    // The reverse sweep of `BlockReverseAD` has no rule for a read of a
+    // writable table (DIFF-GAP-006). A fixture must be a program the lowering
+    // refuses by design: this test used to run on `fad(rad(x', x), x)`, whose
+    // failure was a missing rule, and implementing the rule removed its
+    // premise.
+    let result = run_and_assert_clean_json(&corpus_path("err_rad_writable_table_block.dsp"), &[]);
     assert!(
         !result.success,
         "expected exit 1 on a signal->FIR lowering failure"
@@ -429,7 +434,7 @@ fn check_json_sfir_family_failure_is_clean() {
 
     // The diagnostic already carries the code, so the message must not repeat
     // it. Using the error's Display here used to render
-    // "error [FRS-SFIR-0004] [FRS-SFIR-0004] signal preparation failed: ...".
+    // "error [FRS-SFIR-0004] [FRS-SFIR-0004] ...".
     let message = first_message(&result);
     assert!(
         !message.contains(first_code(&result)),
@@ -440,6 +445,19 @@ fn check_json_sfir_family_failure_is_clean() {
             .as_array()
             .is_some_and(|labels| !labels.is_empty()),
         "unsupported lowering must point to the originating Faust construct"
+    );
+}
+
+#[test]
+fn check_json_fad_of_a_block_rad_with_a_dependent_seed_is_located() {
+    let result = run_and_assert_clean_json(&corpus_path("err_fad_rad_dependent_seed.dsp"), &[]);
+    assert!(!result.success, "expected exit 1 on the refusal");
+    assert_eq!(first_code(&result), "FRS-PROP-0005");
+    assert!(
+        result.stdout["diagnostics"][0]["labels"]
+            .as_array()
+            .is_some_and(|labels| !labels.is_empty()),
+        "the refusal must point at the program"
     );
 }
 

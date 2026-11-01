@@ -21,7 +21,7 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use codegen::backends::interp::{FbcDspInstance, InterpOptions, read_fbc};
+use codegen::backends::interp::{FbcDspInstance, InterpOptions, MAX_OPT_LEVEL, read_fbc};
 use compiler::{Compiler, SignalFirLane};
 
 fn corpus_path(file: &str) -> PathBuf {
@@ -1473,36 +1473,282 @@ fn corpus_rad_fad_multi_seed_routes_implicit_cotangent_through_inner_lanes() {
 }
 
 #[test]
-fn corpus_err_fad_rad_temporal_inner_falls_back_to_block_mode() {
-    // tests/corpus/err_fad_rad_temporal.dsp
-    //   process = fad(rad(x', x), x);
-    // Phase B1: the inner `rad` falls back to BlockReverseAD, so the outer
-    // `fad` receives two BlockReverseAD projections and succeeds.
-    // Outputs = 4: two primal projections + two tangent projections.
-    let path = corpus_path("err_fad_rad_temporal.dsp");
-    let source = std::fs::read_to_string(&path).expect("read err_fad_rad_temporal fixture");
-    let compiler = Compiler::new();
-    let out = compiler
-        .compile_source_to_signals("err_fad_rad_temporal.dsp", &source)
-        .expect("fad(rad(x', x), x) must succeed via BlockReverseAD fallback (Phase B1)");
-    // fad expands 2 primal outputs × 1 seed → 4 outputs
-    assert_eq!(out.signals.len(), 4, "fad(rad(delay1,x),x) → 4 outputs");
+fn corpus_fad_rad_delay1_block_differentiates_the_carrier() {
+    // tests/corpus/fad_rad_delay1_block.dsp
+    //   process = fad(rad(x', x), x);   x = 0
+    // The inner `rad` is a block sweep, so the outer `fad` meets the
+    // projections of a `BlockReverseAD` carrier. Outputs: [x', its tangent,
+    // the gradient per sample, its tangent].
+    let frames = 8;
+    let outs = run_interp_corpus("fad_rad_delay1_block", frames);
+    assert_eq!(outs.len(), 4, "fad(rad(delay1, x), x) -> 4 outputs");
+    let zeros = vec![0.0; frames];
+    let tangent: Vec<f32> = (0..frames).map(|n| f32::from(n > 0)).collect();
+    let gradient: Vec<f32> = (0..frames).map(|n| f32::from(n < frames - 1)).collect();
+    assert_eq!(outs, [zeros.clone(), tangent, gradient, zeros]);
 }
 
+/// Renders `source` over `blocks` consecutive `compute()` calls of
+/// `block_size` frames, under `options`, and returns the outputs end to end.
+fn run_interp_in_blocks(
+    source: &str,
+    options: InterpOptions,
+    block_size: usize,
+    blocks: usize,
+) -> Vec<Vec<f32>> {
+    let source = source.to_owned();
+    std::thread::Builder::new()
+        .name("rad-runtime-blocks".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let unique_id = NEXT_TEMP_DSP_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "faust-rs-rad-blocks-{}-{unique_id}.dsp",
+                std::process::id()
+            ));
+            fs::write(&path, &source).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+            let fbc = Compiler::new()
+                .compile_file_default_to_interp_with_lane(
+                    &path,
+                    &options,
+                    SignalFirLane::TransformFastLane,
+                )
+                .unwrap_or_else(|e| panic!("{source}: compilation failed: {e}"));
+            let _ = fs::remove_file(&path);
+            let mut reader = Cursor::new(fbc);
+            let mut factory = read_fbc::<f32>(&mut reader).expect("parse bytecode");
+            let mut instance = FbcDspInstance::new(&mut factory);
+            instance.init(48_000);
+            let num_outputs = usize::try_from(instance.get_num_outputs()).expect("outputs");
+            let mut rendered = vec![Vec::new(); num_outputs];
+            for _ in 0..blocks {
+                let mut block = vec![vec![0.0_f32; block_size]; num_outputs];
+                let mut slices: Vec<&mut [f32]> = block.iter_mut().map(Vec::as_mut_slice).collect();
+                instance
+                    .try_compute(block_size as i32, &[], &mut slices)
+                    .expect("compute");
+                for (all, lane) in rendered.iter_mut().zip(block) {
+                    all.extend(lane);
+                }
+            }
+            rendered
+        })
+        .expect("spawn blocks worker")
+        .join()
+        .expect("blocks worker thread should finish")
+}
+
+/// Asserts the outputs of `fad(rad(expr, ...), fad_seeds)` against the
+/// `rad_outputs` outputs of `rad(expr, ...)`: the layout `[value, one tangent per fad seed]` per
+/// output of the `rad`, each value equal to the `rad`'s, and each tangent
+/// equal to the central finite difference of that value, sample by sample.
+///
+/// The render spans three blocks, so that a tangent also carries what the
+/// state entering a block owes to the seed, and runs at both optimization
+/// levels of the interpreter. `build(perturbed, seeds)` gives the program:
+/// the `rad` alone when `perturbed` is true, under the `fad` otherwise.
+fn assert_fad_of_block_rad_matches_fd(
+    rad_outputs: usize,
+    base_seeds: &[f32],
+    fad_seeds: &[usize],
+    build: impl Fn(bool, &[f32]) -> String,
+) {
+    const BLOCK: usize = 8;
+    const BLOCKS: usize = 3;
+    const EPSILON: f32 = 1.0e-3;
+    let lanes = 1 + fad_seeds.len();
+    let render = |source: &str, opt_level: i32| {
+        let options = InterpOptions {
+            opt_level,
+            ..InterpOptions::default()
+        };
+        run_interp_in_blocks(source, options, BLOCK, BLOCKS)
+    };
+    let source = build(false, base_seeds);
+    let duals = render(&source, 0);
+    assert_eq!(duals.len(), rad_outputs * lanes, "{source}: layout");
+    assert_eq!(
+        duals,
+        render(&source, i32::from(MAX_OPT_LEVEL)),
+        "{source}: opt_level 0 and max differ"
+    );
+    let rad = render(&build(true, base_seeds), 0);
+    assert_eq!(rad.len(), rad_outputs, "{source}: rad outputs");
+    for (lane, &seed) in fad_seeds.iter().enumerate() {
+        let shifted = |delta: f32| {
+            let mut seeds = base_seeds.to_vec();
+            seeds[seed] += delta;
+            render(&build(true, &seeds), 0)
+        };
+        let (up, down) = (shifted(EPSILON), shifted(-EPSILON));
+        for output in 0..rad_outputs {
+            for frame in 0..BLOCK * BLOCKS {
+                let label = format!("{source}: output {output} seed {seed} frame {frame}");
+                let value = duals[output * lanes][frame];
+                assert_close(value, rad[output][frame], 1.0e-5, &label);
+                let finite_difference = (up[output][frame] - down[output][frame]) / (2.0 * EPSILON);
+                let tangent = duals[output * lanes + 1 + lane][frame];
+                let tolerance = 5.0e-3 * (1.0 + finite_difference.abs());
+                assert_close(tangent, finite_difference, tolerance, &label);
+            }
+        }
+    }
+}
+
+/// Two `rad` calls read one delay, which hash-consing shares: each sweep owes
+/// the delay an adjoint of its own. The carry of a delay was keyed by the
+/// node, so both sweeps stored into one variable and the last store won: a
+/// silent wrong gradient on the first. Each row is the delay of one lowering.
 #[test]
-fn nested_rad_in_fad_temporal_inner_falls_back_to_block_mode() {
-    // Phase B1: `fad(rad(x', x), x)` no longer errors. The inner rad falls
-    // back to BlockReverseAD, and FAD differentiates the resulting projections.
-    use compiler::Compiler;
-    let source = r#"
-x = hslider("x", 0.0, -1.0, 1.0, 0.01);
-process = fad(rad(x', x), x);
-"#;
-    let compiler = Compiler::new();
-    let out = compiler
-        .compile_source_to_signals("nested-rad-in-fad-temporal.dsp", source)
-        .expect("fad(rad(x', x), x) must succeed via BlockReverseAD fallback (Phase B1)");
-    assert_eq!(out.signals.len(), 4, "fad(rad(delay1,x),x) → 4 outputs");
+fn block_rad_sweeps_do_not_share_the_carry_of_a_delay() {
+    for (delay, label) in [
+        ("a'", "Delay1"),
+        ("a @ 3", "Delay"),
+        ("a @ (1 + (s1 > 0))", "variable delay"),
+    ] {
+        let source = format!(
+            "{}a = s0; s = {delay};\nprocess = rad(s * s, a), rad(s * s1 * 4, a);",
+            sliders(&[0.4, 0.3])
+        );
+        let frames = 16;
+        let outs = run_interp_in_blocks(&source, InterpOptions::default(), frames, 1);
+        assert_eq!(outs.len(), 4, "{label}");
+        // Far from the end of the block, where the truncation is not seen.
+        assert_close(outs[1][2], 0.8, 1.0e-5, label);
+        assert_close(outs[3][2], 1.2, 1.0e-5, label);
+    }
+}
+
+/// `sliders` in Faust, named `s0`, `s1`, ... and set to `seeds`.
+fn sliders(seeds: &[f32]) -> String {
+    seeds
+        .iter()
+        .enumerate()
+        .map(|(i, value)| format!("s{i} = hslider(\"s{i}\", {value}, -2, 2, 0.0001);\n"))
+        .collect()
+}
+
+/// A body over a delay, read through nonlinearities: the tangent body the
+/// second sweep walks is not the original's.
+#[test]
+fn fad_of_block_rad_over_a_delay_matches_fd() {
+    assert_fad_of_block_rad_matches_fd(2, &[0.3], &[0], |bare, seeds| {
+        let expr = "rad(sin(s0 * s0)' * cos(s0), s0)";
+        let process = if bare {
+            expr.to_owned()
+        } else {
+            format!("fad({expr}, s0)")
+        };
+        format!("{}process = {process};", sliders(seeds))
+    });
+}
+
+/// A nonlinear recursion: the tangent of the gradient depends on the state
+/// entering each block, whose tangent crosses `compute()` calls while the
+/// reverse sweep does not.
+#[test]
+fn fad_of_block_rad_over_a_recursion_matches_fd() {
+    assert_fad_of_block_rad_matches_fd(2, &[0.1], &[0], |bare, seeds| {
+        let expr = "rad(s0 : +~sin, s0)";
+        let process = if bare {
+            expr.to_owned()
+        } else {
+            format!("fad({expr}, s0)")
+        };
+        format!("{}process = {process};", sliders(seeds))
+    });
+}
+
+/// A linear time-varying recursion driven by a test-local source, with the
+/// seed in the feedback coefficient.
+#[test]
+fn fad_of_block_rad_over_a_driven_recursion_matches_fd() {
+    assert_fad_of_block_rad_matches_fd(2, &[0.5], &[0], |bare, seeds| {
+        let expr = "rad((drive * s0) : +~*(s0), s0)";
+        let process = if bare {
+            expr.to_owned()
+        } else {
+            format!("fad({expr}, s0)")
+        };
+        format!(
+            "{}drive = (+(1) ~ _) * 0.7 : sin;\nprocess = {process};",
+            sliders(seeds)
+        )
+    });
+}
+
+/// Two seeds in both modes: the whole Hessian of the block objective, with
+/// one tangent carrier per lane. Its symmetry is what the rule relies on, so
+/// it is checked on its own.
+#[test]
+fn fad_of_block_rad_gives_a_symmetric_hessian() {
+    let build = |bare: bool, seeds: &[f32]| {
+        let expr = "rad(s0 * s1' * sin(s0), (s0, s1))";
+        let process = if bare {
+            expr.to_owned()
+        } else {
+            format!("fad({expr}, (s0, s1))")
+        };
+        format!("{}process = {process};", sliders(seeds))
+    };
+    let seeds = [0.4, 0.3];
+    assert_fad_of_block_rad_matches_fd(3, &seeds, &[0, 1], build);
+    let outs = run_interp_in_blocks(&build(false, &seeds), InterpOptions::default(), 8, 1);
+    // [value, tangents] per output: output 1 is d/ds0, output 2 is d/ds1. A
+    // lane gives the Hessian times a constant direction, so the symmetry is
+    // that of the block sum, not of each sample.
+    let sum = |lane: usize| outs[lane].iter().sum::<f32>();
+    assert_close(sum(5), sum(7), 1.0e-5, "d2/ds0ds1");
+}
+
+/// The `fad` seed is not the `rad` seed: the second carrier differentiates
+/// with respect to `s0` a tangent taken with respect to `s1`.
+#[test]
+fn fad_of_block_rad_with_another_seed_matches_fd() {
+    assert_fad_of_block_rad_matches_fd(2, &[0.4, 0.3], &[1], |bare, seeds| {
+        let expr = "rad(y * y, s0)";
+        let process = if bare {
+            expr.to_owned()
+        } else {
+            format!("fad({expr}, s1)")
+        };
+        format!(
+            "{}y = (s1 * s0) : +~(*(0.5) : sin);\nprocess = {process};",
+            sliders(seeds)
+        )
+    });
+}
+
+/// A `fad` seed the body of the `rad` does not read leaves the carrier as it
+/// is: both tangents are literal zeros, not a carrier over nothing.
+#[test]
+fn fad_of_block_rad_over_an_unreached_seed_has_zero_tangents() {
+    let source = format!(
+        "{}process = fad(rad(s0', s0), s1), s1 : _,!,_,!,!;",
+        sliders(&[0.4, 0.3])
+    );
+    let outs = run_interp_in_blocks(&source, InterpOptions::default(), 8, 1);
+    assert_eq!(outs.len(), 2);
+    assert_close(outs[0][1], 0.4, 1.0e-6, "primal");
+    assert_close(outs[1][1], 1.0, 1.0e-6, "gradient");
+}
+
+/// The corpus fixture of the refusal, through the compiler facade: a `rad`
+/// seed computed from the `fad` seed fails in propagation, not in signal
+/// preparation, and the message names no internal node. Its code and its
+/// source label are pinned in `cli_diagnostics_channel.rs`.
+#[test]
+fn fad_of_block_rad_refuses_a_seed_computed_from_the_fad_seed() {
+    let path = corpus_path("err_fad_rad_dependent_seed.dsp");
+    let source = fs::read_to_string(&path).expect("read fixture");
+    let error = Compiler::new()
+        .compile_source_to_signals("err_fad_rad_dependent_seed.dsp", &source)
+        .expect_err("a rad seed computed from the fad seed must be refused")
+        .to_string();
+    assert!(
+        error.contains("computed from a fad seed") && !error.contains("projection"),
+        "got: {error}"
+    );
 }
 
 // ── Phase B6: recursive BlockReverseAD tests ──────────────────────────────────

@@ -171,7 +171,7 @@ observable in practice today.
 | `FRS-PROP-0002` | `propagate` | Arity mismatch in propagate composition rules (`seq`/`split`/`merge`/UI wiring). | `crates/propagate/src/error.rs:235,247,268,301,398,406,414` |
 | `FRS-PROP-0003` | `propagate` | Recursion/projection contract mismatch in propagate (`rec` arity/alias). | `crates/propagate/src/error.rs:339` |
 | `FRS-PROP-0004` | `propagate` | Automatic differentiation (`fad`/`rad`) reached a clock-domain boundary it cannot cross. | `crates/propagate/src/error.rs:548` |
-| `FRS-PROP-0005` | `propagate` | A seed of `fad`/`rad` is computed from another seed of the same call; a seed is an independent variable, so the other seeds' lanes would be zero through it. | `crates/propagate/src/error.rs`, `AdDependentSeed` |
+| `FRS-PROP-0005` | `propagate` | A seed of `fad`/`rad` is computed from another seed of the same call; a seed is an independent variable, so the other seeds' lanes would be zero through it. Also a seed of a block-mode `rad` computed from a seed of an enclosing `fad`. | `crates/propagate/src/error.rs`, `AdDependentSeed`, `FadOfRadWithDependentSeed` |
 | `FRS-PROP-0099` | `propagate` | Generic propagate failure fallback code. | `crates/propagate/src/error.rs:372,380,390,422` |
 
 ### `FRS-COMP-*` — Top-level compiler pipeline (3 codes)
@@ -221,7 +221,7 @@ instead, so the same program is rejected regardless of the selected backend.
 | `FRS-SFIR-0001` | `transform` | Invalid options passed to signal→FIR lowering. | `crates/compiler/src/json_naming.rs:51` |
 | `FRS-SFIR-0002` | `transform` | Empty signal list provided to signal→FIR lowering. | `crates/compiler/src/json_naming.rs:52` |
 | `FRS-SFIR-0003` | `transform` | Signal outputs arity mismatch in signal→FIR lowering. | `crates/compiler/src/json_naming.rs:53` |
-| `FRS-SFIR-0004` | `transform` | Unsupported signal node in signal→FIR lowering. | `crates/compiler/src/json_naming.rs:54`; reachable, e.g. `tests/corpus/err_fad_rad_temporal.dsp`. |
+| `FRS-SFIR-0004` | `transform` | Unsupported signal node in signal→FIR lowering. | `crates/compiler/src/json_naming.rs:54`; reachable, e.g. `tests/corpus/err_rad_writable_table_block.dsp`. |
 | `FRS-SFIR-0005` | `transform` | Unsupported binary operator in signal→FIR lowering. | `crates/compiler/src/json_naming.rs:55` |
 | `FRS-SFIR-0006` | `transform` | Input index out of range in signal→FIR lowering. | `crates/compiler/src/json_naming.rs:56` |
 | `FRS-SFIR-0007` | `transform` | Clocked node (`ondemand`/`upsampling`/`downsampling`) reached signal→FIR lowering before the clock-domain back half is ported. | `crates/compiler/src/json_naming.rs:57` |

@@ -1982,7 +1982,8 @@ two-phase protocol prevents dangling references inside the De Bruijn group:
 | `rad_fad_quadratic` | mixed AD: outer RAD over inner FAD, sum-cotangent gradient `f' + f''` |
 | `fad_rad_trig_second_derivative` | mixed AD on `sin(x*x)`, fourth lane is the second derivative |
 | `rad_fad_multi_seed` | mixed AD with two seeds, implicit all-ones cotangent through inner FAD lanes |
-| `err_rad_zero_body`, `err_rad_zero_seed`, `rad_delay1_block_fallback`, `err_fad_rad_temporal` | RAD diagnostics and fallback surface (incl. RAD-in-FAD wrapping) |
+| `err_rad_zero_body`, `err_rad_zero_seed`, `err_rad_writable_table_block`, `rad_delay1_block_fallback` | RAD diagnostics and fallback surface |
+| `fad_rad_delay1_block`, `err_fad_rad_dependent_seed` | outer FAD over a block-mode RAD, and its refusal of a seed computed from the FAD seed |
 
 These fixtures pass through `crates/compiler/tests/signal_pipeline.rs`.
 `fad_delay` is additionally validated end-to-end through the

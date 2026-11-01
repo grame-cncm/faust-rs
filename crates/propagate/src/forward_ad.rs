@@ -357,6 +357,24 @@
 //! that a bargraph is a metering output and not a signal path: a loss
 //! displayed on a meter then had a zero gradient.
 //!
+//! ## `rad` block carriers
+//!
+//! The projections of a `SigBlockReverseAD` carrier (a `rad` over a delay or
+//! a recursion) are differentiated by exchanging the two derivatives. For the
+//! block objective `J` of the carrier, a seed `s` and a `fad` seed `z`:
+//!
+//! ```text
+//! primal slot i:    b_i' (the tangent of the body)
+//! gradient slot k:  d/dz (dJ/ds_k) = d/ds_k (dJ/dz)
+//! ```
+//!
+//! and `dJ/dz` is a sum over the tangents of the body, so the gradient slot
+//! is the gradient of a second carrier, one per lane, over those tangents.
+//! Its block truncation is the original's: the state entering the block is a
+//! constant for its sweep, and its tangent a value the tangent body reads.
+//! The exchange reads `s` as an independent variable of `J`, which the
+//! tangent of `s` must not spoil (`check_block_reverse_seeds`).
+//!
 //! # Zero-tangent fallback boundary
 //! Several signal families are intentionally outside the current
 //! differentiable subset and therefore preserve the primal while emitting zero
@@ -420,7 +438,7 @@
 
 use ahash::{AHashMap, AHashSet};
 use signals::ad_rules::{DerivativeZeroFolder, is_literal_zero};
-use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
+use signals::{BinOp, BlockRevPolicy, SigBuilder, SigId, SigMatch, match_sig};
 use smallvec::SmallVec;
 use tlib::{
     NodeKind, TreeArena, TreeId, check_de_bruijn_coherence_with_memo, de_bruijn_aperture_with_memo,
@@ -1262,6 +1280,17 @@ impl<'a> ForwardADTransform<'a> {
                 Dual { primal, tangents }
             }
             SigMatch::Proj(index, group) => {
+                if let SigMatch::BlockReverseAD {
+                    body,
+                    seeds,
+                    cotangents,
+                    policy,
+                    ..
+                } = match_sig(self.arena, group)
+                {
+                    return self
+                        .transform_block_reverse_proj(index, body, seeds, cotangents, policy);
+                }
                 let dual_group = self.transform(group);
                 // Classify the group this projection targets:
                 // - `BoundRec`: the enclosing recursion has been rewritten by
@@ -1442,6 +1471,98 @@ impl<'a> ForwardADTransform<'a> {
         name_ids
             .iter()
             .any(|id| tree_to_str(arena, *id).is_some_and(|n| targets.contains(&n)))
+    }
+
+    /// Differentiates a `Proj(slot, BlockReverseAD)`: forward over block
+    /// reverse (see the module docstring).
+    ///
+    /// A primal slot takes the tangent of its body. A gradient slot takes the
+    /// same gradient over the tangent of the body: a carrier per lane, whose
+    /// body is the tangents and whose seeds are the original's. Every
+    /// projection builds them again, which the arena's hash-consing folds
+    /// into one carrier; each child is already in `self.cache`.
+    fn transform_block_reverse_proj(
+        &mut self,
+        slot: i32,
+        body: SigId,
+        seeds: SigId,
+        cotangents: SigId,
+        policy: BlockRevPolicy,
+    ) -> Dual {
+        let body = self.transform_list(body);
+        let seed_sigs = list_to_vec(self.arena, seeds).unwrap_or_default();
+        let seeds = self.transform_list(seeds);
+        let cotangents = self.transform_list(cotangents);
+        self.check_block_reverse_seeds(&seed_sigs, &seeds);
+
+        let primals = |duals: &[Dual]| duals.iter().map(|d| d.primal).collect::<Vec<_>>();
+        let (primal_body, primal_seeds, primal_cotangents) =
+            (primals(&body), primals(&seeds), primals(&cotangents));
+        let mut b = SigBuilder::new(self.arena);
+        let carrier = b.block_reverse_ad(&primal_body, &primal_seeds, &primal_cotangents, policy);
+        let primal = b.proj(slot, carrier);
+
+        let primal_count = body.len();
+        let index = usize::try_from(slot).unwrap_or(usize::MAX);
+        if index < primal_count {
+            return Dual {
+                primal,
+                tangents: body[index].tangents.clone(),
+            };
+        }
+        let gradient = index - primal_count;
+        let tangents = (0..self.seed_count())
+            .map(|lane| {
+                // d/dz (dJ/ds) = d/ds (dJ/dz), with J the sum of `c * b`:
+                // the tangent `b'` under the cotangent `c`, and `b` under
+                // `c'`. A term whose factor is a literal zero is left out.
+                let mut tangent_body = Vec::with_capacity(primal_count);
+                let mut tangent_cotangents = Vec::with_capacity(primal_count);
+                for (dual, cotangent) in body.iter().zip(&cotangents) {
+                    if !is_literal_zero(self.arena, dual.tangents[lane]) {
+                        tangent_body.push(dual.tangents[lane]);
+                        tangent_cotangents.push(cotangent.primal);
+                    }
+                    if !is_literal_zero(self.arena, cotangent.tangents[lane]) {
+                        tangent_body.push(dual.primal);
+                        tangent_cotangents.push(cotangent.tangents[lane]);
+                    }
+                }
+                let mut b = SigBuilder::new(self.arena);
+                if tangent_body.is_empty() {
+                    return b.real(0.0);
+                }
+                let carrier =
+                    b.block_reverse_ad(&tangent_body, &primal_seeds, &tangent_cotangents, policy);
+                let slot = tangent_body.len() + gradient;
+                b.proj(i32::try_from(slot).expect("carrier slot fits i32"), carrier)
+            })
+            .collect();
+        Dual { primal, tangents }
+    }
+
+    /// Refuses a `BlockReverseAD` seed the rule above cannot read as an
+    /// independent variable. The reverse sweep over the tangent body stops at
+    /// the seed and differentiates every other occurrence of it, and the
+    /// tangent of the seed must stay out of that: it has to be a literal,
+    /// which holds for a seed of this `fad` (one-hot) and for a seed no lane
+    /// reaches (zero). Any other tangent is an expression the sweep would
+    /// walk: `exp(z)` for a seed `s = exp(z)` is the seed itself, and the
+    /// tangent slot of a recursion reads the seed's previous sample.
+    fn check_block_reverse_seeds(&mut self, seed_sigs: &[SigId], seeds: &[Dual]) {
+        for (lane, (seed, dual)) in seed_sigs.iter().zip(seeds).enumerate() {
+            let independent = self.diff_seed_index.contains_key(seed)
+                || dual
+                    .tangents
+                    .iter()
+                    .all(|&tangent| is_literal_zero(self.arena, tangent));
+            if !independent && self.boundary_error.is_none() {
+                self.boundary_error = Some(PropagateError::FadOfRadWithDependentSeed {
+                    node: None,
+                    seed: lane + 1,
+                });
+            }
+        }
     }
 
     /// Zero-tangent fallback: preserve the primal and emit a zero (real)
@@ -2334,6 +2455,75 @@ mod tests {
         assert!(
             matches!(err, PropagateError::FadUnsupportedNode { .. }),
             "expected FadUnsupportedNode, got {err:?}"
+        );
+    }
+
+    /// `Proj(slot, BlockReverseAD)`: a primal slot takes the tangent of its
+    /// body, a gradient slot the same gradient of a carrier over that
+    /// tangent, the original's seeds kept.
+    #[test]
+    fn fad_of_a_block_reverse_carrier_builds_a_tangent_carrier() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let s = b.input(0);
+        let sin_s = b.sin(s);
+        let body = b.delay1(sin_s);
+        let one = b.real(1.0);
+        let carrier = b.block_reverse_ad(&[body], &[s], &[one], BlockRevPolicy::TapeFull);
+        let primal = b.proj(0, carrier);
+        let gradient = b.proj(1, carrier);
+        let out = generate_fad_signals_multi(
+            &mut arena,
+            &mut ClockDomainTable::new(),
+            &[primal, gradient],
+            &[s],
+        )
+        .expect("fad over a carrier");
+        assert_eq!(out[0], primal, "the carrier is kept");
+        assert_eq!(out[2], gradient, "the carrier is kept");
+        assert!(
+            matches!(match_sig(&arena, out[1]), SigMatch::Delay1(_)),
+            "the tangent of a primal slot is the tangent of the body"
+        );
+        let SigMatch::Proj(1, group) = match_sig(&arena, out[3]) else {
+            panic!("the tangent of a gradient slot projects a gradient");
+        };
+        assert_ne!(group, carrier);
+        let SigMatch::BlockReverseAD { body, seeds, .. } = match_sig(&arena, group) else {
+            panic!("the tangent of a gradient slot projects a carrier");
+        };
+        assert_eq!(list_to_vec(&arena, seeds), Some(vec![s]));
+        assert_eq!(
+            list_to_vec(&arena, body),
+            Some(vec![out[1]]),
+            "its body is the tangent of the original's"
+        );
+    }
+
+    /// The tangent of a `rad` seed computed from the `fad` seed would be
+    /// walked by the second sweep, and `exp` makes it the seed itself.
+    #[test]
+    fn fad_of_a_block_reverse_carrier_refuses_a_dependent_seed() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let z = b.input(0);
+        let s = b.exp(z);
+        let body = b.delay1(s);
+        let one = b.real(1.0);
+        let carrier = b.block_reverse_ad(&[body], &[s], &[one], BlockRevPolicy::TapeFull);
+        let gradient = b.proj(1, carrier);
+        let err =
+            generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[gradient], &[z])
+                .expect_err("a dependent rad seed must be refused");
+        assert!(
+            matches!(
+                err,
+                PropagateError::FadOfRadWithDependentSeed {
+                    node: None,
+                    seed: 1
+                }
+            ),
+            "got {err:?}"
         );
     }
 

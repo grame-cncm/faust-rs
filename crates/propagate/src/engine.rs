@@ -801,6 +801,7 @@ fn propagate_inner(
 
             if matches!(fad_mode, RecFadMode::ExpandAfterRec) {
                 forward_ad::generate_fad_signals_multi(arena, ctx.clock_domains, &outputs, &seeds)
+                    .map_err(|e| e.at_fad_box(box_tree.as_tree_id()))
             } else {
                 Ok(outputs)
             }
@@ -866,6 +867,7 @@ fn propagate_inner(
                     &body_sigs,
                     &seed_sigs,
                 )
+                .map_err(|e| e.at_fad_box(box_tree.as_tree_id()))
             }
         }
         FlatNodeKind::ReverseAD { body, seeds } => {

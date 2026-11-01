@@ -66,6 +66,16 @@ pub enum PropagateError {
     /// other seeds' lanes would be zero wherever the body reads it: the
     /// program is refused with the two spellings that mean something.
     AdDependentSeed(Box<DependentSeed>),
+    /// `fad` over a `rad` lowered to a block sweep, whose seed is computed
+    /// from a seed of the `fad`: the second sweep that gives the derivative
+    /// of the gradient would walk the tangent of the seed.
+    FadOfRadWithDependentSeed {
+        /// The `fad` box, set by [`Self::at_fad_box`] once the transform,
+        /// which works on signals, has returned.
+        node: Option<TreeId>,
+        /// 1-based lane of the seed in the `rad`.
+        seed: usize,
+    },
     RadBodyArity {
         node: TreeId,
         outputs: usize,
@@ -109,6 +119,22 @@ pub enum PropagateError {
         node: TreeId,
         domain: u32,
     },
+}
+
+impl PropagateError {
+    /// Locates an error of the forward transform, which works on signals, on
+    /// the `fad` box it was running for.
+    pub(crate) fn at_fad_box(self, box_id: TreeId) -> Self {
+        match self {
+            Self::FadOfRadWithDependentSeed { node: None, seed } => {
+                Self::FadOfRadWithDependentSeed {
+                    node: Some(box_id),
+                    seed,
+                }
+            }
+            other => other,
+        }
+    }
 }
 
 /// The operator that would connect these widths, if `:` was not meant: the
@@ -196,6 +222,11 @@ impl Display for PropagateError {
                 details.seed,
                 details.seed_text,
                 dependent_seed_list(&details.depends_on)
+            ),
+            Self::FadOfRadWithDependentSeed { seed, .. } => write!(
+                f,
+                "fad cannot differentiate the gradient of a rad whose seed {seed} is computed \
+                 from a fad seed"
             ),
             Self::RadBodyArity { outputs, .. } => {
                 write!(f, "rad body must produce at least 1 output, got {outputs}")
@@ -469,6 +500,22 @@ impl ToDiagnostic for PropagateError {
                         .collect::<Vec<String>>(),
                 )
             }
+            Self::FadOfRadWithDependentSeed { .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Propagate,
+                codes::PROP_AD_DEPENDENT_SEED,
+                message,
+            )
+            .with_note(
+                "cause: a rad over a delay or a recursion computes its gradient by a reverse \
+                 sweep over the block, and fad differentiates that gradient by a second sweep \
+                 over the tangent of the body, for which a rad seed must be an independent \
+                 variable",
+            )
+            .with_help(
+                "seed the fad with the rad seed itself, or with a signal the rad seed is not \
+                 computed from",
+            ),
             Self::RadBodyArity { outputs, .. } => Diagnostic::new(
                 Severity::Error,
                 Stage::Propagate,

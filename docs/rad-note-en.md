@@ -319,6 +319,15 @@ gradient lanes are per-sample contributions for the block-local
 objective; users can sum them over the block or reduce them in DSP code
 with a block length such as `ma.BS`.
 
+An enclosing `fad` differentiates a carrier as it does any other signal
+(`fad(rad(x', x), x)`). The tangent of a primal lane is the tangent of the
+body. The tangent of a gradient lane exchanges the two derivatives, so it is
+the gradient of a second carrier over that tangent, one per `fad` seed, under
+the same truncation: the state entering the block is a constant for the
+sweep, and what it owes to the seed is read by the tangent body. The exchange
+needs the `rad` seed to be an independent variable, so a `rad` seed computed
+from a `fad` seed is refused (`FRS-PROP-0005`).
+
 A value is taped only when a backward rule needs it and it is not
 trivially re-evaluable in the reverse loop: a stateless expression of
 constants, inputs, controls and foreign constants is recomputed there

@@ -61,23 +61,26 @@ pub(super) struct BraState {
     /// `ensure_bra_backward_sweep` and consumed by `lower_block_reverse_ad_proj`.
     pub(super) grad_cache: HashMap<(SigId, usize), FirId>,
     /// Carry variable names for `Delay1` nodes encountered inside a
-    /// `SigBlockReverseAD` backward sweep.  Keyed by the `Delay1` node `SigId`.
+    /// `SigBlockReverseAD` backward sweep.  Keyed by `(group, Delay1 node)`:
+    /// an adjoint belongs to its sweep, and two carriers can read one delay
+    /// (hash-consing shares it), each under its own objective.
     ///
     /// Each carry variable persists in the DSP struct and is zeroed by
     /// `emit_bra_compute_resets` before every reverse sample loop so that
     /// no adjoint state leaks across host `compute()` calls.
-    pub(super) delay1_carry_vars: HashMap<SigId, String>,
+    pub(super) delay1_carry_vars: HashMap<(SigId, SigId), String>,
     /// Carry array variable names and sizes for `Delay(c, x)` nodes (c > 1)
     /// encountered inside a `SigBlockReverseAD` backward sweep.
     ///
-    /// Key: `Delay` node `SigId`.  Value: `(name, c)` where `name` is the
-    /// struct-field name of the `Array(real_ty, c)` circular carry buffer.
+    /// Key: `(group, Delay node)`, as for `delay1_carry_vars`.  Value:
+    /// `(name, c)` where `name` is the struct-field name of the
+    /// `Array(real_ty, c)` circular carry buffer.
     ///
     /// The carry implements the anti-causal adjoint: at reverse step n,
     /// `carry[n % c]` holds `adj[y][n + c]` from the previous c-th reverse
     /// step, contributing `adj[x][n] += carry[n % c]`.  The buffer is zeroed
     /// by `emit_bra_compute_resets` before each reverse sample loop.
-    pub(super) delay_array_carry_vars: HashMap<SigId, (String, usize)>,
+    pub(super) delay_array_carry_vars: HashMap<(SigId, SigId), (String, usize)>,
     /// Tape array variable names for signals recorded during the forward loop.
     ///
     /// Key: signal `SigId` whose forward value must be replayed in the reverse
@@ -518,7 +521,7 @@ impl<'a> SignalToFirLower<'a> {
                     if c == 0 {
                         continue;
                     }
-                    let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
+                    let carry_name = self.ensure_bra_delay_array_carry(sig, group, c)?;
                     self.load_bra_delay_array_carry(&carry_name, c)
                 }
             };
@@ -752,6 +755,7 @@ impl<'a> SignalToFirLower<'a> {
         amount: SigId,
         y_bar: FirId,
         adj: &mut std::collections::HashMap<SigId, FirId>,
+        group: SigId,
     ) -> Result<(), SignalFirError> {
         let real_ty = self.real_ty.clone();
 
@@ -762,7 +766,8 @@ impl<'a> SignalToFirLower<'a> {
         //   We load it → adj[sig_inner] += carry[n%c].
         //   We store y_bar to carry[n%c] for step n-c to read.
         let Some(c_raw) = tree_to_int(self.arena, amount) else {
-            return self.propagate_bra_variable_delay_adj(sig, sig_inner, amount, y_bar, adj);
+            return self
+                .propagate_bra_variable_delay_adj(sig, sig_inner, amount, y_bar, adj, group);
         };
         let c = usize::try_from(c_raw).unwrap_or(0);
         if c == 0 {
@@ -779,7 +784,7 @@ impl<'a> SignalToFirLower<'a> {
                 match_sig(self.arena, sig_inner),
                 SigMatch::Proj(_, inner_group) if match_sym_ref(self.arena, inner_group).is_some()
             );
-            let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
+            let carry_name = self.ensure_bra_delay_array_carry(sig, group, c)?;
             let slot = self.bra_delay_array_slot(c);
             let carry_store = {
                 let mut b = FirBuilder::new(&mut self.store);
@@ -827,6 +832,7 @@ impl<'a> SignalToFirLower<'a> {
         amount: SigId,
         y_bar: FirId,
         adj: &mut std::collections::HashMap<SigId, FirId>,
+        group: SigId,
     ) -> Result<(), SignalFirError> {
         let real_ty = self.real_ty.clone();
         let d = self.load_bra_fwd_value(amount)?;
@@ -858,7 +864,7 @@ impl<'a> SignalToFirLower<'a> {
             ));
         };
         let slots = usize::try_from(bound).unwrap_or(0).saturating_add(1);
-        let buffer = self.ensure_bra_delay_array_carry(sig, slots)?;
+        let buffer = self.ensure_bra_delay_array_carry(sig, group, slots)?;
         let slots_i = self.lower_int32_const(i32::try_from(slots).unwrap_or(i32::MAX));
 
         // adj[x][n]: what the later reverse steps scattered to slot n % S,
@@ -920,6 +926,7 @@ impl<'a> SignalToFirLower<'a> {
         sig_inner: SigId,
         y_bar: FirId,
         adj: &mut std::collections::HashMap<SigId, FirId>,
+        group: SigId,
     ) -> Result<(), SignalFirError> {
         let real_ty = self.real_ty.clone();
 
@@ -933,7 +940,7 @@ impl<'a> SignalToFirLower<'a> {
         if !self.bra_sweep_is_causal() {
             // (In the forward sample loop the horizon is the current sample:
             // `x[n-1]` is outside it, nothing to propagate, no carry.)
-            let carry_name = self.ensure_bra_delay1_carry(sig, sig)?;
+            let carry_name = self.ensure_bra_delay1_carry(sig, group)?;
             let rt = self.real_ty();
             let carry_load = {
                 let mut b = FirBuilder::new(&mut self.store);
@@ -1158,12 +1165,12 @@ impl<'a> SignalToFirLower<'a> {
 
             // ── Delay(c, x): anti-causal carry with circular buffer ──────────
             SigMatch::Delay(sig_inner, amount) => {
-                self.propagate_bra_delay_adj(sig, sig_inner, amount, y_bar, adj)?;
+                self.propagate_bra_delay_adj(sig, sig_inner, amount, y_bar, adj, group)?;
             }
 
             // ── Prefix(init, sig): Delay1 semantics + init contribution ─────
             SigMatch::Prefix(init, sig_inner) => {
-                self.propagate_bra_prefix_adj(sig, init, sig_inner, y_bar, adj)?;
+                self.propagate_bra_prefix_adj(sig, init, sig_inner, y_bar, adj, group)?;
             }
 
             // ── Proj(slot, SYMREC/SYMREF) — recursive carrier projection ────────
@@ -1248,7 +1255,8 @@ impl<'a> SignalToFirLower<'a> {
                      backward pass (expr={})",
                     dump_sig_readable(self.arena, sig)
                 ),
-            ));
+            )
+            .at_signal(sig));
         }
         if !matches!(self.signal_fir_type(ridx)?, FirType::Int32 | FirType::Int64) {
             return Err(SignalFirError::new(
@@ -1270,14 +1278,14 @@ impl<'a> SignalToFirLower<'a> {
     /// zeroed by `emit_bra_compute_resets` before each reverse sample loop so
     /// no adjoint state leaks across host `compute()` calls.
     ///
-    /// Idempotent: subsequent calls for the same `delay1_node` return the same
-    /// name without emitting a second declaration.
+    /// Idempotent: subsequent calls for the same `delay1_node` of the same
+    /// carrier return the same name without emitting a second declaration.
     pub(super) fn ensure_bra_delay1_carry(
         &mut self,
         delay1_node: SigId,
-        _group: SigId,
+        group: SigId,
     ) -> Result<String, SignalFirError> {
-        if let Some(name) = self.bra.delay1_carry_vars.get(&delay1_node) {
+        if let Some(name) = self.bra.delay1_carry_vars.get(&(group, delay1_node)) {
             return Ok(name.clone());
         }
         let name = format!("fBraCarry{}", self.name_gen.next_loop_var_id);
@@ -1290,7 +1298,9 @@ impl<'a> SignalToFirLower<'a> {
         // Register a clear-time zero init for `instanceClear`.
         let zero2 = self.float_const(0.0);
         self.register_clear_init(name.clone(), zero2);
-        self.bra.delay1_carry_vars.insert(delay1_node, name.clone());
+        self.bra
+            .delay1_carry_vars
+            .insert((group, delay1_node), name.clone());
         Ok(name)
     }
 
@@ -1353,9 +1363,10 @@ impl<'a> SignalToFirLower<'a> {
     pub(super) fn ensure_bra_delay_array_carry(
         &mut self,
         delay_node: SigId,
+        group: SigId,
         c: usize,
     ) -> Result<String, SignalFirError> {
-        if let Some((name, _)) = self.bra.delay_array_carry_vars.get(&delay_node) {
+        if let Some((name, _)) = self.bra.delay_array_carry_vars.get(&(group, delay_node)) {
             return Ok(name.clone());
         }
         let name = format!("fBraDelayCarry{}", self.name_gen.next_loop_var_id);
@@ -1365,7 +1376,7 @@ impl<'a> SignalToFirLower<'a> {
         self.ensure_named_struct_var(&name, arr_ty, None);
         self.bra
             .delay_array_carry_vars
-            .insert(delay_node, (name.clone(), c));
+            .insert((group, delay_node), (name.clone(), c));
         Ok(name)
     }
 

@@ -115,6 +115,29 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Implemented correction (2026-10-24): the `abs` rule is the sign, 0 at 0, as
   under `fad` (DIFF-SRC-001), in the symbolic sweep and in `BlockReverseAD`
   (one shared formula, `signals::ad_rules`).
+- Implemented correction (2026-11-01): `fad` differentiates a `BlockReverseAD`
+  carrier. `fad(rad(x', x), x)` reached signals and failed in signal preparation
+  (`FRS-SFIR-0004`, `projection 12 does not target symbolic recursion`), since
+  `fad` had no rule for the carrier. A primal slot now takes the tangent of its
+  body, and a gradient slot the gradient of a second carrier over that tangent,
+  one per `fad` seed, with the original's truncation at the block. Pinned sample
+  by sample against finite differences, over several blocks and at both
+  interpreter optimization levels, by the `fad_of_block_rad_*` tests in
+  `crates/compiler/tests/rad_runtime.rs`, on
+  [`tests/corpus/fad_rad_delay1_block.dsp`](../tests/corpus/fad_rad_delay1_block.dsp).
+- Known limit (2026-11-01): the exchange of the two derivatives reads the `rad`
+  seed as an independent variable, so a `rad` seed whose tangent under the `fad`
+  is neither a literal zero nor a seed of that `fad` is refused in propagation
+  (`FRS-PROP-0005`,
+  [`tests/corpus/err_fad_rad_dependent_seed.dsp`](../tests/corpus/err_fad_rad_dependent_seed.dsp)).
+  This covers a `fad` around an adaptive loop whose gradient is a block sweep
+  (the parameter is a recursion slot) and a seed read through a delay of the `fad`
+  seed. A feed-forward `rad`, which needs no block sweep, has no such limit.
+- Implemented correction (2026-11-01): two `BlockReverseAD` carriers reading one
+  delay kept separate adjoints. The carry of a delay was keyed by the node, and
+  hash-consing shares the node between carriers, so `rad(s * s, a), rad(s * b, a)`
+  over `s = a'` gave the first `rad` the gradient of the second, silently. Pinned by
+  `block_rad_sweeps_do_not_share_the_carry_of_a_delay`.
 - Compatibility impact: the source form and `BlockReverseAD` semantics have no
   pinned C++ source/backend oracle. Validation uses symbolic identities,
   FAD/RAD agreement, finite differences, and optimized/unoptimized runtime
@@ -1782,7 +1805,7 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route; the shared-runtime differential confirms different outputs for `rep_18_stream_wrappers` under impulse, ramp, and sine inputs. |
 | DIFF-GAP-004 | `narrower` | `getInfos` and some embedded-compiler/filesystem helper semantics remain partial or adapted. |
 | DIFF-GAP-005 | `narrower` | WASM and Julia are functional on validated paths but do not claim the complete semantic, layout, packaging, or upstream impulse-suite maturity of the C++ implementations. The two backends were audited on 2026-08-14 and this blanket entry is now backed by an enumerated inventory (`G5-W1`…`G5-W6`, `G5-J1`…`G5-J7`) in [`wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`](wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md). Closed so far: Julia's host-visible description surfaces — `metadata!` and `getJSON` now carry the same content as the reference (`G5-J1`, `G5-J2`, `G5-J3`) — the WASM companion JSON identity entries, `compile_options`/`filename`/`name` now appear in `meta` in C++ key order (`G5-W2`) — `sr_index` (`G5-W4`), which needed no code change, only its own registry entry: `DIFF-BACK-005` — and the impulse status table (`G5-J7`), re-derived on the full 133-DSP corpus (`tests/impulse-tests/README.md` §Status now has a Julia row; see the plan doc's P6 for the `FAUST_CPP` PATH-resolution trap that re-deriving it surfaced). Still open: `G5-W1`, `G5-W3`, `G5-W5`, `G5-W6`, `G5-J4`. This entry may only be removed when the inventory is empty; until then it must point at it. |
-| DIFF-GAP-006 | `narrower` | The specialized reverse-time recursive RAD path is disabled; Rust uses `BlockReverseAD` for temporal/recursive AD and still rejects mutable-table, soundfile, and unsupported foreign-function derivatives. |
+| DIFF-GAP-006 | `narrower` | The specialized reverse-time recursive RAD path is disabled; Rust uses `BlockReverseAD` for temporal/recursive AD and still rejects mutable-table, soundfile, and unsupported foreign-function derivatives, and, under an enclosing `fad`, a `rad` seed computed from a `fad` seed (DIFF-SRC-002). |
 | DIFF-GAP-007 | `narrower` | The Rust CLI/backend set is smaller than the complete Faust C++ backend catalog; unsupported `-lang` values are rejected. |
 | DIFF-GAP-008 | `excluded` | `backend-java` is outside the Rust port target scope. |
 | DIFF-GAP-009 | `excluded` | Legacy `-lang ocpp` is outside the Rust port target scope. |

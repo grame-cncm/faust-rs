@@ -605,6 +605,7 @@ pub(crate) fn propagate_error_node(error: &PropagateError) -> Option<BoxId> {
         | PropagateError::SplitArityMismatch { node, .. }
         | PropagateError::MergeArityMismatch { node, .. }
         | PropagateError::RecArityMismatch { node, .. } => Some(*node),
+        PropagateError::FadOfRadWithDependentSeed { node, .. } => *node,
         _ => None,
     }
 }
