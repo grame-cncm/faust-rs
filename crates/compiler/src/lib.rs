@@ -58,6 +58,7 @@ mod emitters;
 mod error_mapping;
 mod eval_guidance;
 mod golden;
+mod import_guidance;
 mod json_naming;
 mod legacy_args;
 mod paths;
@@ -73,6 +74,7 @@ use diagnostic_enrichment::*;
 use error_mapping::*;
 use eval_guidance::*;
 pub use golden::*;
+use import_guidance::*;
 pub use json_naming::*;
 pub use legacy_args::normalize_legacy_args;
 pub use paths::*;
@@ -2462,7 +2464,10 @@ impl CompilerError {
     /// bundle attached.
     #[must_use]
     pub fn import(err: SourceReaderError) -> Self {
-        let diagnostics = err.to_diagnostics();
+        let mut diagnostics = DiagnosticBundle::new();
+        for diagnostic in err.to_diagnostics().as_slice() {
+            diagnostics.push(add_import_guidance(diagnostic.clone(), &err));
+        }
         Self::Import(Box::new(err), diagnostics)
     }
 

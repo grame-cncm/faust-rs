@@ -80,12 +80,14 @@ const SECTION_DEPTH: usize = 32;
 ///
 /// A section of `-` in an argument comes first: `*(-(x))` or `max(-(x))` reads
 /// as a negation, keeps an input, and writing the negation would connect the
-/// widths. Otherwise, a mismatch of `:` whose widths divide is often a `<:` or
-/// a `:>` written `:`.
+/// widths. Otherwise, for `:`, a list written before it whose last item fits
+/// is often `,` read as binding less tightly than `:`, and the widths name the
+/// operator that would connect them.
 pub(crate) fn add_composition_guidance(
     diagnostic: Diagnostic,
     error: &PropagateError,
     arena: &tlib::TreeArena,
+    composition_origins: &std::collections::HashMap<BoxId, Option<BoxId>>,
 ) -> Diagnostic {
     let (node, left_outputs, right_inputs) = match error {
         PropagateError::SeqArityMismatch {
@@ -124,6 +126,43 @@ pub(crate) fn add_composition_guidance(
     if !matches!(error, PropagateError::SeqArityMismatch { .. }) {
         return diagnostic;
     }
+    let BoxMatch::Seq(left, right) = match_box(arena, node) else {
+        return diagnostic;
+    };
+    let mut diagnostic = diagnostic;
+    // a composition evaluation left as written has no entry: it is its source
+    let source = composition_origins
+        .get(&node)
+        .copied()
+        .unwrap_or(Some(node))
+        .and_then(|source| match match_box(arena, source) {
+            BoxMatch::Seq(source_left, source_right) => Some((source_left, source_right)),
+            _ => None,
+        });
+    if let Some(last) =
+        source.and_then(|(source_left, _)| last_listed_item(arena, source_left, left))
+        && box_arity(arena, last).is_some_and(|(_, outputs)| outputs == right_inputs)
+    {
+        diagnostic = diagnostic.with_help(format!(
+            "if only the last item of A goes into the {right_inputs} input(s) of B, write `a, (b : c)`: `,` binds more tightly than `:`, so `a, b : c` reads `(a, b) : c`"
+        ));
+    }
+    if right_inputs == 0 {
+        // A call that takes no input is often one given an argument too many,
+        // which fills its input: no factor there.
+        let factor = source.is_some_and(|(_, source_right)| {
+            !matches!(match_box(arena, source_right), BoxMatch::Appl(..))
+        });
+        if factor
+            && left_outputs == 1
+            && box_arity(arena, right).is_some_and(|(_, outputs)| outputs == 1)
+        {
+            diagnostic = diagnostic.with_help(
+                "B takes no input, so `:` has nothing to feed: if B is a factor of A, write `A * B` or `A : *(B)`",
+            );
+        }
+        return diagnostic;
+    }
     match composition_operator_hint(left_outputs, right_inputs) {
         Some(hint) => diagnostic.with_help(hint),
         None => diagnostic,
@@ -131,22 +170,101 @@ pub(crate) fn add_composition_guidance(
 }
 
 /// The operator that would connect these widths, if `:` was not meant.
+///
+/// The widths decide which family fits: a multiple is split with `<:` or
+/// mixed with `:>` (or given one copy of B per group, side by side), and any
+/// other difference leaves inputs of B open with `si.bus` or drops or passes
+/// the outputs of A that B has no room for. The extra outputs or inputs are
+/// taken to be the last ones, as `,` would place them.
 fn composition_operator_hint(left_outputs: usize, right_inputs: usize) -> Option<String> {
-    if left_outputs > 0 && right_inputs > left_outputs && right_inputs.is_multiple_of(left_outputs)
-    {
-        Some(format!(
-            "`A <: B` would split the {left_outputs} output(s) of A over the {right_inputs} inputs of B"
-        ))
-    } else if right_inputs > 0
-        && left_outputs > right_inputs
-        && left_outputs.is_multiple_of(right_inputs)
-    {
-        Some(format!(
-            "`A :> B` would merge the {left_outputs} outputs of A into the {right_inputs} input(s) of B"
-        ))
-    } else {
-        None
+    if left_outputs == 0 || right_inputs == 0 || left_outputs == right_inputs {
+        return None;
     }
+    let bus = |width: usize| {
+        if width == 1 {
+            "_".to_owned()
+        } else {
+            format!("si.bus({width})")
+        }
+    };
+    if right_inputs > left_outputs {
+        if right_inputs.is_multiple_of(left_outputs) {
+            return Some(format!(
+                "`A <: B` would split the {left_outputs} output(s) of A over the {right_inputs} inputs of B"
+            ));
+        }
+        let open = right_inputs - left_outputs;
+        let left_open = if open == 1 {
+            "its last input open, as an input".to_owned()
+        } else {
+            format!("its last {open} inputs open, as inputs")
+        };
+        return Some(format!(
+            "`(A, {}) : B` would feed the first {left_outputs} inputs of B from A and leave {left_open} of the whole",
+            bus(open)
+        ));
+    }
+    if left_outputs.is_multiple_of(right_inputs) {
+        let copies = left_outputs / right_inputs;
+        let side_by_side = if copies <= 3 {
+            format!("({})", vec!["B"; copies].join(", "))
+        } else {
+            format!("par(i, {copies}, B)")
+        };
+        let each = if right_inputs == 1 {
+            "each output".to_owned()
+        } else {
+            format!("each group of {right_inputs}")
+        };
+        return Some(format!(
+            "`A :> B` would merge the {left_outputs} outputs of A into the {right_inputs} input(s) of B, and `A : {side_by_side}` would give {each} its own B"
+        ));
+    }
+    let extra = left_outputs - right_inputs;
+    let (block, dropped) = if extra == 1 {
+        (
+            "!".to_owned(),
+            "the last one, and `A : (B, _)` would pass it on".to_owned(),
+        )
+    } else {
+        (
+            format!("si.block({extra})"),
+            format!("the last {extra}, and `A : (B, si.bus({extra}))` would pass them on"),
+        )
+    };
+    Some(format!(
+        "`A : (B, {block})` would feed the first {right_inputs} outputs of A to B and drop {dropped}"
+    ))
+}
+
+/// The evaluated last item of a list written before `:`, as in `a, b : c`.
+///
+/// `source` is the left operand as written, `evaluated` the same operand after
+/// evaluation, which keeps the `,` of the source. A left operand that is a name
+/// or a call is no list written there, and gives nothing.
+fn last_listed_item(arena: &tlib::TreeArena, source: BoxId, evaluated: BoxId) -> Option<BoxId> {
+    let BoxMatch::Par(..) = match_box(arena, source) else {
+        return None;
+    };
+    let (mut source, mut evaluated) = (source, evaluated);
+    for _ in 0..SECTION_DEPTH {
+        match (match_box(arena, source), match_box(arena, evaluated)) {
+            (BoxMatch::Par(_, source_right), BoxMatch::Par(_, evaluated_right)) => {
+                source = source_right;
+                evaluated = evaluated_right;
+            }
+            (BoxMatch::Par(..), _) => return None,
+            _ => return Some(evaluated),
+        }
+    }
+    None
+}
+
+/// The `(inputs, outputs)` of an evaluated box, when they can be computed.
+fn box_arity(arena: &tlib::TreeArena, node: BoxId) -> Option<(usize, usize)> {
+    let flat = propagate::try_build_flat_box(arena, node).ok()?;
+    let arity = propagate::box_arity_typed(arena, flat, &mut ArityCache::new()).ok()?;
+    Some((arity.inputs, arity.outputs))
 }
 
 /// How many inputs of this expression come from a section of `-` given to a

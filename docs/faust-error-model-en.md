@@ -205,12 +205,28 @@ evaluation that reads each undefined symbol as `_`, and a note says so.
 
 A composition mismatch also labels the definitions of its operands: the failing
 token is where two widths meet, and the wrong width is usually written in one of
-them. When `<:` or `:>` would connect the two widths, the help says so, unless
-the mismatch comes from a primitive given `-(x)`, as in `*(-(x))` or
+them. For `:`, the widths name the operator that would connect them: `<:` for
+a multiple of inputs, `:>` or one copy of B per group (`A : (B, B)`) for a
+multiple of outputs, and otherwise `si.bus` to leave inputs open or `!`/`si.block`
+and `_`/`si.bus` to drop or pass the outputs B has no room for. When a list is
+written before the `:` and its last item alone fits B, the help first recalls
+that `,` binds more tightly than `:` (`a, b : c` is `(a, b) : c`), and a B that
+takes no input, not a call, may be a factor (`A * B`). All of this gives way
+when the mismatch comes from a primitive given `-(x)`, as in `*(-(x))` or
 `max(-(x))`: `-(x)` is the section `_ - x`, and when `0 - x` would connect the
 widths, the help says to write that. A symbol redefined against an imported file names that
 file and proposes a rename, and a table given a size beside a `waveform` is told
 that a waveform carries its own.
+
+An evaluation cycle that goes through a delay (`y = a * x + b * y';`) is a
+recurrence written as in another language: a note says that a signal computed
+from its own past is written with `~`, and the help shows the rewrite. A cycle
+with no delay, or whose immediate uses alone close a cycle (`y = y + y';`), is
+no recurrence and keeps the generic help. An unresolved import other than
+`stdfaust.lib` gets a note that `import("stdfaust.lib");` gives every standard
+library under its prefix, and a help naming the one its name looks like
+(`mathfaust.lib` is `maths.lib`, `ma.`); the guidance reads the name only, never
+the file system.
 
 ### 2.5 Opt-in warnings
 
@@ -741,9 +757,14 @@ e_import.dsp:1:9: error [FRS-SRC-0002] cannot resolve import `nosuchlib.lib`
   = note:   …/target/share/faust
   = note:   /usr/local/share/faust
   = note:   /usr/share/faust
+  = note: `import("stdfaust.lib");` gives every standard library, each under its prefix: `ma.` for maths.lib, `fi.` filters.lib, `de.` delays.lib, `os.` oscillators.lib, `en.` envelopes.lib, `si.` signals.lib, `ba.` basics.lib, `re.` reverbs.lib, …
   = help: add the directory containing the file with `-I <dir>`
   = help: or correct the import name
 ```
+
+A name that looks like a standard library, as `mathfaust.lib`, gets a first
+help that names it: ``mathfaust.lib` looks like the standard `maths.lib`: after
+`import("stdfaust.lib");`, its functions are `ma.<name>``.
 
 The category here is `environment`, not `user_code` — the DSP may be perfectly
 correct and the search path wrong. That distinction is exactly what an agent

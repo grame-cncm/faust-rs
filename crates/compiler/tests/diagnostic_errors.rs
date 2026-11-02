@@ -311,10 +311,212 @@ fn a_mismatch_names_the_operator_that_would_fit() {
     );
     assert_eq!(
         help("process = (_, _, _, _) : (_, _);\n").as_deref(),
-        Some("`A :> B` would merge the 4 outputs of A into the 2 input(s) of B")
+        Some(
+            "`A :> B` would merge the 4 outputs of A into the 2 input(s) of B, and `A : (B, B)` would give each group of 2 its own B"
+        )
     );
-    // neither fits, so nothing is said
-    assert_eq!(help("process = (_, _) : (_, _, _);\n"), None);
+    // a stereo pair into a mono stage: mixed, or one stage per channel
+    assert_eq!(
+        help("process = _ <: (_, _) : *(0.5);\n").as_deref(),
+        Some(
+            "`A :> B` would merge the 2 outputs of A into the 1 input(s) of B, and `A : (B, B)` would give each output its own B"
+        )
+    );
+    // no multiple: the inputs B has no output of A for stay open
+    assert_eq!(
+        help("process = (_, _) : (_, _, _);\n").as_deref(),
+        Some(
+            "`(A, _) : B` would feed the first 2 inputs of B from A and leave its last input open, as an input of the whole"
+        )
+    );
+    // no multiple: the outputs B has no room for are dropped or passed on
+    assert_eq!(
+        help("process = (_, _, _) : (_, _);\n").as_deref(),
+        Some(
+            "`A : (B, !)` would feed the first 2 outputs of A to B and drop the last one, and `A : (B, _)` would pass it on"
+        )
+    );
+    assert_eq!(
+        help("process = (_, _, _, _, _) : (_, _);\n").as_deref(),
+        Some(
+            "`A : (B, si.block(3))` would feed the first 2 outputs of A to B and drop the last 3, and `A : (B, si.bus(3))` would pass them on"
+        )
+    );
+}
+
+/// The specific help lines of the first diagnostic of a program that does not
+/// compile, without the `general:` and `template:` ones of every failure of
+/// its kind.
+fn helps_of(source: &str) -> Vec<String> {
+    let err = Compiler::new()
+        .compile_source_to_signals("guidance.dsp", source)
+        .expect_err("the program should fail");
+    err.diagnostic_bundle().as_slice()[0]
+        .help
+        .iter()
+        .filter(|help| !(help.starts_with("general:") || help.starts_with("template:")))
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// `,` binds more tightly than `:`, so `a, b : c` is `(a, b) : c`: when the
+/// last item of the list fits B, composing it alone is what was often meant.
+#[test]
+fn a_list_written_before_a_composition_names_the_precedence() {
+    const PRECEDENCE: &str = "if only the last item of A goes into the 1 input(s) of B, write `a, (b : c)`: `,` binds more tightly than `:`, so `a, b : c` reads `(a, b) : c`";
+    for program in [
+        "process = _, _ : *(0.5), _ : *(0.5);\n",
+        "process = hslider(\"a\", 0, 0, 1, 0.1), hslider(\"b\", 0, 0, 1, 0.1), hslider(\"c\", 0, 0, 1, 0.1) : sqrt;\n",
+    ] {
+        let helps = helps_of(program);
+        assert_eq!(
+            helps.first().map(String::as_str),
+            Some(PRECEDENCE),
+            "{program}"
+        );
+    }
+    // the last item does not fit B: nothing about precedence
+    assert!(
+        !helps_of("process = (_, _, _, _) : (_, _);\n")
+            .iter()
+            .any(|help| help.contains("binds more tightly"))
+    );
+    // a name is no list written there
+    assert!(
+        !helps_of("pair = _, _;\nprocess = pair : *(0.5);\n")
+            .iter()
+            .any(|help| help.contains("binds more tightly"))
+    );
+}
+
+/// A value composed into with `:` is often a factor; a call that takes no
+/// input has more often been given an argument too many.
+#[test]
+fn a_stage_without_input_may_be_a_factor() {
+    assert!(
+        helps_of("g = 0.5;\nprocess = _ : g;\n").contains(
+            &"B takes no input, so `:` has nothing to feed: if B is a factor of A, write `A * B` or `A : *(B)`".to_owned()
+        )
+    );
+    assert!(
+        helps_of("g = 0.5;\nprocess = _ : g * 2;\n")
+            .iter()
+            .any(|help| help.contains("factor"))
+    );
+    assert!(
+        !helps_of("gain(x) = x;\nprocess = _ : gain(0.5);\n")
+            .iter()
+            .any(|help| help.contains("factor"))
+    );
+}
+
+/// A signal written in terms of its own past, as in another language, is a
+/// loop: the note says so and shows it with `~`.
+#[test]
+fn a_feedback_written_as_a_self_reference_is_shown_with_tilde() {
+    for (program, uses) in [
+        (
+            "y = 0.5 * _ + 0.9 * y';\nprocess = y;\n",
+            "`y` uses its own past, `y'`",
+        ),
+        (
+            "process = y with { y = _ * 0.1 + y@3 * 0.5; };\n",
+            "`y` uses its own past, `y` through `@`",
+        ),
+        (
+            "y = mem(y) + 1;\nprocess = y;\n",
+            "`y` uses its own past, `y` through `mem`",
+        ),
+        (
+            "process = env with {\n  c = env' > 0.5;\n  env = _ * c + env' * (1 - c);\n};\n",
+            "`c` uses the past of `env`, `env'`, and `env` needs `c`",
+        ),
+    ] {
+        let err = Compiler::new()
+            .compile_source_to_signals("feedback.dsp", program)
+            .expect_err("the cycle should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        assert_eq!(diagnostic.code.0, "FRS-EVAL-0013");
+        assert!(
+            diagnostic.notes.iter().any(|note| note.starts_with(uses)
+                && note.contains("written with the recursive composition `~`")),
+            "{program}: {:?}",
+            diagnostic.notes
+        );
+        assert_eq!(
+            diagnostic.help.first().map(AsRef::as_ref),
+            Some("write the loop with `~`: `y = a * x + b * y';` is `y = x : *(a) : + ~ *(b);`"),
+            "{program}"
+        );
+    }
+}
+
+/// A cycle with no delay in it is no recurrence: `~` would add one, and the
+/// note stays away. So does a delayed use beside an immediate one, which still
+/// needs the value at the same sample.
+#[test]
+fn a_cycle_without_delay_gets_no_feedback_note() {
+    for program in [
+        "x = x;\nprocess = x;\n",
+        "svf(x) = v1 with { v1 = x + 0.5 * (v1 - x); };\nprocess = svf;\n",
+        "y = y + y';\nprocess = y;\n",
+        "a = b + 1;\nb = a * 2;\nprocess = a;\n",
+    ] {
+        let err = Compiler::new()
+            .compile_source_to_signals("instant.dsp", program)
+            .expect_err("the cycle should fail");
+        let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+        assert_eq!(diagnostic.code.0, "FRS-EVAL-0013");
+        assert!(
+            !diagnostic.notes.iter().any(|note| note.contains("past")),
+            "{program}: {:?}",
+            diagnostic.notes
+        );
+        assert!(
+            diagnostic
+                .help
+                .iter()
+                .any(|help| help.starts_with("break the cycle")),
+            "{program}: {:?}",
+            diagnostic.help
+        );
+    }
+}
+
+/// An invented library name is pointed at `stdfaust.lib`, and at the standard
+/// library it looks like.
+#[test]
+fn an_unresolved_import_points_at_the_standard_libraries() {
+    let diagnostic_of = |name: &str| {
+        let source = format!("import(\"{name}\");\nprocess = _;\n");
+        let err = Compiler::new()
+            .compile_source_to_signals("import.dsp", &source)
+            .expect_err("the import should fail");
+        err.diagnostic_bundle().as_slice()[0].clone()
+    };
+    let stdfaust = |diagnostic: &compiler::Diagnostic| {
+        diagnostic.notes.iter().any(|note| {
+            note.starts_with("`import(\"stdfaust.lib\");` gives every standard library")
+        })
+    };
+
+    let diagnostic = diagnostic_of("mathfaust.lib");
+    assert_eq!(diagnostic.code.0, "FRS-SRC-0002");
+    assert!(stdfaust(&diagnostic));
+    assert_eq!(
+        diagnostic.help.first().map(AsRef::as_ref),
+        Some(
+            "`mathfaust.lib` looks like the standard `maths.lib`: after `import(\"stdfaust.lib\");`, its functions are `ma.<name>`"
+        )
+    );
+    assert_eq!(
+        diagnostic_of("std.dsp").help.first().map(AsRef::as_ref),
+        Some("`std.dsp` looks like `stdfaust.lib`, which imports every standard library")
+    );
+    // nothing it looks like: the note alone, and the search-path help first
+    let diagnostic = diagnostic_of("music/synth/PolyBLEP.h");
+    assert!(stdfaust(&diagnostic));
+    assert!(diagnostic.help[0].contains("-I <dir>"));
 }
 
 /// `-(x)` in an argument reads as a negation, and no operator would connect it.

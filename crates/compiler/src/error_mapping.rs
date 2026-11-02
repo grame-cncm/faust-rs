@@ -818,7 +818,7 @@ pub(crate) fn make_propagate_compiler_error(
         if add_paired {
             diagnostic = add_paired_propagate_context(diagnostic, &error, arena);
         }
-        diagnostic = add_composition_guidance(diagnostic, &error, arena);
+        diagnostic = add_composition_guidance(diagnostic, &error, arena, composition_origins);
         diagnostic = maybe_add_source_label(
             diagnostic,
             ctx,

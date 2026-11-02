@@ -18,6 +18,9 @@
 //!   without ever reaching a numeric rule, and the rules it was matched
 //!   against;
 //! - `add_cycle_labels` — every top-level definition of an evaluation cycle;
+//! - `add_feedback_cycle_guidance` — a cycle that goes through a delay, which
+//!   is a feedback loop written as a self-reference: the way to write it with
+//!   `~`;
 //! - `add_unary_minus_access` — an access into a unary minus (`-L.g`), which
 //!   the grammar reads `(0 - L).g`.
 
@@ -45,6 +48,7 @@ pub(crate) fn add_eval_guidance(
     diagnostic = add_pattern_attempt_trace(diagnostic, error, arena);
     diagnostic = add_nonconstant_case_argument(diagnostic, error, arena);
     diagnostic = add_cycle_labels(diagnostic, error, ctx, arena, defs_root);
+    diagnostic = add_feedback_cycle_guidance(diagnostic, error, arena, defs_root);
     diagnostic = add_unary_minus_access(diagnostic, error, arena);
     diagnostic = add_waveform_table_guidance(diagnostic, error, arena);
     add_redefinition_labels(diagnostic, error, ctx, arena, defs_root, entrypoint_name)
@@ -418,6 +422,241 @@ fn add_cycle_labels(
         );
     }
     diagnostic
+}
+
+/// Explains a cycle that goes through a delay: `y = a * x + b * y';` is a
+/// recurrence written as in another language, and Faust writes it with `~`.
+///
+/// The definitions of the cycle are found by name, at the top level and in
+/// every `with` and `letrec` block, and each one's uses of the others are
+/// sorted into delayed (under `'`, `@`, `mem`, `prefix` or the feedback side of
+/// a `~`) and immediate. The note is given when a use in the cycle is delayed
+/// and the immediate uses alone close no cycle: a value that needs itself at
+/// the same sample (`v1 = x + a * (v1 - x);`, or `y = y + y';`) is no
+/// recurrence, and `~` would change what it says. A delay hidden in a library
+/// function is not seen, and the generic help stays.
+fn add_feedback_cycle_guidance(
+    mut diagnostic: Diagnostic,
+    error: &eval::EvalError,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+) -> Diagnostic {
+    let eval::EvalError::LoopDetected { cycle, .. } = error else {
+        return diagnostic;
+    };
+    let names: Vec<&str> = cycle
+        .iter()
+        .take(cycle.len().saturating_sub(1))
+        .map(String::as_str)
+        .collect();
+    if names.is_empty() {
+        return diagnostic;
+    }
+    let uses = cycle_uses(arena, defs_root, &names);
+    // the first delayed use along the cycle, a delay written as such before
+    // the implicit one of a `~`
+    let delayed = [false, true].into_iter().find_map(|feedback| {
+        names.iter().enumerate().find_map(|(at, from)| {
+            let to = names[(at + 1) % names.len()];
+            uses.iter()
+                .find(|u| {
+                    u.from == *from && u.to == to && u.delay.is_some_and(|d| (d == "~") == feedback)
+                })
+                .and_then(|u| Some((*from, to, u.delay?)))
+        })
+    });
+    let Some((from, to, delay)) = delayed else {
+        return diagnostic;
+    };
+    if immediate_uses_close_a_cycle(&names, &uses) {
+        return diagnostic;
+    }
+    let past = match delay {
+        "'" => format!("`{to}'`"),
+        "~" => format!("`{to}` on the feedback side of a `~`"),
+        operator => format!("`{to}` through `{operator}`"),
+    };
+    let subject = if from == to {
+        format!("`{from}` uses its own past, {past}")
+    } else {
+        format!("`{from}` uses the past of `{to}`, {past}, and `{to}` needs `{from}`")
+    };
+    diagnostic.help.clear();
+    diagnostic
+        .with_note(format!(
+            "{subject}, but a definition cannot refer to itself, even through a delay: a signal computed from its own past is written with the recursive composition `~`, which feeds the output of its left side back through its right side one sample later"
+        ))
+        .with_help("write the loop with `~`: `y = a * x + b * y';` is `y = x : *(a) : + ~ *(b);`")
+        .with_help("when the new value needs the previous one by name, take it as the first input of the loop: `y = x : (\\(prev, x).(a * x + b * prev)) ~ _;`")
+}
+
+/// One use of a definition of a cycle by another (or by itself).
+struct CycleUse<'a> {
+    from: &'a str,
+    to: &'a str,
+    /// The delay it is under, `None` for an immediate use.
+    delay: Option<&'static str>,
+}
+
+/// Every use, among the definitions named `names`, of one by another.
+fn cycle_uses<'a>(
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    names: &[&'a str],
+) -> Vec<CycleUse<'a>> {
+    let mut uses = Vec::new();
+    let mut lists = vec![defs_root];
+    let mut seen_lists = std::collections::HashSet::new();
+    let mut seen_bodies = std::collections::HashSet::new();
+    while let Some(mut list) = lists.pop() {
+        if seen_lists.len() > 1 << 12 || !seen_lists.insert(list) {
+            continue;
+        }
+        while !arena.is_nil(list) {
+            let Some(next) = arena.tl(list) else { break };
+            let definition = arena.hd(list).and_then(|def| {
+                let name = arena.hd(def)?;
+                let expr = arena.tl(arena.tl(def)?)?;
+                Some((name, expr))
+            });
+            list = next;
+            let Some((name, expr)) = definition else {
+                continue;
+            };
+            // the local blocks of this definition are definitions too
+            collect_local_lists(arena, expr, &mut lists, &mut seen_bodies);
+            let BoxMatch::Ident(name) = match_box(arena, name) else {
+                continue;
+            };
+            let Some(from) = names.iter().find(|wanted| **wanted == name) else {
+                continue;
+            };
+            uses.extend(
+                find_uses(arena, expr, names)
+                    .into_iter()
+                    .map(|(to, delay)| CycleUse { from, to, delay }),
+            );
+        }
+    }
+    uses
+}
+
+/// The definition lists of the `with` and `letrec` blocks under `node`.
+fn collect_local_lists(
+    arena: &tlib::TreeArena,
+    node: BoxId,
+    lists: &mut Vec<BoxId>,
+    seen: &mut std::collections::HashSet<BoxId>,
+) {
+    let mut stack = vec![node];
+    while let Some(cur) = stack.pop() {
+        if seen.len() > 1 << 16 || !seen.insert(cur) {
+            continue;
+        }
+        match match_box(arena, cur) {
+            BoxMatch::WithLocalDef(_, definitions) => lists.push(definitions),
+            BoxMatch::WithRecDef(_, definitions, others) => lists.extend([definitions, others]),
+            _ => {}
+        }
+        if let Some(children) = arena.children(cur) {
+            stack.extend(children.iter().copied());
+        }
+    }
+}
+
+/// The uses of `names` in an expression, each with the delay it is under.
+///
+/// The definitions of a local block are not walked here: they are definitions
+/// of their own, and `cycle_uses` reads them as such. The walk keeps its own
+/// stack, as expressions can be deeper than the thread's.
+fn find_uses<'a>(
+    arena: &tlib::TreeArena,
+    expr: BoxId,
+    names: &[&'a str],
+) -> Vec<(&'a str, Option<&'static str>)> {
+    // `x'` and `@(x, n)` are `x : '` and `(x, n) : @`; `y : @(3)` and `mem(y)`
+    // apply the delay to its other arguments
+    let delay_of = |op: BoxId| match match_box(arena, op) {
+        BoxMatch::Delay1 => Some("'"),
+        BoxMatch::Delay => Some("@"),
+        BoxMatch::Prefix => Some("prefix"),
+        BoxMatch::Appl(fun, _) => match match_box(arena, fun) {
+            BoxMatch::Delay1 => Some("mem"),
+            BoxMatch::Delay => Some("@"),
+            BoxMatch::Prefix => Some("prefix"),
+            _ => None,
+        },
+        _ => None,
+    };
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![(expr, None)];
+    while let Some((node, delay)) = stack.pop() {
+        if seen.len() > 1 << 16 || !seen.insert((node, delay)) {
+            continue;
+        }
+        match match_box(arena, node) {
+            BoxMatch::Ident(name) => {
+                if let Some(to) = names.iter().find(|wanted| **wanted == name) {
+                    found.push((*to, delay));
+                }
+            }
+            BoxMatch::Seq(left, right) if delay_of(right).is_some() => {
+                stack.push((left, delay.or(delay_of(right))));
+                stack.push((right, delay));
+            }
+            BoxMatch::Appl(fun, args) if delay_of(fun).is_some() => {
+                let under = match match_box(arena, fun) {
+                    BoxMatch::Delay1 => Some("mem"),
+                    _ => delay_of(fun),
+                };
+                stack.push((args, delay.or(under)));
+            }
+            BoxMatch::Rec(forward, feedback) => {
+                stack.push((forward, delay));
+                stack.push((feedback, delay.or(Some("~"))));
+            }
+            BoxMatch::WithLocalDef(body, _) | BoxMatch::WithRecDef(body, _, _) => {
+                stack.push((body, delay));
+            }
+            _ => {
+                if let Some(children) = arena.children(node) {
+                    stack.extend(children.iter().map(|child| (*child, delay)));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Whether the immediate uses alone, among the definitions of the cycle, close
+/// a cycle: then some value needs itself at the same sample.
+fn immediate_uses_close_a_cycle(names: &[&str], uses: &[CycleUse<'_>]) -> bool {
+    let index = |name: &str| names.iter().position(|n| *n == name);
+    let edges: Vec<(usize, usize)> = uses
+        .iter()
+        .filter(|u| u.delay.is_none())
+        .filter_map(|u| Some((index(u.from)?, index(u.to)?)))
+        .collect();
+    // Kahn's algorithm: what is left once every source is peeled is a cycle
+    let mut incoming = vec![0usize; names.len()];
+    for (_, to) in &edges {
+        incoming[*to] += 1;
+    }
+    let mut ready: Vec<usize> = (0..names.len()).filter(|n| incoming[*n] == 0).collect();
+    let mut peeled = 0;
+    while let Some(node) = ready.pop() {
+        peeled += 1;
+        for (from, to) in &edges {
+            if *from == node {
+                incoming[*to] -= 1;
+                if incoming[*to] == 0 {
+                    ready.push(*to);
+                }
+            }
+        }
+    }
+    peeled < names.len()
 }
 
 /// One declared `case` rule, rendered for diagnostics.

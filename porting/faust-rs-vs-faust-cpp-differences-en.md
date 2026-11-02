@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-11-01 (guidance for a section of `-`, a name of an imported file and a size beside a `waveform`: added to DIFF-BEH-005); 2026-10-31 (syntax errors in the tokens of the language: DIFF-CLI-016 recorded); 2026-10-30 (`--color` for human diagnostics, `faust-rs` and `faustprobe`: DIFF-CLI-015 recorded); 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-11-02 (guidance for an evaluation cycle through a delay, an unresolved import and the operator a composition mismatch may have wanted: added to DIFF-BEH-005 and DIFF-BEH-018); 2026-11-01 (guidance for a section of `-`, a name of an imported file and a size beside a `waveform`: added to DIFF-BEH-005); 2026-10-31 (syntax errors in the tokens of the language: DIFF-CLI-016 recorded); 2026-10-30 (`--color` for human diagnostics, `faust-rs` and `faustprobe`: DIFF-CLI-015 recorded); 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -426,6 +426,21 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   redefined by the program, and a size given to a table beside a `waveform`
   have their own guidance (2026-11-01,
   `crates/compiler/tests/diagnostic_errors.rs`). The rejection is the C++ one.
+- Rust-only guidance of 2026-11-02, the rejection unchanged: an evaluation
+  cycle through a delay is shown written with `~` (DIFF-BEH-018); an
+  unresolved import other than `stdfaust.lib` gets a note that
+  `import("stdfaust.lib");` gives every standard library under its prefix, and
+  a help naming the standard library its name looks like (C++ says
+  `unable to open file <name>` only); a `:` mismatch names the operator its
+  widths admit (`<:`, `:>` or one B per group, `si.bus`, `!`/`si.block`), that
+  `,` binds more tightly than `:` when a written list's last item fits, and
+  `A * B` for a B with no input. Evidence:
+  `a_mismatch_names_the_operator_that_would_fit`,
+  `a_list_written_before_a_composition_names_the_precedence`,
+  `a_stage_without_input_may_be_a_factor`,
+  `an_unresolved_import_points_at_the_standard_libraries` in
+  `crates/compiler/tests/diagnostic_errors.rs`, and the unit tests of
+  `crates/compiler/src/import_guidance.rs`.
 - Duplicate UI paths, FIR verification, backend limitations, and const-table SR
   freezing have dedicated Rust diagnostics. A malformed FIR module (root not
   a module, a section not a block, a `sub_modules` entry not a sub-module)
@@ -847,6 +862,13 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   process → effect → cut → process`, with a label on each top-level definition
   of the cycle. The primary label is the use that closes the cycle, the
   `process` written in `cut`, inside its definition.
+- Since 2026-11-02, a cycle that goes through a delay (`'`, `@`, `mem`,
+  `prefix`, the feedback side of a `~`), and whose immediate uses alone close
+  no cycle, gets a note that a signal computed from its own past is written
+  with `~`, and helps that show `y = a * x + b * y';` as
+  `y = x : *(a) : + ~ *(b);`. Rust-only text; C++ says nothing of the kind.
+  Tests `a_feedback_written_as_a_self_reference_is_shown_with_tilde` and
+  `a_cycle_without_delay_gets_no_feedback_note`.
 - Until 2026-10-10 Rust reported `FRS-EVAL-0099 recursive evaluation loop on
   node <n>`, with the catch-all cause of malformed internal forms.
 - Compatibility impact: none on accepted programs. Scripts matching the C++
