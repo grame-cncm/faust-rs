@@ -534,6 +534,12 @@ fn box_with_rec_def_expanded(
     ldef: BoxId,
     ldef2: BoxId,
 ) -> BoxId {
+    // An empty letrec defines nothing: the `where` definitions are only visible inside the
+    // recursive bodies, so `e letrec { }` is `e`, as `e with { }` is (faust issue #416: the
+    // expansion built an empty parallel list and panicked).
+    if arena.is_nil(ldef) {
+        return body;
+    }
     let names = def2names(arena, ldef);
     let exprs = def2exp(arena, ldef);
     let n = list_len(arena, ldef);
