@@ -22,6 +22,29 @@
 //! `dsp`, `UI`, `FMeta`, `FAUSTFLOAT`, and the `*!` UI callbacks. This module is
 //! responsible for producing backend text, not for packaging a Julia runtime.
 //!
+//! # Soundfiles
+//!
+//! A `soundfile` zone shares the C++ Julia backend's host contract, so the
+//! same `architecture/julia` files (`dsp/dsp.jl`, `gui/SoundUI.jl`) serve both
+//! compilers:
+//! - the field is `fSoundfileN::Soundfile{T}`, set to `defaultsound(T)` in
+//!   the constructor (the C++ backend's `gUseDefaultSound = false`: no null
+//!   test in `instanceResetUserInterface!`);
+//! - `buildUserInterface!` calls `addSoundfile!(ui_interface, label, url,
+//!   :fSoundfileN)`, and the host replaces the field with `setproperty!`;
+//! - reads are `fBuffers[chan + 1][fOffset[part + 1] + idx + 1]`,
+//!   `fLength[part + 1]`, `fSR[part + 1]` and `fChannels`, channel `chan`
+//!   other than 0 being wrapped as `chan % fChannels` (DIFF-BEH-016).
+//!
+//! Two differences with the C++ text remain, neither visible to an
+//! architecture (the host only sees the symbol `addSoundfile!` receives):
+//! `N` is faust-rs's control id, shared by every widget kind, where C++
+//! numbers each prefix on its own (DIFF-BACK-004: `fSoundfile1` after one
+//! slider, where C++ has `fSoundfile0`), and `compute!` reads the field
+//! directly where C++ copies it to a block-local `fSoundfileNca` (with its
+//! `fLength`, `fOffset` and channel buffers) and writes it back after the
+//! loop.
+//!
 //! # Indexing and pointer values
 //!
 //! FIR keeps compute loops and table offsets zero-based because the same FIR is
@@ -1494,6 +1517,12 @@ fn emit_cast(typ: &FirType, value: &str) -> String {
         // into a scalar conversion instead of preserving the array view.
         FirType::Ptr(_) => value.to_owned(),
         FirType::Void => value.to_owned(),
+        // A soundfile is a reference: casting one is the identity, as the C++
+        // Julia backend emits nothing for a cast to `kSound_ptr`. The null
+        // soundfile is the host's default sound, `defaultsound(T)` (one silent
+        // channel, `architecture/julia/dsp/dsp.jl`).
+        FirType::Sound if value == "nothing" => "defaultsound(T)".to_owned(),
+        FirType::Sound => value.to_owned(),
         FirType::Int32 => format!("faust_wrap_int32({value})"),
         FirType::Int64 => format!("trunc(Int64, {value})"),
         FirType::Float32 | FirType::Float64 => format!("T({value})"),
@@ -1520,6 +1549,10 @@ fn emit_top_level_cast(typ: &FirType, value: &str) -> String {
 /// Pointers collapse to their inner type because Julia values are references by
 /// convention in the generated API surface.
 ///
+/// `Sound` is `Soundfile{T}`, the type of `architecture/julia/dsp/dsp.jl`: the
+/// parameter is the DSP's own `T`, which `SoundUI.jl`'s `soundfileType` reads
+/// back from the field type to build a soundfile of the right sample type.
+///
 /// `Quad` and `FixedPoint` currently lower to `Float64` because the first Julia
 /// backend slice has no dedicated Julia runtime aliases for these extended
 /// Faust scalar families.
@@ -1535,7 +1568,7 @@ fn emit_type(typ: &FirType) -> String {
         FirType::Bool => "Bool".to_owned(),
         FirType::Void => "Nothing".to_owned(),
         FirType::Obj => "Any".to_owned(),
-        FirType::Sound => "Soundfile".to_owned(),
+        FirType::Sound => "Soundfile{T}".to_owned(),
         FirType::UI => "UI".to_owned(),
         FirType::Meta => "FMeta".to_owned(),
         FirType::Ptr(inner) => emit_type(inner),

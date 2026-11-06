@@ -14,6 +14,7 @@ use std::io::Cursor;
 
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::interp::{FbcDspInstance, FbcOpcode, InterpOptions, Soundfile, read_fbc};
+use codegen::backends::julia::JuliaOptions;
 use compiler::{Compiler, ComputeMode, SignalFirLane};
 
 /// A soundfile read with 70 outputs: past the former 64-channel sharing limit.
@@ -140,10 +141,60 @@ fn generated_cpp_wraps_every_channel_but_zero() {
             "{mode:?}: channel 0 must not be wrapped:\n{cpp}"
         );
         for chan in 1..4 {
-            let wrapped = format!("->fBuffers)[({chan} % fSound0->fChannels)][");
+            let wrapped = format!("->fBuffers)[({chan} % fSoundfile0->fChannels)][");
             assert!(
                 cpp.contains(&wrapped),
                 "{mode:?}: channel {chan} must read `{wrapped}`:\n{cpp}"
+            );
+        }
+    }
+}
+
+/// The Julia host contract shared with the C++ Julia backend (the Julia backend
+/// module header and DIFF-BEH-016): the zone is a `Soundfile{T}` field whose
+/// default is the architecture's `defaultsound(T)` (`architecture/julia/dsp/dsp.jl`;
+/// `SoundUI.jl` reads `T` back from the field type), `buildUserInterface!`
+/// hands the field symbol to `addSoundfile!`, and reads use one-based channel,
+/// part and sample indices, channel 0 unwrapped and the others wrapped by
+/// `fChannels`.
+#[test]
+fn generated_julia_follows_the_soundfile_host_contract() {
+    for mode in [
+        ComputeMode::Scalar,
+        ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 1,
+        },
+    ] {
+        let julia = Compiler::new()
+            .with_compute_mode(mode)
+            .compile_source_to_julia(
+                "soundfile_channel_wrap",
+                &source(4),
+                &JuliaOptions::default(),
+            )
+            .unwrap_or_else(|error| panic!("Julia compilation failed ({mode:?}): {error}"));
+        for expected in [
+            "fSoundfile0::Soundfile{T}",
+            "dsp.fSoundfile0 = defaultsound(T)",
+            "addSoundfile!(ui_interface, \"sf\", \"{'a.wav'}\", :fSoundfile0)",
+            "dsp.fSoundfile0.fBuffers[(0) + 1][dsp.fSoundfile0.fOffset[(0) + 1] + ",
+        ] {
+            assert!(
+                julia.contains(expected),
+                "{mode:?}: missing `{expected}`:\n{julia}"
+            );
+        }
+        assert!(
+            !julia.contains("(0 % "),
+            "{mode:?}: channel 0 must not be wrapped:\n{julia}"
+        );
+        for chan in 1..4 {
+            let wrapped =
+                format!("dsp.fSoundfile0.fBuffers[(({chan} % dsp.fSoundfile0.fChannels)) + 1][");
+            assert!(
+                julia.contains(&wrapped),
+                "{mode:?}: channel {chan} must read `{wrapped}`:\n{julia}"
             );
         }
     }

@@ -43,7 +43,7 @@ pub(crate) fn zone_name(kind: ControlKind, control: ControlId) -> String {
         ControlKind::NumEntry => "fEntry",
         ControlKind::VBargraph => "fVbargraph",
         ControlKind::HBargraph => "fHbargraph",
-        ControlKind::Soundfile => "fSound",
+        ControlKind::Soundfile => "fSoundfile",
     };
     format!("{prefix}{control}")
 }
