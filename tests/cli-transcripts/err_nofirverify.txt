@@ -1,5 +1,5 @@
 Usage:
-  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|rust|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|mojo|rust|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]
                            [--no-fir-verify] [--fir-verify-strict]
   cargo run -p compiler -- --golden <input.dsp>
   cargo run -p compiler -- --parse <input.dsp> [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]

@@ -1,0 +1,5 @@
+/Users/letz/Developpements/RUST/faust-rs/target/cli-transcript-inputs/bad.dsp:1:11: error [FRS-EVAL-0002] undefined symbol `undefined_thing`
+  1 | process = undefined_thing;
+    |           ^^^^^^^^^^^^^^^ failing use
+  = note: scope.visible=process
+EXIT=1

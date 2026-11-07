@@ -484,6 +484,11 @@ faust-rs -lang fir foo.dsp
 # Generate Julia source
 faust-rs -lang julia foo.dsp -o foo.jl
 
+# Generate Mojo source (the contract of grame-cncm/faust#1293's
+# architecture/mojo; see porting/faust-rs-vs-faust-cpp-differences-en.md,
+# DIFF-BACK-010)
+faust-rs -lang mojo foo.dsp -o foo.mojo
+
 # Generate Rust source
 faust-rs -lang rust foo.dsp -o foo.rs
 
@@ -751,7 +756,7 @@ the layers from a host's side.
 | `transform`    | Signal preparation and signal-to-FIR lowering                                                                    |
 | `fir`          | Faust Intermediate Representation                                                                                |
 | `foreign-call` | Raw C ABI foreign-function invocation bridge                                                                     |
-| `codegen`      | AssemblyScript, C, C++, Cmajor, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
+| `codegen`      | AssemblyScript, C, C++, Cmajor, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, Julia, and Mojo backend generation |
 | `draw`         | SVG block-diagram rendering                                                                                      |
 | `doc`          | Documentation/reporting scaffold                                                                                 |
 | `compiler`     | Top-level compiler facade and CLI                                                                                |

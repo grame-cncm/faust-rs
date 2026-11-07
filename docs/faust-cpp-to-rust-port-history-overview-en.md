@@ -269,6 +269,7 @@ pretending that they had identical maturity or deployment models.
 | **AssemblyScript** | Typed AssemblyScript source compiled to WASM by the external `asc` toolchain | Added as a readable source-to-WASM route and executed under Node in the shared impulse harness |
 | **Julia** | Julia source with a mutable DSP structure, lifecycle, UI, metadata, precision, casts, and `compute!` | Functional first slice; useful but less mature than C/C++ and dependent on the host Julia Faust runtime contract |
 | **Rust** | Standalone Rust source implementing the established Faust Rust architecture contract (`FaustDsp`, host numeric types, UI and metadata traits) | Added in July and validated through a 92/92 impulse gate on the imported C++ population |
+| **Mojo** | Mojo source with the `FaustDsp` struct contract of the open upstream pull request grame-cncm/faust#1293, plus a Rust-only batch form that lays out N voices as a structure of arrays for GPU runs | Added in November; 132/132 in the opt-in impulse lanes (outside CI); the GPU measurements are summarised in `porting/faust-gpu-audio-synthesis-2026-11-07-en.md` |
 | **FIR text** | Canonical diagnostic and inspection view of the verified module | Intended for inspection, fixtures, and compiler development rather than deployment as a host runtime |
 
 Strict `-json` and SVG diagrams are auxiliary products, not execution

@@ -1,0 +1,88 @@
+# ==============================================================================
+# Code generated with Faust 0.9.5 (https://faust.grame.fr)
+# name: "rec"
+# Compilation options: 
+#   -lang mojo -single
+# ==============================================================================
+
+@fieldwise_init
+struct mydsp(FaustDsp):
+    var null_val: FaustFloat
+    var sample_rate: S32
+    var rec0: Arr[F32, 4]
+
+    @always_inline
+    def __init__(out dsp):
+        dsp.null_val = FaustFloat(0.0)
+        dsp.sample_rate = S32(0)
+        dsp.rec0 = Arr[F32, 4](fill=F32(0.0))
+
+    @always_inline
+    def get_sample_rate(imm dsp) -> S32:
+        return dsp.sample_rate
+
+    @always_inline
+    def get_num_outputs(imm dsp) -> S32:
+        return S32(1)
+
+    @always_inline
+    def get_num_inputs(imm dsp) -> S32:
+        return S32(1)
+
+    @always_inline
+    def class_init(mut dsp, imm sample_rate: S32) -> None:
+        pass
+
+    @always_inline
+    def instance_constants(mut dsp, imm sample_rate: S32) -> None:
+        dsp.sample_rate = sample_rate
+
+    @always_inline
+    def instance_reset_user_interface(mut dsp) -> None:
+        pass
+
+    @always_inline
+    def instance_clear(mut self) -> None:
+        ref dsp = self
+        for var l_rec0 in range(S32(0), S32(4)):
+            dsp.rec0[l_rec0] = F32(0.0)
+
+    @always_inline
+    def instance_init(mut dsp, imm sample_rate: S32) -> None:
+        dsp.instance_constants(sample_rate)
+        dsp.instance_reset_user_interface()
+        dsp.instance_clear()
+
+    @always_inline
+    def init(mut dsp, imm sample_rate: S32) -> None:
+        dsp.class_init(sample_rate)
+        dsp.instance_init(sample_rate)
+
+    @always_inline
+    def get_json(imm dsp) -> String:
+        return "{\"name\": \"rec\",\"filename\": \"rec.dsp\",\"version\": \"0.9.5\",\"compile_options\": \"-lang mojo -single\",\"size\": 20,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"rec\",\"items\": []}]}"
+
+    @always_inline
+    def metadata(imm dsp, mut meta: Some[FaustMeta]) -> None:
+        meta.declare("compile_options", "-lang mojo -single")
+        meta.declare("filename", "rec.dsp")
+        meta.declare("name", "rec")
+
+    @always_inline
+    def build_user_interface(mut dsp, mut ui: Some[FaustGui]) -> None:
+        ui.open_vertical_box("rec")
+        ui.close_box()
+
+    @always_inline
+    def compute(mut self, var count: S32, var inputs: ImmStreams, var outputs: MutStreams) -> None:
+        ref dsp = self
+        var input0 = inputs[unsafe_offset = S32(0)]
+        var output0 = outputs[unsafe_offset = S32(0)]
+        for var i0 in range(S32(0), count):
+            dsp.rec0[S32(0)] = (F32(input0[unsafe_offset = i0]) + (F32(0.5) * dsp.rec0[S32(1)]))
+            output0[unsafe_offset = i0] = FaustFloat(dsp.rec0[S32(3)])
+            var j_rec1: S32 = S32(3)
+            while j_rec1 > S32(0):
+                dsp.rec0[j_rec1] = dsp.rec0[(j_rec1 - S32(1))]
+                j_rec1 = j_rec1 + S32(-1)
+EXIT=0

@@ -71,6 +71,7 @@ Options:
           - fir
           - interp
           - julia
+          - mojo
           - rust
           - wasm
           - wast

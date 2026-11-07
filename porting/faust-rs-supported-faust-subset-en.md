@@ -1,6 +1,6 @@
 # Current Faust Source Subset Supported by `faust-rs`
 
-Last updated: 2026-09-24
+Last updated: 2026-11-07 (§4.7: `-lang mojo`); previous full update 2026-09-24
 
 Version: 0.8.0
 
@@ -484,7 +484,7 @@ A vectorized code-generation mode landed across July 2026:
 ### 4.7 Additional text backends
 
 Beyond C, C++, WASM/WAST, and Julia, the CLI now accepts
-`-lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|rust|wasm|wast`:
+`-lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|mojo|rust|wasm|wast`:
 
 - **AssemblyScript (`-lang asc`)**: landed 2026-06-10, validated in the
   impulse harness (part of the 133/133 sweep as `assemblyscript`),
@@ -498,6 +498,16 @@ Beyond C, C++, WASM/WAST, and Julia, the CLI now accepts
 - **Codebox (`-lang codebox` / `codebox-test`)**: ported per the 2026-07-26
   plan; the `codebox-test` spelling matches the C++ test-driver parameter
   naming,
+- **Mojo (`-lang mojo`)**: landed 2026-11-07, ported from the open upstream
+  pull request grame-cncm/faust#1293 (the pinned C++ reference has no Mojo
+  backend) and built against its `architecture/mojo`. The opt-in impulse
+  lane `make mojo` passes 132/132 programs (`sound` excluded: soundfiles are
+  refused, as in the C++ visitor), and `-vec -lv 0|1` 132/132; the lanes
+  need a Mojo toolchain and are outside CI. `-ec`/`-os` are refused and
+  `-vec` is plain loops rather than explicit SIMD. A Rust-only batch
+  contract (`MojoOptions::batch`, no CLI switch) lays out N voices as a
+  structure of arrays for GPU runs. Differences: DIFF-BACK-010 of
+  `faust-rs-vs-faust-cpp-differences-en.md`,
 - text backends share a precedence-aware expression layout module
   (2026-08-04) and a shared leaf-emission grammar (`leaf_emit`, 2026-08-25),
   and print the compiler version and compile options in their headers

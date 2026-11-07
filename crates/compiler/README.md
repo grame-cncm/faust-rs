@@ -53,6 +53,9 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `compile_source_to_julia[_with_lane]` | Julia source string |
 | `compile_file_to_julia[_with_lane]` | Julia source string |
 | `compile_file_default_to_julia[_with_lane]` | Julia source string |
+| `compile_source_to_mojo[_with_lane]` | Mojo source string |
+| `compile_file_to_mojo[_with_lane]` | Mojo source string |
+| `compile_file_default_to_mojo[_with_lane]` | Mojo source string |
 | `compile_source_to_fir_with_lane` | Owned `FirCompileOutput` |
 | `compile_file_to_fir_with_lane` / `compile_file_default_to_fir_with_lane` | Owned `FirCompileOutput` |
 | `compile_source_to_wasm[_with_lane]` | `WasmModule` (`.wasm` + companion JSON) |
@@ -169,7 +172,7 @@ shape, and reject vector mode.
 Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
 
 Every backend (C / C++ / Cmajor / Codebox / Rust / AssemblyScript / `.fbc` /
-Cranelift / WASM / Julia / JSON) goes through signal→FIR
+Cranelift / WASM / Julia / Mojo / JSON) goes through signal→FIR
 (`transform::signal_prepare` + `transform::signal_fir`) then `fir`; only the
 dump modes stop earlier.
 
@@ -179,7 +182,7 @@ dump modes stop earlier.
 - Aggregate typed stage errors into one top-level `CompilerError`.
 - Provide test/golden-oriented helper outputs (box dump, signal dump, FIR dump).
 - Route backend generation to C, C++, Cmajor, Codebox (RNBO), Rust, AssemblyScript,
-  Julia, interpreter bytecode, Cranelift JIT status reports, WASM/JSON
+  Julia, Mojo, interpreter bytecode, Cranelift JIT status reports, WASM/JSON
   artifacts, and strict JSON emitters with consistent options. Cranelift
   facade methods return a status report rather than a live JIT module; callers
   that need to execute compiled code use the lower-level codegen API or the

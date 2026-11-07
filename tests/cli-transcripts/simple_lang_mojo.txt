@@ -1,0 +1,83 @@
+# ==============================================================================
+# Code generated with Faust 0.9.5 (https://faust.grame.fr)
+# name: "simple"
+# Compilation options: 
+#   -lang mojo -single
+# ==============================================================================
+
+@fieldwise_init
+struct mydsp(FaustDsp):
+    var null_val: FaustFloat
+    var sample_rate: S32
+    var hslider0: FaustFloat
+
+    @always_inline
+    def __init__(out dsp):
+        dsp.null_val = FaustFloat(0.0)
+        dsp.sample_rate = S32(0)
+        dsp.hslider0 = FaustFloat(0.0)
+
+    @always_inline
+    def get_sample_rate(imm dsp) -> S32:
+        return dsp.sample_rate
+
+    @always_inline
+    def get_num_outputs(imm dsp) -> S32:
+        return S32(1)
+
+    @always_inline
+    def get_num_inputs(imm dsp) -> S32:
+        return S32(1)
+
+    @always_inline
+    def class_init(mut dsp, imm sample_rate: S32) -> None:
+        pass
+
+    @always_inline
+    def instance_constants(mut dsp, imm sample_rate: S32) -> None:
+        dsp.sample_rate = sample_rate
+
+    @always_inline
+    def instance_reset_user_interface(mut dsp) -> None:
+        dsp.hslider0 = FaustFloat(0.5)
+
+    @always_inline
+    def instance_clear(mut dsp) -> None:
+        pass
+
+    @always_inline
+    def instance_init(mut dsp, imm sample_rate: S32) -> None:
+        dsp.instance_constants(sample_rate)
+        dsp.instance_reset_user_interface()
+        dsp.instance_clear()
+
+    @always_inline
+    def init(mut dsp, imm sample_rate: S32) -> None:
+        dsp.class_init(sample_rate)
+        dsp.instance_init(sample_rate)
+
+    @always_inline
+    def get_json(imm dsp) -> String:
+        return "{\"name\": \"simple\",\"filename\": \"simple.dsp\",\"version\": \"0.9.5\",\"compile_options\": \"-lang mojo -single\",\"size\": 8,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"simple\",\"items\": [ {\"type\": \"hslider\",\"label\": \"g\",\"varname\": \"fHslider0\",\"shortname\": \"g\",\"address\": \"/simple/g\",\"init\": 0.5,\"min\": 0,\"max\": 1,\"step\": 0.01}]}]}"
+
+    @always_inline
+    def metadata(imm dsp, mut meta: Some[FaustMeta]) -> None:
+        meta.declare("compile_options", "-lang mojo -single")
+        meta.declare("filename", "simple.dsp")
+        meta.declare("name", "simple")
+
+    @always_inline
+    def build_user_interface(mut dsp, mut ui: Some[FaustGui]) -> None:
+        ui.open_vertical_box("simple")
+        ui.add_horizontal_slider("g", dsp.hslider0, FaustFloat(0.5), FaustFloat(0.0), FaustFloat(1.0), FaustFloat(0.01))
+        ui.close_box()
+
+    @always_inline
+    def compute(mut self, var count: S32, var inputs: ImmStreams, var outputs: MutStreams) -> None:
+        ref dsp = self
+        var slow0: F32 = F32(dsp.hslider0)
+        var input0 = inputs[unsafe_offset = S32(0)]
+        var output0 = outputs[unsafe_offset = S32(0)]
+        for var i0 in range(S32(0), count):
+            output0[unsafe_offset = i0] = FaustFloat((slow0 * F32(input0[unsafe_offset = i0])))
+EXIT=0

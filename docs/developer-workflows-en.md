@@ -68,6 +68,7 @@ The compiler currently supports:
 - `-lang fir`
 - `-lang interp`
 - `-lang julia`
+- `-lang mojo`
 - `-lang rust`
 - `-lang wasm`
 - `-lang wast`
@@ -82,6 +83,7 @@ cargo run -p compiler -- -lang cranelift tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang fir tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang interp tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang julia tests/corpus/rep_01_passthrough.dsp
+cargo run -p compiler -- -lang mojo tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang rust tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang wasm tests/corpus/rep_01_passthrough.dsp -o /tmp/out.wasm
 cargo run -p compiler -- -lang wast tests/corpus/rep_01_passthrough.dsp
