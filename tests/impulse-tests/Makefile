@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -323,6 +323,25 @@ mojo-gpu-batch:
 	  ARCH_MOJO_TAIL=archs/runimpulsemojogpubatch.mojo \
 	  MOJOBUILDOPTIONS="-O3 -D DFAUST=DType.float32 $(MOJOGPUOPTIONS)"
 
+# A polyphonic instrument played in real time (G4): POLY_VOICES voices of
+# poly/voice.dsp on the GPU with the batch contract, mixed on the device and
+# written through PortAudio (muted unless POLY_AUDIBLE=audible); fails on an
+# underrun. PORTAUDIO_LIB names the directory of libportaudio.
+MOJO ?= mojo
+POLY_VOICES ?= 256
+POLY_SECONDS ?= 10
+POLY_BLOCK ?= 256
+POLY_AUDIBLE ?=
+PORTAUDIO_LIB ?= /opt/homebrew/lib
+mojo-gpu-poly:
+	cargo build --release -p compiler --example mojo_batch
+	mkdir -p build/mojo-gpu-poly
+	../../target/release/examples/mojo_batch poly/voice.dsp -o build/mojo-gpu-poly/voice.mojo
+	cat archs/impulsemojo.mojo build/mojo-gpu-poly/voice.mojo archs/polymojogpubatch.mojo > build/mojo-gpu-poly/poly_main.mojo
+	$(MOJO) build build/mojo-gpu-poly/poly_main.mojo -o build/mojo-gpu-poly/poly -O3 -D DFAUST=DType.float32 \
+	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
+	build/mojo-gpu-poly/poly $(POLY_VOICES) $(POLY_SECONDS) $(POLY_AUDIBLE) $(POLY_BLOCK)
+
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).
 mojo-gpu-bench:
@@ -393,6 +412,7 @@ help:
 	@echo "  mojo           : check the faust-rs Mojo backend (scalar prefix, opt-in, needs MOJO)"
 	@echo "  mojo-gpu       : the same, many voices per program on the GPU (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-batch : mojo-gpu with the batch contract (structure of arrays)"
+	@echo "  mojo-gpu-poly  : a polyphonic instrument played in real time (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-bench : GPU against CPU timings for many voices (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-bench-batch : the same with the batch layout (structure of arrays)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"

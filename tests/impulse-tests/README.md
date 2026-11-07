@@ -69,6 +69,12 @@ See the design write-up in
      to `build/mojo-gpu-bench/results.csv` (`archs/benchmojogpu.mojo`,
      `Make.mojogpubench`; `BENCH_PROGRAMS`, `BENCH_VOICES`, `BENCH_BLOCKS`
      narrow it). Runs serially; about 10 minutes.
+   - `make mojo-gpu-poly` — a polyphonic instrument played in real time:
+     `POLY_VOICES` (256) voices of `poly/voice.dsp` on the GPU with the batch
+     contract, mixed on the device and written through PortAudio's blocking
+     API, muted unless `POLY_AUDIBLE=audible`; fails on an underrun and prints
+     the latency PortAudio grants (`archs/polymojogpubatch.mojo`;
+     `PORTAUDIO_LIB` names the directory of `libportaudio`).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

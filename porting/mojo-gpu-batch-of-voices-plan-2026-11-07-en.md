@@ -2,12 +2,9 @@
 
 Date: 2026-11-07
 
-Status: **G1 and G2 landed 2026-11-07 on Mojo 1.3 (§4; outcomes §7, §8);
-G2 calls for G3, designed in
-`porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md` (G3.2, the
-layout pass, G3.3, its checker, G3.4, the CPU differential, and G3.5, the Mojo
-batch mode with its lanes, landed: large-state programs ×20 to ×31 faster at
-4,096 voices, now ahead of the CPU threads); G4 not started.** §2 records a hand-written probe run
+Status: **G1 to G4 landed 2026-11-07 on Mojo 1.3 (§4; outcomes §7, §8,
+§9, and G3 in `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`
+§7 to §10). The plan is complete.** §2 records a hand-written probe run
 on the day; no file of the repository changed for it.
 
 ## Scope
@@ -359,4 +356,52 @@ layout), for `freeverb`, `zita_rev1` and `karplus32` first. For `osc`, the
 state is its 256 KB table, the same for every voice: sharing the tables
 (§4) is the cheaper fix there, and G3 would not help a table read at a
 data-dependent index.
+
+## 9. G4 outcome (2026-11-07)
+
+Decided with the user before writing it: PortAudio from conda-forge in the
+scratch pixi environment (nothing installed system-wide), test runs muted
+(the GPU computes every voice, silence is written; `audible` plays the mix),
+notes scripted rather than MIDI.
+
+**What landed.** `make mojo-gpu-poly` (`tests/impulse-tests/Makefile`):
+`poly/voice.dsp` (a self-contained voice: sawtooth, two one-pole low-passes,
+a 113-sample comb, an envelope on `gate`; `freq`, `gain`, `gate`) emitted with
+the batch contract, concatenated with `archs/polymojogpubatch.mojo` and
+linked with `-lportaudio` (`PORTAUDIO_LIB`). Each 256-frame block: the
+scripted gates of all voices copied and set (`set_control`), every voice
+computed (one thread per voice), the voices summed on the device by a mix
+kernel, the mix copied back and written. The binding is the runner's own,
+on PortAudio's **blocking** API (`Pa_WriteStream`): it paces the loop at the
+device's rate and reports every underrun (`paOutputUnderflowed`), with no C
+callback to supply from Mojo; pointers cross as integer addresses, a Mojo
+`Pointer` being non-nullable. The run fails on an underrun, except in the
+stress mode that checks they are seen (a 6 ms busy wait per block: 171 to 177
+underruns over 3 s).
+
+**Latency.** `Pa_OpenDefaultStream` takes the device's high-latency default,
+112.6 ms on the machine of record, a cushion that absorbed blocks computed
+late; the runner opens the stream with a suggested latency instead (two
+blocks by default) and prints what PortAudio grants: **43.3 ms at 256 frames,
+30.0 ms at 128, 23.3 ms at 64** (28.6 ms when 5.33 ms is suggested). The
+blocking API adds buffering on top of CoreAudio's; a callback runner would
+get closer to the block period, and is not written.
+
+**Result** (muted, 48 kHz, two-block suggested latency):
+
+| voices | block | duration | underruns | compute per block, median / max | budget |
+|---|---|---|---|---|---|
+| 256 | 256 | 30 s | **0** | 1.25 / 5.1 ms | 5.33 ms |
+| 1,024 | 256 | 10 s | 0 | 1.79 / 5.5 ms | 5.33 ms |
+| 4,096 | 256 | 10 s | 0 | 2.71 / 5.2 ms | 5.33 ms |
+| 16,384 | 256 | 10 s | 0 | 4.34 / 16.9 ms | 5.33 ms |
+| 256 | 128 | 10 s | 0 | 0.97 / 4.0 ms | 2.67 ms |
+| 256 | 64 | 10 s | 616 | 0.79 / 1.7 ms | 1.33 ms |
+
+**The pass criterion is met**: 256 voices play without an underrun at 256
+frames and 48 kHz (30 s), and so do up to 16,384 voices over 10 s. A block
+computed past its budget (the maxima) is absorbed by the granted latency. The
+64-frame block fails at 23 ms of latency: the fixed cost per block (launches,
+copies, synchronisation, about 0.7 ms here with the gate and mix kernels)
+leaves too little margin, which matches the floor G2 measured.
 
