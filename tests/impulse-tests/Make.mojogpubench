@@ -7,11 +7,18 @@
 # build/mojo-gpu-bench/results.csv. Voice counts whose state exceeds
 # BENCH_MAX_BYTES are skipped. Opt-in, like `make mojo-gpu`, and as slow as
 # the sweep is large (a few minutes by default).
+#
+# BENCH_LAYOUT=batch (`make mojo-gpu-bench-batch`, G3.5) measures the batch
+# contract instead (state as a structure of arrays, `MojoOptions::batch`),
+# emitted by the `mojo_batch` example of the compiler crate (the mode has no
+# faust-rs option, decision D3) and timed by `archs/benchmojogpubatch.mojo`,
+# into build/mojo-gpu-bench-batch/results.csv with the same GPU columns.
 
 include common.mk
 
-outdir := mojo-gpu-bench
+BENCH_LAYOUT ?= aos
 MOJO ?= mojo
+MOJO_BATCH ?= ../../target/release/examples/mojo_batch
 BENCH_PROGRAMS ?= APF osc freeverb zita_rev1 karplus32
 BENCH_VOICES ?= 64 256 1024 4096 16384 65536
 BENCH_BLOCKS ?= 64 128 256 512
@@ -19,7 +26,15 @@ BENCH_TIMED_BLOCKS ?= 100
 BENCH_MAX_BYTES ?= 4000000000
 MOJOBUILDOPTIONS ?= -O3 -D DFAUST=DType.float32
 ARCH_MOJO := archs/impulsemojo.mojo
+ifeq ($(BENCH_LAYOUT),batch)
+outdir := mojo-gpu-bench-batch
+ARCH_BENCH := archs/benchmojogpubatch.mojo
+GENERATE = $(MOJO_BATCH) $< -I $(dspdir) -I $(FAUSTLIBS) -o build/$(outdir)/$*.mojo
+else
+outdir := mojo-gpu-bench
 ARCH_BENCH := archs/benchmojogpu.mojo
+GENERATE = $(FAUST_RS) -lang mojo -single -cn mydsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.mojo
+endif
 
 binaries := $(BENCH_PROGRAMS:%=build/$(outdir)/%)
 
@@ -31,7 +46,7 @@ build/$(outdir)/.dir:
 	touch $@
 
 build/$(outdir)/%: $(dspdir)/%.dsp $(ARCH_MOJO) $(ARCH_BENCH) | build/$(outdir)/.dir
-	$(FAUST_RS) -lang mojo -single -cn mydsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.mojo
+	$(GENERATE)
 	cat $(ARCH_MOJO) build/$(outdir)/$*.mojo $(ARCH_BENCH) > build/$(outdir)/$*_main.mojo
 	$(MOJO) build build/$(outdir)/$*_main.mojo -o $@ $(MOJOBUILDOPTIONS)
 

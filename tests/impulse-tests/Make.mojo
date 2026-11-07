@@ -27,7 +27,15 @@ MOJO_PRECISION ?= -double
 MOJO_REF_COMPARE ?= 1
 # Per-program build options: the GPU lane skips the GPU/CPU tolerance check
 # for the programs of MOJO_GPU_DRIFT (known.mk).
-mojo_program_options = $(if $(and $(filter mojo-gpu,$(outdir)),$(filter $1,$(MOJO_GPU_DRIFT))),-D GPU_CPU_CHECK=0)
+mojo_program_options = $(if $(and $(filter mojo-gpu mojo-gpu-batch,$(outdir)),$(filter $1,$(MOJO_GPU_DRIFT))),-D GPU_CPU_CHECK=0)
+# The batch lane (`make mojo-gpu-batch`, G3.5) emits the batch contract with
+# the compiler's `mojo_batch` example: the mode has no faust-rs option (D3).
+MOJO_BATCH ?=
+ifneq ($(MOJO_BATCH),)
+MOJO_GENERATE = $(MOJO_BATCH) $< -I $(dspdir) -I $(FAUSTLIBS) -o build/$(outdir)/$*.mojo
+else
+MOJO_GENERATE = $(FAUST_RS) -lang mojo $(MOJO_PRECISION) -cn mydsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.mojo
+endif
 MOJOBUILDOPTIONS ?= -O3 -D DFAUST=DType.float64
 
 allnames := $(dspfiles:$(dspdir)/%.dsp=%)
@@ -61,7 +69,7 @@ $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
 ir/$(outdir)/%.ir: $(dspdir)/%.dsp $(refdir)/%.ir $(ARCH_MOJO) $(ARCH_MOJO_TAIL) | mojo-tool ir/$(outdir)/.dir build/$(outdir)/.dir
-	$(FAUST_RS) -lang mojo $(MOJO_PRECISION) -cn mydsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.mojo
+	$(MOJO_GENERATE)
 	cat $(ARCH_MOJO) build/$(outdir)/$*.mojo $(ARCH_MOJO_TAIL) > build/$(outdir)/$*_main.mojo
 	$(MOJO) build build/$(outdir)/$*_main.mojo -o build/$(outdir)/$* $(MOJOBUILDOPTIONS) $(call mojo_program_options,$*)
 	build/$(outdir)/$* > $@

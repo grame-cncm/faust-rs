@@ -45,6 +45,7 @@ comptime WARMUP = 20
 
 def voices_kernel(
     dsps: Ptr[UInt8, MutAnyOrigin],
+    data: Ptr[FaustFloat, MutAnyOrigin],
     channels: Ptr[UInt64, MutAnyOrigin],
     nvoices: S32,
     n_ins: S32,
@@ -259,7 +260,7 @@ def main() raises -> None:
         var t0 = perf_counter_ns()
         ctx.enqueue_copy(dst_buf=data, src_buf=staging)
         ctx.enqueue_function[voices_kernel](
-            dsps, channels, S32(nvoices), S32(n_ins), S32(n_outs), S32(block),
+            dsps, data, channels, S32(nvoices), S32(n_ins), S32(n_outs), S32(block),
             grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
         )
         ctx.enqueue_copy(dst_buf=staging, src_buf=data)
@@ -291,7 +292,7 @@ def main() raises -> None:
     for b in range(nblocks + WARMUP):
         var t0 = perf_counter_ns()
         ctx.enqueue_function[voices_kernel](
-            dsps, channels, S32(nvoices), S32(n_ins), S32(n_outs), S32(block),
+            dsps, data, channels, S32(nvoices), S32(n_ins), S32(n_outs), S32(block),
             grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
         )
         ctx.synchronize()

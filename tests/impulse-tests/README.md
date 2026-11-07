@@ -69,6 +69,12 @@ See the design write-up in
      to `build/mojo-gpu-bench/results.csv` (`archs/benchmojogpu.mojo`,
      `Make.mojogpubench`; `BENCH_PROGRAMS`, `BENCH_VOICES`, `BENCH_BLOCKS`
      narrow it). Runs serially; about 10 minutes.
+   - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
+     sweep with the batch contract (`MojoOptions::batch`: one struct for N
+     voices, state as a structure of arrays across voices), emitted by the
+     compiler's `mojo_batch` example since the mode has no `faust-rs` switch
+     (`archs/runimpulsemojogpubatch.mojo`, `archs/benchmojogpubatch.mojo`;
+     design `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`).
    - `make cmajor` — faust-rs emits scalar-double Cmajor, `cmaj generate
      --target=cpp` produces a native class, and the pinned C++ Faust
      `cmajor_cpp_dsp` adapter runs the upstream impulse protocol. Each DSP uses

@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-bench cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -313,10 +313,26 @@ mojo-gpu:
 	  ARCH_MOJO_TAIL=archs/runimpulsemojogpu.mojo \
 	  MOJOBUILDOPTIONS="-O3 -D DFAUST=DType.float32 $(MOJOGPUOPTIONS)"
 
+# The batch contract on the GPU (G3.5): one struct for N voices, state as a
+# structure of arrays, emitted by the compiler's `mojo_batch` example; the
+# checks of `mojo-gpu`.
+mojo-gpu-batch:
+	cargo build --release -p compiler --example mojo_batch
+	$(MAKE) -f Make.mojo all outdir=mojo-gpu-batch MOJO_PRECISION=-single MOJO_REF_COMPARE=0 \
+	  MOJO_BATCH=../../target/release/examples/mojo_batch \
+	  ARCH_MOJO_TAIL=archs/runimpulsemojogpubatch.mojo \
+	  MOJOBUILDOPTIONS="-O3 -D DFAUST=DType.float32 $(MOJOGPUOPTIONS)"
+
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).
 mojo-gpu-bench:
 	$(MAKE) -j1 -f Make.mojogpubench all
+
+# The same sweep with the batch contract (G3.5): state as a structure of
+# arrays across voices, emitted by the compiler's `mojo_batch` example.
+mojo-gpu-bench-batch:
+	cargo build --release -p compiler --example mojo_batch
+	$(MAKE) -j1 -f Make.mojogpubench all BENCH_LAYOUT=batch
 
 # Cmajor is an opt-in external lane: it needs the Cmajor command-line tool and
 # the pinned C++ Faust adapter, so it is intentionally absent from `all` and the
@@ -376,7 +392,9 @@ help:
 	@echo "  julia          : check the faust-rs Julia backend (scalar prefix, Julia)"
 	@echo "  mojo           : check the faust-rs Mojo backend (scalar prefix, opt-in, needs MOJO)"
 	@echo "  mojo-gpu       : the same, many voices per program on the GPU (opt-in, needs MOJO)"
+	@echo "  mojo-gpu-batch : mojo-gpu with the batch contract (structure of arrays)"
 	@echo "  mojo-gpu-bench : GPU against CPU timings for many voices (opt-in, needs MOJO)"
+	@echo "  mojo-gpu-bench-batch : the same with the batch layout (structure of arrays)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"
 	@echo "  *-vec0/*-vec1  : check a backend with -vec -lv 0 / -vec -lv 1"
 	@echo "  all-vec        : run all vector-mode backend variants"

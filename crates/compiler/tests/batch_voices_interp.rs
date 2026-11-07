@@ -94,7 +94,11 @@ fn input(v: usize, c: usize, b: usize, i: usize) -> f32 {
 /// on every other voice.
 fn control(min: f32, max: f32, is_button: bool, w: usize, v: usize, b: usize) -> f32 {
     if is_button {
-        return if b == 0 && v.is_multiple_of(2) { 1.0 } else { 0.0 };
+        return if b == 0 && v.is_multiple_of(2) {
+            1.0
+        } else {
+            0.0
+        };
     }
     let frac = ((v * 7 + w * 3) % 11) as f32 / 10.0;
     min + (max - min) * frac

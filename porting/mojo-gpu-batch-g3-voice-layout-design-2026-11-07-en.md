@@ -2,8 +2,9 @@
 
 Date: 2026-11-07
 
-Status: **decisions D1 to D4 taken 2026-11-07 (§6); G3.0 and G3.2 to G3.4
-done (outcomes §7 to §9); G3.5 next.**
+Status: **G3 done 2026-11-07: decisions §6, outcomes §7 to §10. The Mojo
+batch mode landed by the user's decision, its pass criterion met on five
+cells of six (§10).**
 Parent plan: `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
 (G3 in §3, the measurements that call for it in §8).
 
@@ -387,4 +388,97 @@ once (`onepole`, 3 voices, voice 1 at frame 1); restored, it passes.
 No registry entry yet: the layout is reachable only through the Rust API
 of the tests; the entry comes with the generated Mojo batch contract
 (G3.5), as D3 says.
+
+## 10. G3.5 outcome (2026-11-07)
+
+Mojo `1.3.0.dev2026110705`, `modular` `26.8.0.dev2026110705`, Apple M5.
+
+**The emitter mode.** `MojoOptions::batch` runs `fir::batch::layout_voices`
+(checked) after the flattening and emits `struct mydsp(FaustDspBatch)`:
+
+- *Construction over one buffer.* A Mojo `Pointer` cannot be null ("Pointer
+  is non-nullable"), so the struct is built over its state:
+  `__init__(out dsp, voices: S32, state: Ptr[UInt8])` carves the typed arenas
+  from one buffer of `state_bytes(voices)` bytes, each aligned to 8 bytes;
+  `<arena>_elements()` gives each arena's elements per voice. A host
+  allocates (on a device if need be), then builds. This replaces the
+  per-arena `state_elements(T)` query of §3.5: one buffer is what a generic
+  harness can allocate whatever the program's arena types.
+- *Signatures.* `voice: S32` after `dsp` on `instance_constants`,
+  `instance_reset_user_interface`, `instance_clear`, `instance_init`, `init`
+  and `compute`; `class_init` unchanged, once for all voices. The canonical
+  signature check runs on the signature without the voice.
+- *Controls* (D2): `num_controls()`, `set_control(voice, index, value)`,
+  `get_control(voice, index)` through `voice_controls` (the `fVoiceControls`
+  table); `build_user_interface` describes them with `dsp.null_val` zones.
+  `sample_rate` stays a shared field that every voice's `instance_constants`
+  writes with the same value.
+- *Code layout*: the host side of the contract is in
+  `crates/codegen/src/backends/mojo/batch.rs`; the naming code (keywords,
+  `snake_case`, `Renamer`) moved, unchanged, to `mojo/names.rs`, which keeps
+  `mojo/mod.rs` under the 2,000-line threshold of `structure-check`.
+- *No CLI switch* (D3): the lanes reach the mode through the compiler's
+  `mojo_batch` example (`crates/compiler/examples/mojo_batch.rs`, clap).
+- *Default output unchanged*: codegen-identity differential, baseline binary
+  built at the HEAD before the change (`854e23b3`), every `.dsp` of `tests/` and
+  `examples/` (634): 555 outputs byte-identical; the 79 others fail in both
+  binaries for libraries absent from the search path, their messages
+  differing only in the binary-relative search path they print.
+
+Tests: `crates/codegen/src/backends/mojo/tests.rs` gains a producer-shaped
+fixture (the shared fixtures declare initialised fields, which the layout
+refuses) and four tests: the batch contract, the batch lifecycle conformance
+(`init = class_init -> instance_init(voice)`, `instance_init(voice) =
+constants -> reset -> clear`, never `class_init`), the scalar contract by
+default, and a refused module surfacing as a codegen error.
+
+**Finding: every buffer a kernel reaches must be one of its arguments.** The
+first batch run gave voice 0 equal to its input. The init kernel had written
+the arenas correctly (copied back, the device buffer held them), but the
+compute kernel, which reaches the arenas only through the pointers stored in
+the struct, read zeros and stale values (`state_int32[0]` 0 instead of
+44,100). Passing the state buffer as an unused kernel argument fixed it at
+once (voice 0 within 1.2e-6 of the host). On Metal, a buffer reached only
+through a pointer held in another buffer is not reliably visible to a
+kernel. The G1 and G2 harnesses reached the channel data the same way,
+through the channel table, and worked by luck; they now pass it too
+(`make mojo-gpu` rerun: 131/131).
+
+**Correctness** (`make mojo-gpu-batch`, `archs/runimpulsemojogpubatch.mojo`):
+the G1 checks on the batch contract, the host reference being a two-voice
+batch instance: **131/131** (`sound` and `math` excluded, as in G1).
+
+**Cost** (`make mojo-gpu-bench-batch`, `archs/benchmojogpubatch.mojo`, the
+G2 grid; GPU columns compared with the array-of-structures sweep of the
+plan §8, CPU baseline the faster of 4 and 10 threads from the same sweep):
+
+| program | voices | per-voice layout | structure of arrays | gain | vs CPU threads |
+|---|---|---|---|---|---|
+| `freeverb` | 1,024 | 6.5 ms | 2.4 ms | ×2.8 | ×0.76 |
+| `freeverb` | 4,096 | 103.8 ms | 3.4 ms | ×30.8 | ×2.2 |
+| `karplus32` | 1,024 | 24.4 ms | 5.4 ms | ×4.5 | ×1.35 |
+| `karplus32` | 4,096 | 170.8 ms | 6.5 ms | ×26.1 | ×4.8 |
+| `zita_rev1` | 1,024 | 7.9 ms | 4.2 ms | **×1.9** | ×0.73 |
+| `zita_rev1` | 4,096 | 111.3 ms | 5.5 ms | ×20.1 | ×2.2 |
+| `osc` | 4,096 | 1.93 ms | 0.35 ms | ×5.5 | ×4.8 |
+
+(256-frame blocks; over the four block sizes `freeverb` gains ×2.6 to ×2.9
+at 1,024 voices and ×27 to ×31 at 4,096, `karplus32` ×4.4 to ×4.5 and ×25 to
+×26, `zita_rev1` ×1.8 to ×1.9 and ×19 to ×20.)
+
+**The pass criterion is met on five cells of six**: `zita_rev1` at 1,024
+voices gains ×1.8 to ×1.9, under the ×2 set before G3.5. The user decided to
+land the mode with this gap recorded. Other limits measured: at 64 and 256
+voices the structure of arrays is mostly slower than the per-voice layout
+for the large-state programs (×0.6 to ×0.9; `freeverb` at 64 voices of 64
+frames is the exception, ×1.2), and `APF`, with 32 bytes of state, gains
+nothing (×0.8 to ×1.2). `osc`'s table is now shared: 32 bytes per voice
+instead of 262,180, which also lets it run 16,384 and 65,536 voices (3.2 ms
+for 65,536 voices of 256 frames, within the 5.8 ms budget).
+
+**Where the device now beats the CPU threads** (from 4,096 voices unless
+said): `freeverb` ×1.9 to ×4.6, `zita_rev1` ×2.1 to ×3.4, `karplus32` from
+1,024 voices (×1.3 to ×1.4, then ×4.4 to ×5.1), `osc` from 1,024 voices at
+256 frames and above (up to ×5.6), `APF` ×3.5 as in G2. None of them did with
+the per-voice layout, apart from `APF`.
 

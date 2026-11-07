@@ -462,10 +462,15 @@ Important emitter rules:
   emitted on use, because Mojo floors and rounds half to even.
 - Soundfiles are refused, as in the C++ backend; `-vec` emits plain loops,
   not the C++ backend's explicit SIMD.
+- `MojoOptions::batch` (Rust-only, no CLI switch) emits the batch contract:
+  one struct for N voices, state as a structure of arrays laid out by
+  `fir::batch::layout_voices`, built over one buffer of `state_bytes(voices)`
+  bytes, the voice after `dsp` on the instance lifecycle
+  (`porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`).
 
 | Item | Description |
 |---|---|
-| `MojoOptions` | `class_name`, `real_type`, `compile_options`, `metadata_name`, `metadata_filename`, `metadata_entries`, `dsp_json` |
+| `MojoOptions` | `class_name`, `real_type`, `compile_options`, `metadata_name`, `metadata_filename`, `metadata_entries`, `dsp_json`, `batch` |
 | `MojoRealType` | `Float32` (default) or `Float64` |
 | `generate_mojo_module` | `(&FirStore, FirId, &MojoOptions) -> Result<String, CodegenError>` |
 | `CodegenError` | Codes `FRS-CGEN-MOJO-0001..0004` |

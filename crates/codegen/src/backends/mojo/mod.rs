@@ -67,6 +67,10 @@ use crate::backends::module_view::{
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
+use names::Renamer;
+#[cfg(test)]
+use names::snake_case;
+
 pub const BACKEND_NAME: &str = "mojo";
 
 /// Internal real precision of the generated DSP (`-single` / `-double`).
@@ -95,6 +99,11 @@ pub struct MojoOptions {
     pub metadata_entries: Vec<(String, String)>,
     /// Pre-rendered one-line JSON description returned by `get_json`.
     pub dsp_json: Option<String>,
+    /// Emit the batch contract: one struct for N voices, its state laid out
+    /// as a structure of arrays by `fir::batch::layout_voices` (GPU batch
+    /// plan G3.5, `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`
+    /// §3.5). An emitter option only (decision D3): no CLI surface.
+    pub batch: bool,
 }
 
 impl Default for MojoOptions {
@@ -107,6 +116,7 @@ impl Default for MojoOptions {
             metadata_filename: None,
             metadata_entries: Vec::new(),
             dsp_json: None,
+            batch: false,
         }
     }
 }
@@ -201,6 +211,23 @@ fn generate_mojo_module_step(
         CodegenError::new(CodegenErrorCode::InvalidModuleSection, message).at_node(module)
     })?;
     let (store, module) = prepared.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    // Batch contract: the per-voice state laid out as a structure of arrays,
+    // the output accepted by the pass's independent checker.
+    let batched = if options.batch {
+        Some(fir::batch::layout_voices(store, module).map_err(|err| {
+            CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("batch voice layout: {err}"),
+            )
+            .at_node(module)
+        })?)
+    } else {
+        None
+    };
+    let layout = batched.as_ref().map(|(_, _, layout)| layout.clone());
+    let (store, module) = batched
+        .as_ref()
+        .map_or((store, module), |(s, m, _)| (s, *m));
     // Runtime-filled and folded tables are read through `dsp.` like every
     // other state: `collect_fields` declares the static section as struct
     // fields too, as upstream declares every global as a struct field.
@@ -212,7 +239,7 @@ fn generate_mojo_module_step(
         .to_owned();
     let functions = collect_defined_functions(store, view.functions)?;
 
-    let mut emitter = Emitter::new(store, options);
+    let mut emitter = Emitter::new(store, options, layout.clone());
     let fields = emitter.collect_fields([view.dsp_struct, view.globals, view.static_decls])?;
     let has_sample_rate = fields.iter().any(|f| f.fir_name == "fSampleRate");
 
@@ -225,7 +252,12 @@ fn generate_mojo_module_step(
     }
 
     let _ = writeln!(body, "@fieldwise_init");
-    let _ = writeln!(body, "struct {class_name}(FaustDsp):");
+    let trait_name = if layout.is_some() {
+        "FaustDspBatch"
+    } else {
+        "FaustDsp"
+    };
+    let _ = writeln!(body, "struct {class_name}({trait_name}):");
     let _ = writeln!(body, "    var null_val: FaustFloat");
     for field in &fields {
         let _ = writeln!(body, "    var {}: {}", field.mojo_name, field.type_text);
@@ -236,19 +268,56 @@ fn generate_mojo_module_step(
     let _ = writeln!(body);
 
     let _ = writeln!(body, "    @always_inline");
-    let _ = writeln!(body, "    def __init__(out dsp):");
-    let _ = writeln!(body, "        dsp.null_val = FaustFloat(0.0)");
-    for field in &fields {
+    // A batch struct is built over one state buffer of `state_bytes(voices)`
+    // bytes, which the constructor carves into its typed arenas, each aligned
+    // to 8 bytes: a `Pointer` cannot be null in Mojo, and a host allocates
+    // (possibly on a device) before it builds.
+    if layout.is_some() {
         let _ = writeln!(
             body,
-            "        dsp.{} = {}",
-            field.mojo_name, field.init_text
+            "    def __init__(out dsp, voices: S32, state: Ptr[UInt8]):"
         );
+        let _ = writeln!(body, "        var at = 0");
+    } else {
+        let _ = writeln!(body, "    def __init__(out dsp):");
+    }
+    let _ = writeln!(body, "        dsp.null_val = FaustFloat(0.0)");
+    for field in &fields {
+        match &field.param {
+            Some(_) if field.fir_name == fir::batch::VOICES_FIELD => {
+                let _ = writeln!(body, "        dsp.{} = voices", field.mojo_name);
+            }
+            Some(type_text) => {
+                let elem = type_text
+                    .strip_prefix("Ptr[")
+                    .and_then(|t| t.strip_suffix(']'))
+                    .unwrap_or(type_text);
+                let name = &field.mojo_name;
+                let _ = writeln!(
+                    body,
+                    "        dsp.{name} = state.unsafe_offset(at).unsafe_bitcast[{elem}]()"
+                );
+                let _ = writeln!(
+                    body,
+                    "        at += (Self.{name}_elements() * Int(voices) * size_of[{elem}]() + 7) // 8 * 8"
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    body,
+                    "        dsp.{} = {}",
+                    field.mojo_name, field.init_text
+                );
+            }
+        }
     }
     if !has_sample_rate {
         let _ = writeln!(body, "        dsp.sample_rate = S32(0)");
     }
     let _ = writeln!(body);
+    if let Some(layout) = &layout {
+        emitter.emit_arena_sizes(&mut body, layout)?;
+    }
 
     emitter.emit_api(
         &mut body,
@@ -272,6 +341,9 @@ fn generate_mojo_module_step(
 /// One DSP state field: struct, global or static declaration.
 #[derive(Debug, Clone)]
 struct Field {
+    /// The `__init__` parameter type for a field the batch struct is built
+    /// over (`fVoices`, the arenas); `None` otherwise.
+    param: Option<String>,
     fir_name: String,
     mojo_name: String,
     type_text: String,
@@ -351,173 +423,6 @@ fn emit_helpers(out: &mut String, helpers: &BTreeSet<Helper>) {
     }
 }
 
-/// Mojo keywords: never valid as an identifier, in any namespace.
-const MOJO_KEYWORDS: &[&str] = &[
-    "alias", "and", "as", "assert", "async", "await", "borrowed", "break", "case", "class",
-    "comptime", "continue", "def", "deinit", "del", "elif", "else", "except", "False", "finally",
-    "fn", "for", "from", "global", "if", "import", "in", "inout", "is", "lambda", "match", "mut",
-    "None", "nonlocal", "not", "or", "out", "owned", "pass", "raise", "raises", "read", "ref",
-    "return", "self", "Self", "struct", "trait", "True", "try", "var", "where", "while", "with",
-    "yield",
-];
-
-/// Names the emitted code refers to as functions, types or parameters: a local
-/// of that name would shadow them.
-const MOJO_LOCAL_RESERVED: &[&str] = &[
-    "abs",
-    "acos",
-    "acosh",
-    "asin",
-    "asinh",
-    "atan",
-    "atan2",
-    "atanh",
-    "bool",
-    "cbrt",
-    "ceil",
-    "copysign",
-    "cos",
-    "cosh",
-    "dfaust",
-    "erf",
-    "erfc",
-    "exp",
-    "exp2",
-    "f32",
-    "f64",
-    "faust_fmod",
-    "faust_idiv",
-    "faust_irem",
-    "faust_round",
-    "floor",
-    "inf",
-    "isfinite",
-    "isinf",
-    "isnan",
-    "log",
-    "log10",
-    "log2",
-    "max",
-    "meta",
-    "min",
-    "mod",
-    "nan",
-    "pow",
-    "print",
-    "range",
-    "remainder",
-    "rint",
-    "round",
-    "s32",
-    "s64",
-    "sin",
-    "sinh",
-    "sqrt",
-    "tan",
-    "tanh",
-    "trunc",
-    "u32",
-    "u64",
-    "ui",
-];
-
-/// The C++ `snakeCase` of `__mojo_utils.hh`, character for character.
-///
-/// Camel case is split with `_`, a run of digits stays together and is
-/// followed by `_` before a further character other than the last, and a
-/// leading `f_` is removed.
-#[must_use]
-pub(crate) fn snake_case(src: &str) -> String {
-    // The C++ function works on bytes; a non-ASCII name is kept as is rather
-    // than having its UTF-8 sequence split.
-    if !src.is_ascii() {
-        return src.to_owned();
-    }
-    let bytes = src.as_bytes();
-    let len = bytes.len();
-    let mut res = String::with_capacity(len * 2);
-    for i in 0..len {
-        let c = bytes[i];
-        let is_upper = c.is_ascii_uppercase();
-        let is_digit = c.is_ascii_digit();
-        let prev = (i > 0).then(|| bytes[i - 1]);
-        let prev_is_digit = prev.is_some_and(|p| p.is_ascii_digit());
-        let prev_is_lower = prev.is_some_and(|p| p.is_ascii_lowercase());
-        let prev_is_upper = prev.is_some_and(|p| p.is_ascii_uppercase());
-        let next_is_lower = bytes.get(i + 1).is_some_and(u8::is_ascii_lowercase);
-        if prev_is_digit {
-            if is_digit {
-                res.push(char::from(c));
-                continue;
-            }
-            if i + 1 < len && c != b'_' {
-                res.push('_');
-            }
-        }
-        if is_upper {
-            if i > 0 && (prev_is_lower || (prev_is_upper && next_is_lower)) {
-                res.push('_');
-            }
-            res.push(char::from(c.to_ascii_lowercase()));
-        } else {
-            res.push(char::from(c));
-        }
-    }
-    if let Some(rest) = res.strip_prefix("f_") {
-        return rest.to_owned();
-    }
-    res
-}
-
-/// An injective FIR-name to Mojo-identifier map for one namespace.
-#[derive(Debug, Default)]
-struct Renamer {
-    forward: HashMap<String, String>,
-    backward: HashMap<String, String>,
-    escape_reserved: bool,
-}
-
-impl Renamer {
-    fn new(escape_reserved: bool) -> Self {
-        Self {
-            escape_reserved,
-            ..Self::default()
-        }
-    }
-
-    /// Records an identifier that is not a FIR name (`null_val`, a method
-    /// parameter): a FIR name renamed onto it is a collision.
-    fn reserve(&mut self, fir_name: &str, mojo_name: &str) {
-        self.forward
-            .insert(fir_name.to_owned(), mojo_name.to_owned());
-        self.backward
-            .insert(mojo_name.to_owned(), fir_name.to_owned());
-    }
-
-    fn get(&mut self, fir_name: &str) -> Result<String, CodegenError> {
-        if let Some(name) = self.forward.get(fir_name) {
-            return Ok(name.clone());
-        }
-        let mut name = snake_case(fir_name);
-        if MOJO_KEYWORDS.contains(&name.as_str())
-            || (self.escape_reserved && MOJO_LOCAL_RESERVED.contains(&name.as_str()))
-        {
-            name.push('_');
-        }
-        if let Some(other) = self.backward.get(&name) {
-            return Err(CodegenError::new(
-                CodegenErrorCode::NameCollision,
-                format!(
-                    "FIR names `{other}` and `{fir_name}` both become the Mojo identifier `{name}`"
-                ),
-            ));
-        }
-        self.forward.insert(fir_name.to_owned(), name.clone());
-        self.backward.insert(name.clone(), fir_name.to_owned());
-        Ok(name)
-    }
-}
-
 /// Context-dependent receiver of `AddMetaDeclare`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EmitMode {
@@ -547,15 +452,24 @@ struct Emitter<'a> {
     scopes: Vec<HashMap<String, FirType>>,
     /// Number of loops around the statement being emitted.
     helpers: BTreeSet<Helper>,
+    /// The voice layout in batch mode (`MojoOptions::batch`).
+    batch: Option<fir::batch::VoiceLayout>,
 }
 
 impl<'a> Emitter<'a> {
-    fn new(store: &'a FirStore, options: &'a MojoOptions) -> Self {
+    fn new(
+        store: &'a FirStore,
+        options: &'a MojoOptions,
+        batch: Option<fir::batch::VoiceLayout>,
+    ) -> Self {
         let mut fields = Renamer::new(false);
         fields.reserve("\0null_val", "null_val");
         let mut locals = Renamer::new(true);
         for param in ["dsp", "sample_rate", "count", "inputs", "outputs"] {
             locals.reserve(param, param);
+        }
+        if batch.is_some() {
+            locals.reserve(fir::batch::VOICE_ARG, fir::batch::VOICE_ARG);
         }
         Self {
             store,
@@ -565,6 +479,7 @@ impl<'a> Emitter<'a> {
             field_types: HashMap::new(),
             scopes: Vec::new(),
             helpers: BTreeSet::new(),
+            batch,
         }
     }
 
@@ -594,12 +509,21 @@ impl<'a> Emitter<'a> {
                         let type_text = self.emit_type(&typ)?;
                         let init_text = match init {
                             Some(init) => self.emit_coerced(&typ, init)?,
+                            None if matches!(typ, FirType::Ptr(_)) && self.batch.is_some() => {
+                                String::new()
+                            }
                             None => self.zero_value(&typ)?,
                         };
                         let reset = init
                             .filter(|_| !matches!(typ, FirType::Array(..)))
                             .map(|init| (typ.clone(), init));
+                        let param = self.batch.as_ref().and_then(|layout| {
+                            (name == fir::batch::VOICES_FIELD
+                                || layout.arenas.iter().any(|a| a.name == name))
+                            .then(|| type_text.clone())
+                        });
                         out.push(Field {
+                            param,
                             fir_name: name,
                             mojo_name,
                             type_text,
@@ -619,6 +543,7 @@ impl<'a> Emitter<'a> {
                         let type_text = self.emit_type(&typ)?;
                         let init_text = self.table_literal(&elem_type, &values)?;
                         out.push(Field {
+                            param: None,
                             fir_name: name,
                             mojo_name,
                             type_text,
@@ -689,7 +614,7 @@ impl<'a> Emitter<'a> {
         }
         write_method(
             out,
-            "def instance_constants(mut dsp, imm sample_rate: S32) -> None:",
+            &self.voiced("def instance_constants(mut dsp, imm sample_rate: S32) -> None:"),
             &body,
         );
 
@@ -709,7 +634,7 @@ impl<'a> Emitter<'a> {
         }
         write_method(
             out,
-            "def instance_reset_user_interface(mut dsp) -> None:",
+            &self.voiced("def instance_reset_user_interface(mut dsp) -> None:"),
             &body,
         );
 
@@ -718,19 +643,33 @@ impl<'a> Emitter<'a> {
             Some(f) => self.emit_fun_body(&mut body, f, EmitMode::Default, None)?,
             None => write_pass(&mut body),
         }
-        write_method(out, "def instance_clear(mut dsp) -> None:", &body);
+        write_method(
+            out,
+            &self.voiced("def instance_clear(mut dsp) -> None:"),
+            &body,
+        );
+
+        // Batch: the instance lifecycle runs per voice, `class_init` once for
+        // all voices (design §3.5).
+        let voice = self.voice_arg();
+        let voice_only = voice.trim_end_matches(", ");
+        method(
+            out,
+            &self.voiced("def instance_init(mut dsp, imm sample_rate: S32) -> None:"),
+        );
+        let _ = writeln!(out, "        dsp.instance_constants({voice}sample_rate)");
+        let _ = writeln!(
+            out,
+            "        dsp.instance_reset_user_interface({voice_only})"
+        );
+        let _ = writeln!(out, "        dsp.instance_clear({voice_only})\n");
 
         method(
             out,
-            "def instance_init(mut dsp, imm sample_rate: S32) -> None:",
+            &self.voiced("def init(mut dsp, imm sample_rate: S32) -> None:"),
         );
-        out.push_str("        dsp.instance_constants(sample_rate)\n");
-        out.push_str("        dsp.instance_reset_user_interface()\n");
-        out.push_str("        dsp.instance_clear()\n\n");
-
-        method(out, "def init(mut dsp, imm sample_rate: S32) -> None:");
         out.push_str("        dsp.class_init(sample_rate)\n");
-        out.push_str("        dsp.instance_init(sample_rate)\n\n");
+        let _ = writeln!(out, "        dsp.instance_init({voice}sample_rate)\n");
 
         // C++ `MojoCodeContainer::writeGetJson`: `flattenJSON(generateJSONAux())`.
         method(out, "def get_json(imm dsp) -> String:");
@@ -769,7 +708,9 @@ impl<'a> Emitter<'a> {
         }
         write_method(
             out,
-            "def compute(mut dsp, var count: S32, var inputs: ImmStreams, var outputs: MutStreams) -> None:",
+            &self.voiced(
+                "def compute(mut dsp, var count: S32, var inputs: ImmStreams, var outputs: MutStreams) -> None:",
+            ),
             &body,
         );
         // `write_method` ends every method with a blank line; the struct is last.
@@ -819,12 +760,31 @@ impl<'a> Emitter<'a> {
         prefix: Option<&str>,
     ) -> Result<(), CodegenError> {
         if decl.name != "staticInit" {
-            faust_api::validate_canonical_dsp_api_signature(
-                &decl.name,
-                &decl.typ,
-                &decl.named_args,
-            )
-            .map_err(|msg| CodegenError::new(CodegenErrorCode::InvalidModuleSection, msg))?;
+            // A batch method carries `voice` after `dsp`; the rest must be the
+            // canonical signature.
+            let (typ, args) = match &self.batch {
+                Some(_) if fir::batch::INSTANCE_FUNCTIONS.contains(&decl.name.as_str()) => {
+                    let mut args = decl.named_args.clone();
+                    if args.len() > 1 {
+                        args.remove(1);
+                    }
+                    let typ = match &decl.typ {
+                        FirType::Fun { args: types, ret } if types.len() > 1 => {
+                            let mut types = types.clone();
+                            types.remove(1);
+                            FirType::Fun {
+                                args: types,
+                                ret: ret.clone(),
+                            }
+                        }
+                        other => other.clone(),
+                    };
+                    (typ, args)
+                }
+                _ => (decl.typ.clone(), decl.named_args.clone()),
+            };
+            faust_api::validate_canonical_dsp_api_signature(&decl.name, &typ, &args)
+                .map_err(|msg| CodegenError::new(CodegenErrorCode::InvalidModuleSection, msg))?;
         }
         let body = decl
             .body
@@ -1271,6 +1231,16 @@ impl<'a> Emitter<'a> {
     }
 
     fn zone(&mut self, var: &str) -> Result<String, CodegenError> {
+        // Batch: a control is per-voice arena state; `build_user_interface`
+        // describes it, and a host sets voice v of control i at
+        // `arena[voice_controls[i] * voices + v]` (design §6, D2).
+        if self
+            .batch
+            .as_ref()
+            .is_some_and(|layout| layout.placement(var).is_some())
+        {
+            return Ok("dsp.null_val".to_owned());
+        }
         Ok(format!("dsp.{}", self.fields.get(var)?))
     }
 
@@ -1917,5 +1887,7 @@ fn wrap_compile_options(options: &str) -> String {
     out
 }
 
+mod batch;
+mod names;
 #[cfg(test)]
 mod tests;

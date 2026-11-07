@@ -18,7 +18,7 @@ use fir::{AccessType, FirBinOp, FirBuilder, FirStore, FirType};
 
 fn emit(store: &FirStore, id: fir::FirId) -> String {
     let options = MojoOptions::default();
-    let mut emitter = Emitter::new(store, &options);
+    let mut emitter = Emitter::new(store, &options, None);
     emitter.scopes.push(std::collections::HashMap::new());
     emitter.emit_value(id).expect("value should emit")
 }
@@ -230,7 +230,7 @@ fn c_semantics_go_through_helpers_written_only_when_used() {
         )
     };
     let options = MojoOptions::default();
-    let mut emitter = Emitter::new(&store, &options);
+    let mut emitter = Emitter::new(&store, &options, None);
     emitter.scopes.push(std::collections::HashMap::new());
     assert_eq!(
         emitter.emit_value(div).unwrap(),
@@ -265,7 +265,7 @@ fn soundfiles_are_rejected() {
         b.add_soundfile("snd", "fSoundfile0")
     };
     let options = MojoOptions::default();
-    let mut emitter = Emitter::new(&store, &options);
+    let mut emitter = Emitter::new(&store, &options, None);
     let mut out = String::new();
     let mut mode = EmitMode::Ui;
     let err = emitter
@@ -445,7 +445,7 @@ fn methods_with_loops_alias_their_receiver() {
         b.simple_for_loop("i0", count, outer_body, false)
     };
     let options = MojoOptions::default();
-    let mut emitter = Emitter::new(&store, &options);
+    let mut emitter = Emitter::new(&store, &options, None);
     emitter
         .field_types
         .insert("fRec0".to_owned(), FirType::Float64);
@@ -490,4 +490,246 @@ fn methods_with_loops_alias_their_receiver() {
         "    {}\n        ref dsp = self\n",
         aliased(signature)
     )));
+}
+
+// ------------------------------------------------------------------ batch
+
+fn batch_options() -> MojoOptions {
+    MojoOptions {
+        batch: true,
+        ..MojoOptions::default()
+    }
+}
+
+/// `MojoOptions::batch`: the struct is built over one state buffer, sizes
+/// its arenas, reaches its controls through the control table, and the
+/// instance lifecycle takes the voice (design
+/// `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md` §3.5).
+/// A module shaped like the transform lane's output (fields declared without
+/// initialiser, set by the lifecycle): a slider `fFreq`, a recursion `fRec0`,
+/// a delay line `fVec0` with its counter `fIOTA`. The shared fixtures declare
+/// initialised fields, which the voice layout refuses.
+fn build_batch_test_module() -> (FirStore, fir::FirId) {
+    use fir::{NamedType, SliderRange, SliderType};
+    let ff = FirType::FaustFloat;
+    let i32t = FirType::Int32;
+    let arr = |t: FirType, n: usize| FirType::Array(Box::new(t), n);
+    let dsp = NamedType {
+        name: "dsp".to_owned(),
+        typ: FirType::Ptr(Box::new(FirType::Obj)),
+    };
+    let sr = NamedType {
+        name: "sample_rate".to_owned(),
+        typ: i32t.clone(),
+    };
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let fun = |b: &mut FirBuilder<'_>, name: &str, extra: &[NamedType], body| {
+        let mut args = vec![dsp.clone()];
+        args.extend_from_slice(extra);
+        let typ = FirType::Fun {
+            args: args.iter().map(|a| a.typ.clone()).collect(),
+            ret: Box::new(FirType::Void),
+        };
+        b.declare_fun(name, typ, &args, Some(body), false)
+    };
+    let fields = [
+        b.declare_var("fSampleRate", i32t.clone(), AccessType::Struct, None),
+        b.declare_var("fFreq", ff.clone(), AccessType::Struct, None),
+        b.declare_var("fRec0", arr(ff.clone(), 2), AccessType::Struct, None),
+        b.declare_var("fVec0", arr(ff.clone(), 8), AccessType::Struct, None),
+        b.declare_var("fIOTA", i32t.clone(), AccessType::Struct, None),
+    ];
+    let srv = b.load_var("sample_rate", AccessType::FunArgs, i32t.clone());
+    let set_sr = b.store_var("fSampleRate", AccessType::Struct, srv);
+    let constants_body = b.block(&[set_sr]);
+    let constants = fun(
+        &mut b,
+        "instanceConstants",
+        std::slice::from_ref(&sr),
+        constants_body,
+    );
+    let init = b.float32(440.0);
+    let init = b.cast(ff.clone(), init);
+    let set_freq = b.store_var("fFreq", AccessType::Struct, init);
+    let reset_body = b.block(&[set_freq]);
+    let reset = fun(&mut b, "instanceResetUserInterface", &[], reset_body);
+    let zero = b.int32(0);
+    let one = b.int32(1);
+    let fzero = b.float32(0.0);
+    let fzero = b.cast(ff.clone(), fzero);
+    let l0 = b.load_var("l0", AccessType::Loop, i32t.clone());
+    let clear_vec = b.store_table("fVec0", AccessType::Struct, l0, fzero);
+    let loop_body = b.block(&[clear_vec]);
+    let eight = b.int32(8);
+    let clear_loop = b.simple_for_loop("l0", eight, loop_body, false);
+    let clear_iota = b.store_var("fIOTA", AccessType::Struct, zero);
+    let clear_body = b.block(&[clear_loop, clear_iota]);
+    let clear = fun(&mut b, "instanceClear", &[], clear_body);
+    let slider = b.add_slider(
+        SliderType::Horizontal,
+        "freq",
+        "fFreq",
+        SliderRange {
+            init: 440.0,
+            lo: 20.0,
+            hi: 2000.0,
+            step: 1.0,
+        },
+    );
+    let ui_body = b.block(&[slider]);
+    let ui_arg = NamedType {
+        name: "ui".to_owned(),
+        typ: FirType::UI,
+    };
+    let ui = fun(&mut b, "buildUserInterface", &[ui_arg], ui_body);
+    let freq = b.load_var("fFreq", AccessType::Struct, ff.clone());
+    let rec1 = b.load_table("fRec0", AccessType::Struct, one, ff.clone());
+    let sum = b.binop(FirBinOp::Add, freq, rec1, ff.clone());
+    let set_rec = b.store_table("fRec0", AccessType::Struct, zero, sum);
+    let iota = b.load_var("fIOTA", AccessType::Struct, i32t.clone());
+    let seven = b.int32(7);
+    let at = b.binop(FirBinOp::And, iota, seven, i32t.clone());
+    let rec0 = b.load_table("fRec0", AccessType::Struct, zero, ff.clone());
+    let set_vec = b.store_table("fVec0", AccessType::Struct, at, rec0);
+    let next = b.binop(FirBinOp::Add, iota, one, i32t.clone());
+    let set_iota = b.store_var("fIOTA", AccessType::Struct, next);
+    let compute_body = b.block(&[set_rec, set_vec, set_iota]);
+    let streams = FirType::Ptr(Box::new(FirType::Ptr(Box::new(ff.clone()))));
+    let compute = fun(
+        &mut b,
+        "compute",
+        &[
+            NamedType {
+                name: "count".to_owned(),
+                typ: i32t.clone(),
+            },
+            NamedType {
+                name: "inputs".to_owned(),
+                typ: streams.clone(),
+            },
+            NamedType {
+                name: "outputs".to_owned(),
+                typ: streams,
+            },
+        ],
+        compute_body,
+    );
+    let dsp_struct = b.block(&fields);
+    let globals = b.block(&[]);
+    let functions = b.block(&[constants, reset, clear, ui, compute]);
+    let static_decls = b.block(&[]);
+    let root = b.module(
+        0,
+        1,
+        "mydsp",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+    (store, root)
+}
+
+#[test]
+fn batch_mode_emits_the_batch_contract() {
+    let (store, module) = build_batch_test_module();
+    let out = generate_mojo_module(&store, module, &batch_options()).unwrap();
+    for needle in [
+        "struct mydsp(FaustDspBatch):",
+        "    def __init__(out dsp, voices: S32, state: Ptr[UInt8]):",
+        "        dsp.voices = voices",
+        "    def state_bytes(voices: Int) -> Int:",
+        "    def num_controls() -> Int:\n        return 1\n",
+        "    def set_control(mut dsp, var voice: S32, index: Int, value: FaustFloat) -> None:",
+        "    def get_control(imm dsp, var voice: S32, index: Int) -> FaustFloat:",
+        "def instance_constants(mut dsp, var voice: S32, imm sample_rate: S32) -> None:",
+        "def instance_reset_user_interface(mut dsp, var voice: S32) -> None:",
+        "def class_init(mut dsp, imm sample_rate: S32) -> None:",
+        "ui.add_horizontal_slider(\"freq\", dsp.null_val, FaustFloat(",
+        "    def state_faust_float_elements() -> Int:\n        return 11\n",
+        "    def state_int32_elements() -> Int:\n        return 2\n",
+    ] {
+        assert!(out.contains(needle), "missing `{needle}`\n{out}");
+    }
+    assert!(
+        out.contains("(mut self, var voice: S32, var count: S32, var inputs: ImmStreams")
+            || out.contains("(mut dsp, var voice: S32, var count: S32, var inputs: ImmStreams"),
+        "{out}"
+    );
+    // State is reached through the arenas only: no per-voice field remains.
+    assert!(!out.contains("dsp.freq"), "{out}");
+    assert!(!out.contains("dsp.rec0"), "{out}");
+    assert!(out.contains("[unsafe_offset = "), "{out}");
+    // Every arena is carved from the state buffer and sized.
+    let carved = out.matches(".unsafe_bitcast[").count();
+    let sized = out.matches("_elements() -> Int:").count();
+    assert!(
+        carved > 0 && carved == sized,
+        "{carved} carved, {sized} sized\n{out}"
+    );
+}
+
+/// The lifecycle contract (`porting/backend-lifecycle-contract-en.md`) in
+/// its batch form: `class_init` once for all voices, `instance_init(voice)`
+/// = constants, reset, clear of that voice, never `class_init`.
+#[test]
+fn batch_lifecycle_conformance() {
+    for (name, build) in [
+        (
+            "batch",
+            build_batch_test_module as fn() -> (FirStore, fir::FirId),
+        ),
+        (
+            "passthrough",
+            crate::fixtures::build_passthrough_test_module,
+        ),
+        (
+            "math_intrinsics",
+            crate::fixtures::build_math_intrinsics_test_module,
+        ),
+    ] {
+        let (store, module) = build();
+        let out = generate_mojo_module(&store, module, &batch_options()).unwrap();
+        let init = method_body(
+            &out,
+            "def init(mut dsp, var voice: S32, imm sample_rate: S32) -> None:",
+        );
+        assert_eq!(
+            init.trim(),
+            "dsp.class_init(sample_rate)\n        dsp.instance_init(voice, sample_rate)",
+            "{name}"
+        );
+        let instance_init = method_body(
+            &out,
+            "def instance_init(mut dsp, var voice: S32, imm sample_rate: S32) -> None:",
+        );
+        assert_eq!(
+            instance_init.trim(),
+            "dsp.instance_constants(voice, sample_rate)\n        dsp.instance_reset_user_interface(voice)\n        dsp.instance_clear(voice)",
+            "{name}"
+        );
+        assert!(!instance_init.contains("class_init"), "{name}");
+    }
+}
+
+/// Without the option the contract is the scalar one.
+#[test]
+fn the_default_mode_keeps_the_scalar_contract() {
+    let (store, module) = build_batch_test_module();
+    let out = generate_mojo_module(&store, module, &MojoOptions::default()).unwrap();
+    assert!(out.contains("struct mydsp(FaustDsp):"));
+    assert!(out.contains("    def __init__(out dsp):"));
+    assert!(!out.contains("voice"), "{out}");
+}
+
+/// A module the voice layout refuses (here a field with an initialiser, as
+/// the shared fixtures declare) fails with the layout's reason.
+#[test]
+fn a_module_the_layout_refuses_is_a_codegen_error() {
+    let (store, module) = build_sine_phasor_test_module();
+    let err = generate_mojo_module(&store, module, &batch_options()).unwrap_err();
+    assert_eq!(err.code(), CodegenErrorCode::InvalidModuleSection);
+    assert!(err.to_string().contains("batch voice layout"), "{err}");
 }

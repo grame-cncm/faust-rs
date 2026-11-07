@@ -121,6 +121,8 @@ KNOWN_FAIL_mojo := sound
 # computes an integer power through f64 even in -single (as C++ does), and the
 # Apple GPU has no f64.
 KNOWN_FAIL_mojo-gpu := sound math
+# The batch lane refuses the same two (the layout refuses soundfiles too).
+KNOWN_FAIL_mojo-gpu-batch := sound math
 # Programs whose GPU and CPU f32 runs drift apart from a rounding-level start
 # amplified by feedback (largest GPU/CPU gap over the 15,000 frames, Mojo
 # 1.3.0.dev2026110705, Apple M5): the GPU lane runs them with every check but

@@ -27,6 +27,10 @@
 # - voice 0 is not silent where its CPU run is not (a kernel can return
 #   without writing anything, with no error raised).
 #
+# The channel data is passed to the compute kernel although it reaches it
+# through the channel table: on Metal a kernel reading a buffer that is not
+# one of its arguments read zeros and stale values (found in G3.5).
+#
 # Channel pointers live in device memory: a pointer into the thread's
 # private memory passed to a `compute` that is not inlined loses its
 # writes on Metal (Mojo 1.3.0.dev2026110705), silently.
@@ -44,6 +48,7 @@ comptime GPU_CPU_TOLERANCE = 1e-4
 
 def voices_kernel(
     dsps: Ptr[UInt8, MutAnyOrigin],
+    data: Ptr[FaustFloat, MutAnyOrigin],
     channels: Ptr[UInt64, MutAnyOrigin],
     nvoices: S32,
     n_ins: S32,
@@ -205,7 +210,7 @@ def main() raises -> None:
                 )
         ctx.enqueue_copy(dst_buf=data, src_buf=staging)
         ctx.enqueue_function[voices_kernel](
-            dsps, channels, S32(NVOICES), S32(n_ins), S32(n_outs), S32(count),
+            dsps, data, channels, S32(NVOICES), S32(n_ins), S32(n_outs), S32(count),
             grid_dim=grid(NVOICES), block_dim=GPU_BLOCK_DIM,
         )
         ctx.enqueue_copy(dst_buf=staging, src_buf=data)
