@@ -365,7 +365,9 @@ scratch pixi environment (nothing installed system-wide), test runs muted
 notes scripted rather than MIDI.
 
 **What landed.** `make mojo-gpu-poly` (`tests/impulse-tests/Makefile`):
-`poly/voice.dsp` (a self-contained voice: sawtooth, two one-pole low-passes,
+`tests/corpus/gpu_voice_saw.dsp` (first committed as
+`tests/impulse-tests/poly/voice.dsp`; a self-contained voice: sawtooth, two
+one-pole low-passes,
 a 113-sample comb, an envelope on `gate`; `freq`, `gain`, `gate`) emitted with
 the batch contract, concatenated with `archs/polymojogpubatch.mojo` and
 linked with `-lportaudio` (`PORTAUDIO_LIB`). Each 256-frame block: the

@@ -189,9 +189,10 @@ fn options(opt_level: i32) -> InterpOptions {
     }
 }
 
-#[test]
-fn every_voice_of_a_batch_matches_an_independent_scalar_instance() {
-    for &(name, source) in PROGRAMS {
+/// The differential for one program: every voice of its batch layout,
+/// bit-identical to an independent scalar instance.
+fn check_program(name: &str, source: &str) {
+    {
         let (store, module) = flat_module(name, source);
         let (bstore, broot, layout) = fir::batch::layout_voices(&store, module)
             .unwrap_or_else(|e| panic!("{name}: layout refused: {e}"));
@@ -231,6 +232,28 @@ fn every_voice_of_a_batch_matches_an_independent_scalar_instance() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn every_voice_of_a_batch_matches_an_independent_scalar_instance() {
+    for &(name, source) in PROGRAMS {
+        check_program(name, source);
+    }
+}
+
+/// The GPU batch voices of the golden corpus (`tests/corpus/gpu_*.dsp`), the
+/// programs the GPU measurements of
+/// `porting/faust-gpu-audio-synthesis-2026-11-07-en.md` used: the same
+/// differential, on the files themselves.
+#[test]
+fn the_corpus_gpu_voices_match_their_scalar_instances() {
+    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus");
+    for name in ["gpu_voice_saw", "gpu_partial_sine", "gpu_mode_resonator"] {
+        let path = corpus.join(format!("{name}.dsp"));
+        let source =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        check_program(name, &source);
     }
 }
 

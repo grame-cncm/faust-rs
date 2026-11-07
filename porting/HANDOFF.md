@@ -67,8 +67,9 @@ Commits since `main` (oldest first):
   | `mojo-gpu-bench-batch` | timings for the batch contract |
   | `mojo-gpu-poly` | G4, the real-time runner |
 
-  Harnesses live in `archs/*mojo*.mojo`. The runner's instrument is
-  `poly/voice.dsp`.
+  Harnesses live in `archs/*mojo*.mojo`. The GPU voices (the runner's
+  instrument, the additive partial, the modal resonator) are in
+  `tests/corpus/gpu_*.dsp`.
 
 ## Decisions / Constraints (important for resume)
 

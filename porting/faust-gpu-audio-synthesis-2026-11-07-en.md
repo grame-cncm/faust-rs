@@ -213,8 +213,9 @@ PortAudio's blocking API, with voices driven by scripted notes.
 ### Additive synthesis: a good fit at scale (measured)
 
 Each partial is one instance of a small oscillator program with its own
-frequency and gain, and the partials are summed on the device. Measured at
-256 frames:
+frequency and gain (`tests/corpus/gpu_partial_sine.dsp`). Measured at 256
+frames with the bench harness, which copies every partial's output back to
+the host:
 
 | partials | GPU | CPU threads | GPU vs CPU |
 |---|---|---|---|
@@ -224,7 +225,10 @@ frequency and gain, and the partials are summed on the device. Measured at
 | 65,536 | 3.1 ms | 12.7 ms | ×4.1 |
 
 65,536 independently controlled partials fit in one 256-frame block, where the
-CPU threads stop between 25,000 and 30,000.
+CPU threads stop between 25,000 and 30,000. These GPU times are conservative:
+at 65,536 partials the copies of all the partials' outputs take 2.3 ms of the
+3.1 ms, and the kernel about 1.0 ms. An instrument sums the partials on the
+device and copies only the mix, as the real-time runner does (§2.5).
 
 Two qualifications:
 
@@ -238,9 +242,10 @@ Two qualifications:
 
 ### Modal synthesis: a good fit (measured)
 
-Each mode is a resonator instance (frequency, T60, gain). All modes are fed
-the same excitation, which is broadcast as their input, and their outputs are
-summed on the device:
+Each mode is a resonator instance (frequency, T60, gain;
+`tests/corpus/gpu_mode_resonator.dsp`). All modes are fed the same
+excitation, broadcast as their input. Measured as for the partials, with
+every mode's output copied back:
 
 | modes | GPU | CPU threads | GPU vs CPU |
 |---|---|---|---|
@@ -248,6 +253,19 @@ summed on the device:
 | 4,096 | 0.38 ms | 1.06 ms | ×2.8 |
 | 16,384 | 1.6 ms | 4.3 ms | ×2.7 |
 | 65,536 | 6.3 ms | 17.4 ms | ×2.7 |
+
+The number of modes is not in the Faust program, which describes one mode:
+it is the voice count the host chooses at run time (`BENCH_VOICES`, passed
+to the struct's constructor and launched as one GPU thread per mode). In
+these runs every mode kept the default parameters (440 Hz, T60 of 1 s): the
+cost does not depend on the values, but the table measures N resonators,
+not a tuned modal model, which would set each mode's frequency, decay and
+gain with `set_control`, as the real-time runner sets each voice's
+frequency. The same holds for the partials above.
+
+At 65,536 modes the copies take 5.0 ms and the kernel 1.9 ms: summed on the
+device, the bank would fit in a 256-frame block where the table shows it
+just over.
 
 This suits large modal models (bells, plates, rooms described by thousands of
 modes) and scenes of many modal objects. The excitation input and the output
@@ -383,7 +401,13 @@ which grows as N × block × tape width.
   - `make mojo-gpu` and `make mojo-gpu-batch` (correctness);
   - `make mojo-gpu-bench` and `make mojo-gpu-bench-batch` (cost);
   - `make mojo-gpu-poly` (real time).
-- The additive and modal measurements of §5 used two self-contained voices
-  (a wrapped-phase sine partial, and a two-pole resonator with T60 decay). They
-  were run with the bench harnesses at 256 frames, and are not part of the
-  repository.
+- The GPU voices measured for §2.5 and §5 are in the golden corpus:
+  - `tests/corpus/gpu_voice_saw.dsp`, the real-time runner's instrument;
+  - `tests/corpus/gpu_partial_sine.dsp`, the additive partial;
+  - `tests/corpus/gpu_mode_resonator.dsp`, the modal resonator.
+  `crates/compiler/tests/batch_voices_interp.rs` checks all three in CI: every
+  voice of their batch layout is bit-identical to an independent scalar
+  instance. The bank figures are reproduced, within 15 %, by
+  `make -C tests/impulse-tests mojo-gpu-bench-batch BENCH_DSPDIR=../corpus
+  BENCH_PROGRAMS="gpu_partial_sine gpu_mode_resonator" BENCH_NAME=banks`
+  (and `mojo-gpu-bench` with the same variables for the CPU columns).

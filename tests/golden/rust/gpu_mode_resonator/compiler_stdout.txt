@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_mode_resonator.dsp
+bytes=1283
+lines=25
+fnv1a64=025ffb7e1cb4b880

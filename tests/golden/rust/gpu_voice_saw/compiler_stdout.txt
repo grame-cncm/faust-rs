@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_voice_saw.dsp
+bytes=1117
+lines=27
+fnv1a64=55d9e40708f94e9d

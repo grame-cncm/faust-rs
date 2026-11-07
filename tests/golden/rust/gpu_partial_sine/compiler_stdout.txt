@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_partial_sine.dsp
+bytes=1137
+lines=21
+fnv1a64=8f5e0c85183b42bb

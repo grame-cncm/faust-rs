@@ -324,7 +324,7 @@ mojo-gpu-batch:
 	  MOJOBUILDOPTIONS="-O3 -D DFAUST=DType.float32 $(MOJOGPUOPTIONS)"
 
 # A polyphonic instrument played in real time (G4): POLY_VOICES voices of
-# poly/voice.dsp on the GPU with the batch contract, mixed on the device and
+# POLY_DSP (../corpus/gpu_voice_saw.dsp) on the GPU with the batch contract, mixed on the device and
 # written through PortAudio (muted unless POLY_AUDIBLE=audible); fails on an
 # underrun. PORTAUDIO_LIB names the directory of libportaudio.
 MOJO ?= mojo
@@ -332,11 +332,12 @@ POLY_VOICES ?= 256
 POLY_SECONDS ?= 10
 POLY_BLOCK ?= 256
 POLY_AUDIBLE ?=
+POLY_DSP ?= ../corpus/gpu_voice_saw.dsp
 PORTAUDIO_LIB ?= /opt/homebrew/lib
 mojo-gpu-poly:
 	cargo build --release -p compiler --example mojo_batch
 	mkdir -p build/mojo-gpu-poly
-	../../target/release/examples/mojo_batch poly/voice.dsp -o build/mojo-gpu-poly/voice.mojo
+	../../target/release/examples/mojo_batch $(POLY_DSP) -o build/mojo-gpu-poly/voice.mojo
 	cat archs/impulsemojo.mojo build/mojo-gpu-poly/voice.mojo archs/polymojogpubatch.mojo > build/mojo-gpu-poly/poly_main.mojo
 	$(MOJO) build build/mojo-gpu-poly/poly_main.mojo -o build/mojo-gpu-poly/poly -O3 -D DFAUST=DType.float32 \
 	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)

@@ -13,6 +13,10 @@
 # emitted by the `mojo_batch` example of the compiler crate (the mode has no
 # faust-rs option, decision D3) and timed by `archs/benchmojogpubatch.mojo`,
 # into build/mojo-gpu-bench-batch/results.csv with the same GPU columns.
+#
+# BENCH_DSPDIR reads the programs from another directory, for instance the
+# GPU voices of the golden corpus (`../corpus`, `gpu_partial_sine`,
+# `gpu_mode_resonator`); BENCH_NAME names the results file (`results`).
 
 include common.mk
 
@@ -24,6 +28,8 @@ BENCH_VOICES ?= 64 256 1024 4096 16384 65536
 BENCH_BLOCKS ?= 64 128 256 512
 BENCH_TIMED_BLOCKS ?= 100
 BENCH_MAX_BYTES ?= 4000000000
+BENCH_DSPDIR ?= $(dspdir)
+BENCH_NAME ?= results
 MOJOBUILDOPTIONS ?= -O3 -D DFAUST=DType.float32
 ARCH_MOJO := archs/impulsemojo.mojo
 ifeq ($(BENCH_LAYOUT),batch)
@@ -39,20 +45,20 @@ endif
 binaries := $(BENCH_PROGRAMS:%=build/$(outdir)/%)
 
 .PHONY: all
-all: build/$(outdir)/results.csv
+all: build/$(outdir)/$(BENCH_NAME).csv
 
 build/$(outdir)/.dir:
 	mkdir -p build/$(outdir)
 	touch $@
 
-build/$(outdir)/%: $(dspdir)/%.dsp $(ARCH_MOJO) $(ARCH_BENCH) | build/$(outdir)/.dir
+build/$(outdir)/%: $(BENCH_DSPDIR)/%.dsp $(ARCH_MOJO) $(ARCH_BENCH) | build/$(outdir)/.dir
 	$(GENERATE)
 	cat $(ARCH_MOJO) build/$(outdir)/$*.mojo $(ARCH_BENCH) > build/$(outdir)/$*_main.mojo
 	$(MOJO) build build/$(outdir)/$*_main.mojo -o $@ $(MOJOBUILDOPTIONS)
 
 # Runs one binary at a time: concurrent runs would share the device and
 # the cores, and the timings would mean nothing.
-build/$(outdir)/results.csv: $(binaries)
+build/$(outdir)/$(BENCH_NAME).csv: $(binaries)
 	$(firstword $(binaries)) --header > $@.tmp
 	for p in $(BENCH_PROGRAMS); do \
 	  bytes=$$(build/$(outdir)/$$p --state-bytes); \
