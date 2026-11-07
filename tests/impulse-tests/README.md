@@ -63,6 +63,12 @@ See the design write-up in
      device package, tested with Mojo 1.3.0.dev2026110705 and `modular`
      26.8.0.dev2026110705 on Apple silicon (plan:
      `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`).
+   - `make mojo-gpu-bench` — the cost model of that lane: five programs over
+     64 to 65,536 voices and 64 to 512-frame blocks, GPU (full block, launch,
+     copies, empty kernel) against the same voices on 1, 4 and 10 CPU threads,
+     to `build/mojo-gpu-bench/results.csv` (`archs/benchmojogpu.mojo`,
+     `Make.mojogpubench`; `BENCH_PROGRAMS`, `BENCH_VOICES`, `BENCH_BLOCKS`
+     narrow it). Runs serially; about 10 minutes.
    - `make cmajor` — faust-rs emits scalar-double Cmajor, `cmaj generate
      --target=cpp` produces a native class, and the pinned C++ Faust
      `cmajor_cpp_dsp` adapter runs the upstream impulse protocol. Each DSP uses

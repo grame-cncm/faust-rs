@@ -1,0 +1,51 @@
+# Cost of many voices per program on the GPU against the CPU (plan
+# porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md, G2).
+#
+# For every program of BENCH_PROGRAMS, the faust-rs `-single` Mojo output is
+# concatenated between `archs/impulsemojo.mojo` and `archs/benchmojogpu.mojo`,
+# built once, and run over BENCH_VOICES x BENCH_BLOCKS; the rows go to
+# build/mojo-gpu-bench/results.csv. Voice counts whose state exceeds
+# BENCH_MAX_BYTES are skipped. Opt-in, like `make mojo-gpu`, and as slow as
+# the sweep is large (a few minutes by default).
+
+include common.mk
+
+outdir := mojo-gpu-bench
+MOJO ?= mojo
+BENCH_PROGRAMS ?= APF osc freeverb zita_rev1 karplus32
+BENCH_VOICES ?= 64 256 1024 4096 16384 65536
+BENCH_BLOCKS ?= 64 128 256 512
+BENCH_TIMED_BLOCKS ?= 100
+BENCH_MAX_BYTES ?= 4000000000
+MOJOBUILDOPTIONS ?= -O3 -D DFAUST=DType.float32
+ARCH_MOJO := archs/impulsemojo.mojo
+ARCH_BENCH := archs/benchmojogpu.mojo
+
+binaries := $(BENCH_PROGRAMS:%=build/$(outdir)/%)
+
+.PHONY: all
+all: build/$(outdir)/results.csv
+
+build/$(outdir)/.dir:
+	mkdir -p build/$(outdir)
+	touch $@
+
+build/$(outdir)/%: $(dspdir)/%.dsp $(ARCH_MOJO) $(ARCH_BENCH) | build/$(outdir)/.dir
+	$(FAUST_RS) -lang mojo -single -cn mydsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.mojo
+	cat $(ARCH_MOJO) build/$(outdir)/$*.mojo $(ARCH_BENCH) > build/$(outdir)/$*_main.mojo
+	$(MOJO) build build/$(outdir)/$*_main.mojo -o $@ $(MOJOBUILDOPTIONS)
+
+# Runs one binary at a time: concurrent runs would share the device and
+# the cores, and the timings would mean nothing.
+build/$(outdir)/results.csv: $(binaries)
+	$(firstword $(binaries)) --header > $@.tmp
+	for p in $(BENCH_PROGRAMS); do \
+	  bytes=$$(build/$(outdir)/$$p --state-bytes); \
+	  for n in $(BENCH_VOICES); do \
+	    if [ $$((n * bytes)) -gt $(BENCH_MAX_BYTES) ]; then continue; fi; \
+	    for b in $(BENCH_BLOCKS); do \
+	      build/$(outdir)/$$p $$p $$n $$b $(BENCH_TIMED_BLOCKS) >> $@.tmp || exit 1; \
+	    done; \
+	  done; \
+	done
+	mv $@.tmp $@

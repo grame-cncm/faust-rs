@@ -2,8 +2,8 @@
 
 Date: 2026-11-07
 
-Status: **G1 landed 2026-11-07 on Mojo 1.3 (§4, outcome §7); G2 to G4
-not started.** §2 records a hand-written probe run
+Status: **G1 and G2 landed 2026-11-07 on Mojo 1.3 (§4; outcomes §7, §8);
+G2 calls for G3; G3 and G4 not started.** §2 records a hand-written probe run
 on the day; no file of the repository changed for it.
 
 ## Scope
@@ -289,3 +289,66 @@ GPU flushes denormals.
 
 **Not done in G1.** No timing (G2); the voice count is fixed at 64
 (`MOJOGPUOPTIONS="-D NVOICES=<n>"` changes it).
+
+## 8. G2 outcome (2026-11-07)
+
+Same machine and toolchain as §7. `make mojo-gpu-bench`
+(`tests/impulse-tests/Make.mojogpubench`, harness
+`archs/benchmojogpu.mojo`) builds five programs once each and runs them over
+64 to 65,536 voices and blocks of 64 to 512 frames, serially, writing
+`build/mojo-gpu-bench/results.csv` (not versioned). Per configuration: the
+full block (inputs in, launch, outputs out, synchronise), the launch alone,
+the copies alone and an empty kernel, each the median of 100 blocks after
+20 warm-up blocks; the same voices on 1 CPU thread and split over 4 and 10
+threads with `parallelize` (CPU timings taken on at most 4,096 voices and
+scaled above); voice 0 compared with a CPU instance fed the same blocks
+(gap 9.5e-7 to 3.9e-5; 0 for `freeverb` and `karplus32`). Inputs
+are a low-level sine, so no state decays into denormals. Voice counts whose
+state exceeds 4 GB are skipped.
+
+**Two findings change the reading of §2.2.**
+
+- *Warm-up matters on the device.* Over 20 blocks the 1,024-voice `APF`
+  block measured 360 µs, over 200 blocks 235 µs; the probe of §2.2 had no
+  warm-up and took a mean. Its small-count figures were cold: 1,024 voices
+  at 256 frames now take 215 µs (§2.2: 336 µs), 4,096 take 372 µs (651).
+  The large counts reproduce within 10 % (16,384: 1,535 µs against 1,700;
+  65,536: 6,371 µs against 5,847). The first pass criterion of G2 holds for
+  those, and not for the small counts, where the measurement of §2.2 was
+  the defect.
+- *A fixed floor of about 215 µs per block*: an empty kernel and its
+  synchronisation, independent of the voice count and the block size. The
+  copies add up to 4.4 ms at 65,536 `APF` voices of 256 frames (134 MB per
+  block, in and out).
+
+**Where the device beats the CPU.** The CPU baseline is the faster of 4 and
+10 threads (10 is rarely faster: the 6 extra cores are efficiency cores and
+the slices are equal):
+
+| program | state per voice | GPU faster than the CPU from | best ratio, GPU vs CPU threads (vs 1 core) |
+|---|---|---|---|
+| `APF` | 32 B | 1,024 voices at 256–512 frames, 4,096 at 64–128 | ×3.6 at 4,096 voices, 256 frames (×13.7) |
+| `osc` | 256 KB (its table) | never (up to 4,096) | ×0.87 at 4,096, 256 frames (×1.9) |
+| `freeverb` | 150 KB | never | ×0.56 at 1,024, 64 frames (×1.2) |
+| `zita_rev1` | 480 KB | never | ×0.58 at 1,024, 64 frames (×1.7) |
+| `karplus32` | 482 KB | never | ×0.47 at 256, 256 frames (×1.7) |
+
+The second pass criterion of G2 is met: a crossover for `APF`, "never" for
+the four others. Real-time capacity on the grid measured (powers of four
+of the voice count) is the same on the device and on the CPU threads for
+`APF` (16,384 voices), `osc` (4,096) and `karplus32` (256), and lower on
+the device for `freeverb` and `zita_rev1` (256 against 1,024). For `APF`,
+the device does not play more voices; it frees the CPU cores.
+
+**The programs with large state get worse as voices are added.** `freeverb`
+at 256 frames: 1.3 ms for 256 voices, 6.5 ms for 1,024 (×5 for ×4 voices),
+102 ms for 4,096 (×16 for ×4). The launch alone carries it (the copies
+take 0.7 ms at 4,096 voices), so the cost is the kernel reading its state: 150 KB per voice
+is 600 MB for 4,096 voices, far beyond the device caches, read by threads
+that each walk their own structure at a stride of one structure. That is
+the condition §3 set for G3, so **G2 calls for G3** (structure-of-arrays
+layout), for `freeverb`, `zita_rev1` and `karplus32` first. For `osc`, the
+state is its 256 KB table, the same for every voice: sharing the tables
+(§4) is the cheaper fix there, and G3 would not help a table read at a
+data-dependent index.
+
