@@ -2,7 +2,8 @@
 
 Date: 2026-11-07
 
-Status: **design; decisions D1 to D4 open (§6); nothing implemented.**
+Status: **design; decisions D1 to D4 taken 2026-11-07 (§6); G3.0 done,
+G3.2 next; nothing implemented.**
 Parent plan: `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
 (G3 in §3, the measurements that call for it in §8).
 
@@ -214,7 +215,19 @@ Each with its deliverable and pass criterion fixed before it starts.
   whether the device then beats the four performance cores. If the gain is
   under ×2, the emitter mode does not land and the result is recorded.
 
-## 6. Decisions open before G3.2
+## 6. Decisions (taken 2026-11-07)
+
+Answered by the user on 2026-11-07, each the recommended option:
+
+- **D1: the voice count is fixed at run time** (arenas sized by the host).
+- **D2: controls are per voice**, with the table of control bases.
+- **D3: an emitter option only** (`MojoOptions`), no CLI surface until G4;
+  no registry entry for a CLI option, one for the generated batch contract
+  when G3.5 lands.
+- **D4: the differential test runs in the Rust suite through the
+  interpreter**, which therefore accepts the batch signatures (G3.4).
+
+The options as they were put:
 
 - **D1 — Voice count: at run time or at compile time.** Run time
   (recommended): one build serves any N, the struct stays small and
