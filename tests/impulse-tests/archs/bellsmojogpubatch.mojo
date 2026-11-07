@@ -14,7 +14,15 @@
 #
 #   <binary> validate                         one bell against pm.standardBell
 #   <binary> bench <bells> [<block>]          GPU against the CPU threads
-#   <binary> play <bells> <seconds> [audible] [<block>]   real time, PortAudio
+#   <binary> play <bells> <seconds> [audible] [<block>] [cloud|melody|chime]
+#
+# The scores of `play`: `cloud` (the default) strikes bell b every 96 blocks,
+# 7 blocks after bell b - 1, a dense cloud of bells; `melody` plays the two
+# phrases of Beethoven's "Ode to Joy" and `chime` the Westminster Quarters
+# (five changes on four bells, then four strikes of a low hour bell), both in
+# the public domain, slow, looped. A note of semitone s (0 is the model, about
+# B4) strikes the bell nearest to that pitch: with 37 bells, one per semitone
+# over three octaves, every note has its own bell.
 #
 # `validate` fails above 1e-3 of relative difference (measured: 1.5e-4, the
 # mode parameters being computed in f64 on the host where pm.standardBell
@@ -298,6 +306,79 @@ def score_gate(b: Int, block: Int) -> FaustFloat:
     return FaustFloat(1.0) if (block - 7 * b) % 96 == 0 else FaustFloat(0.0)
 
 
+# A score: the bells struck at given blocks of a loop of `period` blocks.
+struct Score(Movable):
+    var at: List[Int]
+    var bell: List[Int]
+    var period: Int
+
+    def __init__(out sc):
+        sc.at = List[Int]()
+        sc.bell = List[Int]()
+        sc.period = 1
+
+    # Appends notes (semitones, durations in beats) at `beat_blocks` per beat.
+    def notes(mut sc, semitones: List[Int], beats: List[F64], beat_blocks: F64, bells: Int):
+        var t = F64(sc.period - 1) if len(sc.at) > 0 else 0.0
+        for i in range(len(semitones)):
+            var b = Int(round(F64(semitones[i] + 12) * F64(bells - 1) / 36.0))
+            sc.at.append(Int(t))
+            sc.bell.append(max(0, min(bells - 1, b)))
+            t += beats[i] * beat_blocks
+        sc.period = Int(t) + 1
+
+    def rest(mut sc, beats: F64, beat_blocks: F64):
+        sc.period += Int(beats * beat_blocks)
+
+    def gates(self, k: Int, mut out: List[FaustFloat]):
+        for b in range(len(out)):
+            out[b] = FaustFloat(0.0)
+        var t = k % self.period
+        for i in range(len(self.at)):
+            if self.at[i] == t:
+                out[self.bell[i]] = FaustFloat(1.0)
+
+
+comptime SCORE_CLOUD = 0
+comptime SCORE_MELODY = 1
+comptime SCORE_CHIME = 2
+
+
+# Ode to Joy (Beethoven), its two phrases, in C major around the model's
+# pitch (C = 1, D = 3, E = 5, F = 6, G = 8 semitones), a beat of 0.45 s.
+def melody(bells: Int) -> Score:
+    var sc = Score()
+    var beat = 0.45 * F64(RATE) / 256.0
+    var a: List[Int] = [5, 5, 6, 8, 8, 6, 5, 3, 1, 1, 3, 5, 5, 3, 3]
+    var a2: List[Int] = [5, 5, 6, 8, 8, 6, 5, 3, 1, 1, 3, 5, 3, 1, 1]
+    var d: List[F64] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.5, 0.5, 2]
+    sc.notes(a, d, beat, bells)
+    sc.notes(a2, d, beat, bells)
+    sc.rest(2.0, beat)
+    return sc^
+
+
+# The Westminster Quarters, in E major an octave above the hour bell (B = 0,
+# E = 5, F# = 7, G# = 9 semitones): the five changes, each note a beat and
+# the last two, two beats of rest between changes, then the hour bell (E, -7)
+# struck four times three beats apart; a beat of 0.7 s.
+def chime(bells: Int) -> Score:
+    var sc = Score()
+    var beat = 0.7 * F64(RATE) / 256.0
+    var changes: List[List[Int]] = [
+        [9, 7, 5, 0], [5, 9, 7, 0], [5, 7, 9, 5], [9, 5, 7, 0], [0, 7, 9, 5]
+    ]
+    var d: List[F64] = [1, 1, 1, 2]
+    for c in changes:
+        sc.notes(c, d, beat, bells)
+        sc.rest(2.0, beat)
+    var hour: List[Int] = [-7, -7, -7, -7]
+    var hd: List[F64] = [3, 3, 3, 3]
+    sc.notes(hour, hd, beat, bells)
+    sc.rest(6.0, beat)
+    return sc^
+
+
 comptime MODE_VALIDATE = 0
 comptime MODE_BENCH = 1
 comptime MODE_PLAY = 2
@@ -323,7 +404,8 @@ def median(mut xs: List[Int]) -> Int:
 # relative difference; MODE_BENCH returns the median block in ns; MODE_PLAY
 # writes the mix to PortAudio and returns the number of underruns.
 def run_scene(
-    scene: Carillon, block: Int, blocks: Int, mode: Int, position: Int, audible: Bool
+    scene: Carillon, block: Int, blocks: Int, mode: Int, position: Int, audible: Bool,
+    score: Int = SCORE_CLOUD,
 ) raises -> F64:
     var bells = scene.bells
     var n = bells * scene.modes
@@ -411,13 +493,20 @@ def run_scene(
 
     var warmup = 0 if mode == MODE_VALIDATE else WARMUP
     var times = List[Int]()
+    var sc = melody(bells) if score == SCORE_MELODY else (chime(bells) if score == SCORE_CHIME else Score())
+    var row = List[FaustFloat](length=bells, fill=FaustFloat(0.0))
     for k in range(blocks + warmup):
         var kb = k - warmup
+        # The tune starts with the stream, not during the warm-up.
+        if mode != MODE_VALIDATE and score != SCORE_CLOUD and kb >= 0:
+            sc.gates(kb, row)
         for b in range(bells):
-            gates_host[b] = (
-                (FaustFloat(1.0) if kb == 0 else FaustFloat(0.0)) if mode == MODE_VALIDATE
-                else score_gate(b, k)
-            )
+            if mode == MODE_VALIDATE:
+                gates_host[b] = FaustFloat(1.0) if kb == 0 else FaustFloat(0.0)
+            elif score == SCORE_CLOUD:
+                gates_host[b] = score_gate(b, k)
+            else:
+                gates_host[b] = row[b] if kb >= 0 else FaustFloat(0.0)
         var t0 = perf_counter_ns()
         ctx.enqueue_copy(dst_buf=gates, src_buf=gates_host)
         ctx.enqueue_function[strike_control_kernel](
@@ -463,8 +552,10 @@ def run_scene(
             for i in range(2 * block):
                 var x = F32(mix_host[i])
                 peak = max(peak, abs(F64(x)))
-                # The mix peak grows like sqrt(bells) (31 at 1,024 bells).
-                out[unsafe_offset=i] = x * F32(0.8 / sqrt(F64(bells))) if audible else F32(0.0)
+                # The cloud's peak grows like sqrt(bells) (31 at 1,024 bells);
+                # a tune rings one or two bells at a time (peak about 2.1).
+                var gain = 0.8 / sqrt(F64(bells)) if score == SCORE_CLOUD else 0.4
+                out[unsafe_offset=i] = x * F32(gain) if audible else F32(0.0)
             if kb == 0:
                 if external_call["Pa_Initialize", Int32]() != 0:
                     raise Error("Pa_Initialize failed")
@@ -650,9 +741,9 @@ def bench(bells: Int, block: Int) raises:
     )
 
 
-def play(bells: Int, seconds: F64, audible: Bool, block: Int) raises:
+def play(bells: Int, seconds: F64, audible: Bool, block: Int, score: Int) raises:
     var blocks = Int(seconds * F64(RATE) / F64(block))
-    var underflows = run_scene(Carillon(bells, -1), block, blocks, MODE_PLAY, -1, audible)
+    var underflows = run_scene(Carillon(bells, -1), block, blocks, MODE_PLAY, -1, audible, score)
     if underflows > 0:
         raise Error(String(Int(underflows)) + " underruns")
 
@@ -667,11 +758,20 @@ def main() raises -> None:
     elif args[1] == "bench":
         bench(atol(args[2]), atol(args[3]) if len(args) > 3 else 256)
     elif args[1] == "play":
-        var at = 4
         var audible = False
-        if len(args) > at and args[at] == "audible":
-            audible = True
-            at += 1
-        play(atol(args[2]), atof(args[3]), audible, atol(args[at]) if len(args) > at else 256)
+        var block = 256
+        var score = SCORE_CLOUD
+        for i in range(4, len(args)):
+            if args[i] == "audible":
+                audible = True
+            elif args[i] == "melody":
+                score = SCORE_MELODY
+            elif args[i] == "chime":
+                score = SCORE_CHIME
+            elif args[i] == "cloud":
+                score = SCORE_CLOUD
+            else:
+                block = atol(args[i])
+        play(atol(args[2]), atof(args[3]), audible, block, score)
     else:
         raise Error("unknown mode")

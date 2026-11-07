@@ -351,9 +351,13 @@ mojo-gpu-poly:
 # Checks one bell against the original pm.standardBell
 # (../corpus/gpu_bell_reference.dsp), times BELLS bells on the GPU against
 # the CPU threads, then plays them for BELLS_SECONDS (muted unless
-# POLY_AUDIBLE=audible). Needs PortAudio (PORTAUDIO_LIB).
+# POLY_AUDIBLE=audible) with the score BELLS_SCORE. Needs PortAudio
+# (PORTAUDIO_LIB).
 BELLS ?= 256
 BELLS_SECONDS ?= 10
+# cloud (every bell, staggered), melody (Ode to Joy) or chime (Westminster
+# Quarters); the two tunes want BELLS=37, one bell per semitone.
+BELLS_SCORE ?= cloud
 mojo-gpu-bells:
 	cargo build --release -p compiler --example mojo_batch
 	mkdir -p build/mojo-gpu-bells
@@ -368,7 +372,7 @@ mojo-gpu-bells:
 	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
 	build/mojo-gpu-bells/bells validate
 	build/mojo-gpu-bells/bells bench $(BELLS)
-	build/mojo-gpu-bells/bells play $(BELLS) $(BELLS_SECONDS) $(POLY_AUDIBLE)
+	build/mojo-gpu-bells/bells play $(BELLS) $(BELLS_SECONDS) $(POLY_AUDIBLE) $(BELLS_SCORE)
 
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).

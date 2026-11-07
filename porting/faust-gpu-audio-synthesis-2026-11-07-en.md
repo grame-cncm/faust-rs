@@ -346,7 +346,10 @@ Two lessons from building it:
 
 The lane is `make -C tests/impulse-tests mojo-gpu-bells BELLS=256`
 (`archs/bellsmojogpubatch.mojo`). It validates, times, and plays muted;
-`POLY_AUDIBLE=audible` plays the carillon aloud.
+`POLY_AUDIBLE=audible` plays the carillon aloud. `BELLS_SCORE` chooses the
+score: `cloud` (every bell, staggered), or two tunes on 37 bells, one per
+semitone: `melody` (Beethoven's "Ode to Joy") and `chime` (the Westminster
+Quarters, then a low hour bell). Both play with no underrun.
 
 ### Filter banks, vocoders, analysis bands: a good fit beyond about 1,000 bands
 

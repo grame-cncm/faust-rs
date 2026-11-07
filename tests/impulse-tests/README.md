@@ -85,7 +85,10 @@ See the design write-up in
      checks one bell against the original `pm.standardBell`
      (`../corpus/gpu_bell_reference.dsp`), times the carillon on the GPU
      against the CPU threads, and plays it for `BELLS_SECONDS`, muted unless
-     `POLY_AUDIBLE=audible` (`archs/bellsmojogpubatch.mojo`; PortAudio).
+     `POLY_AUDIBLE=audible`, with the score `BELLS_SCORE`: `cloud` (every bell,
+     staggered; the default), `melody` (Beethoven's "Ode to Joy") or `chime`
+     (the Westminster Quarters), the two tunes with `BELLS=37`, one bell per
+     semitone (`archs/bellsmojogpubatch.mojo`; PortAudio).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the
