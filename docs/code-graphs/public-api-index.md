@@ -1662,17 +1662,20 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 
 | Kind | Name | Location |
 |---|---|---|
-| `const` | `VOICES_FIELD` | `crates/fir/src/batch/mod.rs:44` |
-| `const` | `VOICE_ARG` | `crates/fir/src/batch/mod.rs:46` |
-| `const` | `CONTROLS_TABLE` | `crates/fir/src/batch/mod.rs:48` |
-| `const` | `INSTANCE_FUNCTIONS` | `crates/fir/src/batch/mod.rs:50` |
-| `struct` | `Placement` | `crates/fir/src/batch/mod.rs:61` |
-| `struct` | `Arena` | `crates/fir/src/batch/mod.rs:76` |
-| `struct` | `VoiceLayout` | `crates/fir/src/batch/mod.rs:87` |
-| `fn` | `VoiceLayout::placement` | `crates/fir/src/batch/mod.rs:101` |
-| `enum` | `BatchError` | `crates/fir/src/batch/mod.rs:108` |
-| `fn` | `arena_name` | `crates/fir/src/batch/mod.rs:165` |
-| `fn` | `layout_voices` | `crates/fir/src/batch/mod.rs:184` |
+| `struct` | `LayoutViolation` | `crates/fir/src/batch/check.rs:51` |
+| `fn` | `check_voice_layout` | `crates/fir/src/batch/check.rs:78` |
+| `mod` | `check` | `crates/fir/src/batch/mod.rs:36` |
+| `const` | `VOICES_FIELD` | `crates/fir/src/batch/mod.rs:46` |
+| `const` | `VOICE_ARG` | `crates/fir/src/batch/mod.rs:48` |
+| `const` | `CONTROLS_TABLE` | `crates/fir/src/batch/mod.rs:50` |
+| `const` | `INSTANCE_FUNCTIONS` | `crates/fir/src/batch/mod.rs:52` |
+| `struct` | `Placement` | `crates/fir/src/batch/mod.rs:63` |
+| `struct` | `Arena` | `crates/fir/src/batch/mod.rs:78` |
+| `struct` | `VoiceLayout` | `crates/fir/src/batch/mod.rs:89` |
+| `fn` | `VoiceLayout::placement` | `crates/fir/src/batch/mod.rs:103` |
+| `enum` | `BatchError` | `crates/fir/src/batch/mod.rs:110` |
+| `fn` | `arena_name` | `crates/fir/src/batch/mod.rs:171` |
+| `fn` | `layout_voices` | `crates/fir/src/batch/mod.rs:194` |
 | `struct` | `FirBuilder` | `crates/fir/src/builder.rs:14` |
 | `fn` | `FirBuilder::new` | `crates/fir/src/builder.rs:21` |
 | `fn` | `FirBuilder::int32` | `crates/fir/src/builder.rs:27` |

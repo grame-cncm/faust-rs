@@ -4,8 +4,10 @@
 //! both element types, a delay line with its counter, a control, a table
 //! generator's working state used by `staticInit` only, and a `Static` table.
 
+use super::check::check_voice_layout;
 use super::{
-    BatchError, CONTROLS_TABLE, INSTANCE_FUNCTIONS, VOICE_ARG, VOICES_FIELD, layout_voices,
+    BatchError, CONTROLS_TABLE, INSTANCE_FUNCTIONS, Mutation, VOICE_ARG, VOICES_FIELD,
+    layout_voices, layout_voices_with,
 };
 use crate::{
     AccessType, FirBinOp, FirBuilder, FirId, FirMatch, FirStore, FirType, NamedType, SliderRange,
@@ -589,4 +591,69 @@ fn a_store_of_another_type_is_cast_to_the_arena_type() {
         b.cast(FF, raw)
     };
     assert!(reaches(&out, body, cast), "the stored constant is not cast");
+}
+
+// ---------------------------------------------------------------- checker
+
+/// The checker's verdict on the producer run with `mutation`.
+fn verdict(twist: Twist, mutation: Mutation) -> Result<(), super::check::LayoutViolation> {
+    let (s, root) = module(twist);
+    let (out, out_root, _) = layout_voices_with(&s, root, mutation).expect("the producer runs");
+    check_voice_layout(&s, root, &out, out_root)
+}
+
+#[test]
+fn the_checker_accepts_the_producer() {
+    assert_eq!(verdict(Twist::default(), Mutation::None), Ok(()));
+    let cast = Twist {
+        uncast_store: true,
+        ..Twist::default()
+    };
+    assert_eq!(verdict(cast, Mutation::None), Ok(()));
+}
+
+/// The rejecting mutations of design §3.3, plus a dropped cast: each must
+/// fail the checker, for the rule named.
+#[test]
+fn the_checker_rejects_every_mutation() {
+    let cast = Twist {
+        uncast_store: true,
+        ..Twist::default()
+    };
+    let cases = [
+        (Twist::default(), Mutation::OverlapBases, "index"),
+        (Twist::default(), Mutation::ShortLength, "index"),
+        (Twist::default(), Mutation::DropStride, "index"),
+        (Twist::default(), Mutation::DropVoice, "index"),
+        (Twist::default(), Mutation::SharedIntoArena, "class use"),
+        (Twist::default(), Mutation::LeaveOneAccess, "residual"),
+        (Twist::default(), Mutation::VoiceOnStaticInit, "signature"),
+        (cast, Mutation::DropCast, "store"),
+    ];
+    for (twist, mutation, rule) in cases {
+        match verdict(twist, mutation) {
+            Ok(()) => panic!("{mutation:?} was accepted"),
+            Err(v) => assert_eq!(v.rule, rule, "{mutation:?}: {v}"),
+        }
+    }
+}
+
+/// An output compared with another source is rejected: the checker reads
+/// the source, not the producer's report.
+#[test]
+fn the_checker_rejects_an_output_for_another_source() {
+    let (s, root) = module(Twist::default());
+    let (out, out_root, _) = layout_voices(&s, root).unwrap();
+    let (other, other_root) = module(Twist {
+        address: true,
+        ..Twist::default()
+    });
+    assert!(check_voice_layout(&other, other_root, &out, out_root).is_err());
+}
+
+/// The source itself is not a laid-out module: no `fVoices`, accesses left.
+#[test]
+fn the_checker_rejects_the_unchanged_source() {
+    let (s, root) = module(Twist::default());
+    assert!(check_voice_layout(&s, root, &s, root).is_err());
 }

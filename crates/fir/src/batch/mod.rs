@@ -33,6 +33,8 @@
 #[cfg(test)]
 mod tests;
 
+pub mod check;
+
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
@@ -126,6 +128,9 @@ pub enum BatchError {
     NameTaken(String),
     /// An element index that is not `Int32`.
     IndexType(String),
+    /// The output was rejected by the independent checker ([`check`]); an
+    /// internal error of the pass.
+    Rejected(String),
 }
 
 impl fmt::Display for BatchError {
@@ -154,6 +159,7 @@ impl fmt::Display for BatchError {
             Self::Soundfile => write!(f, "soundfiles are not supported in the voice layout"),
             Self::NameTaken(name) => write!(f, "`{name}` already exists in the module"),
             Self::IndexType(field) => write!(f, "an index of `{field}` is not Int32"),
+            Self::Rejected(why) => write!(f, "the layout was rejected by its checker: {why}"),
         }
     }
 }
@@ -178,14 +184,55 @@ pub fn arena_name(typ: &FirType) -> Option<&'static str> {
 /// copy of `src` (module doc). Returns the new store, the new module root and
 /// the layout.
 ///
+/// The output is returned only once [`check::check_voice_layout`], written
+/// apart from the producer, has accepted it (fail closed).
+///
 /// # Errors
-/// [`BatchError`] for a module the pass does not handle; nothing is partly
-/// rewritten.
+/// [`BatchError`] for a module the pass does not handle, or
+/// [`BatchError::Rejected`] if the checker rejects the output; nothing is
+/// partly rewritten.
 pub fn layout_voices(
     src: &FirStore,
     module: FirId,
 ) -> Result<(FirStore, FirId, VoiceLayout), BatchError> {
-    tlib::on_compile_stack(|| layout_voices_step(src, module))
+    let (store, root, layout) = layout_voices_with(src, module, Mutation::None)?;
+    check::check_voice_layout(src, module, &store, root)
+        .map_err(|v| BatchError::Rejected(v.to_string()))?;
+    Ok((store, root, layout))
+}
+
+/// Deliberate defects of the producer, one per rejecting test of the checker
+/// (design §3.3). Only `None` is used outside the tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum Mutation {
+    None,
+    /// The second field of an arena starts one element early.
+    OverlapBases,
+    /// The first array field is counted one element short.
+    ShortLength,
+    /// Indices lose the stride: `(b + i) + voice`.
+    DropStride,
+    /// Indices lose the voice: `(b + i) * N`.
+    DropVoice,
+    /// The first shared field is placed in an arena anyway.
+    SharedIntoArena,
+    /// The first scalar read of a per-voice field is left as it is.
+    LeaveOneAccess,
+    /// `staticInit` gains the voice too.
+    VoiceOnStaticInit,
+    /// A store of another type is not cast.
+    DropCast,
+}
+
+/// The producer without its checker; [`Mutation::None`] gives the output
+/// [`layout_voices`] checks.
+pub(crate) fn layout_voices_with(
+    src: &FirStore,
+    module: FirId,
+    mutation: Mutation,
+) -> Result<(FirStore, FirId, VoiceLayout), BatchError> {
+    tlib::on_compile_stack(|| layout_voices_step(src, module, mutation))
 }
 
 /// The pieces of a module the pass reads.
@@ -377,6 +424,7 @@ fn declared_names(store: &FirStore, parts: &ModuleParts) -> BTreeSet<String> {
 fn layout_voices_step(
     src: &FirStore,
     module: FirId,
+    mutation: Mutation,
 ) -> Result<(FirStore, FirId, VoiceLayout), BatchError> {
     let mut store = FirStore::new();
     let root = store.import_from(src, module);
@@ -426,6 +474,7 @@ fn layout_voices_step(
     let mut layout = VoiceLayout::default();
     let mut placed: HashMap<String, (String, FirType, usize)> = HashMap::new();
     let mut shared_decls = Vec::new();
+    let (mut moved, mut overlapped, mut shortened) = (false, false, false);
     for field in &fields {
         let by_instance = instance.fields.contains(&field.name) || controls.contains(&field.name);
         let by_shared = shared_touch.fields.contains(&field.name);
@@ -443,11 +492,12 @@ fn layout_voices_step(
             shared_decls.push(field.decl);
             continue;
         };
-        if by_shared {
+        if by_shared && !(mutation == Mutation::SharedIntoArena && !moved) {
             layout.shared.push(field.name.clone());
             shared_decls.push(field.decl);
             continue;
         }
+        moved |= by_shared;
         let Some(arena) = arena_name(elem) else {
             return Err(BatchError::UnsupportedFieldType {
                 field: field.name.clone(),
@@ -465,8 +515,16 @@ fn layout_voices_step(
                 layout.arenas.len() - 1
             }
         };
-        let base = layout.arenas[at].elements;
+        let mut base = layout.arenas[at].elements;
         layout.arenas[at].elements += len;
+        if mutation == Mutation::OverlapBases && base > 0 && !overlapped {
+            base -= 1;
+            overlapped = true;
+        }
+        if mutation == Mutation::ShortLength && *len > 1 && !shortened {
+            layout.arenas[at].elements -= 1;
+            shortened = true;
+        }
         layout.placements.push(Placement {
             field: field.name.clone(),
             arena: arena.to_owned(),
@@ -508,7 +566,7 @@ fn layout_voices_step(
     }
 
     // Rewrite the instance functions.
-    let mut rewriter = Rewriter::new(&mut store, &placed);
+    let mut rewriter = Rewriter::new(&mut store, &placed, mutation);
     let mut functions = Vec::with_capacity(parts.functions.len());
     for &f in &parts.functions {
         functions.push(rewriter.function(f)?);
@@ -564,14 +622,22 @@ struct Rewriter<'a> {
     store: &'a mut FirStore,
     placed: &'a HashMap<String, (String, FirType, usize)>,
     memo: HashMap<FirId, FirId>,
+    mutation: Mutation,
+    left_one: bool,
 }
 
 impl<'a> Rewriter<'a> {
-    fn new(store: &'a mut FirStore, placed: &'a HashMap<String, (String, FirType, usize)>) -> Self {
+    fn new(
+        store: &'a mut FirStore,
+        placed: &'a HashMap<String, (String, FirType, usize)>,
+        mutation: Mutation,
+    ) -> Self {
         Self {
             store,
             placed,
             memo: HashMap::new(),
+            mutation,
+            left_one: false,
         }
     }
 
@@ -588,7 +654,8 @@ impl<'a> Rewriter<'a> {
         else {
             return Ok(f);
         };
-        if !INSTANCE_FUNCTIONS.contains(&name.as_str()) {
+        let mutated = self.mutation == Mutation::VoiceOnStaticInit && name == SHARED_FUNCTION;
+        if !INSTANCE_FUNCTIONS.contains(&name.as_str()) && !mutated {
             return Ok(f);
         }
         if args.iter().any(|a| a.name == VOICE_ARG) {
@@ -630,6 +697,11 @@ impl<'a> Rewriter<'a> {
             Some(i) => b.binop(FirBinOp::Add, base, i, FirType::Int32),
             None => base,
         };
+        match self.mutation {
+            Mutation::DropStride => return b.binop(FirBinOp::Add, row, voice, FirType::Int32),
+            Mutation::DropVoice => return b.binop(FirBinOp::Mul, row, voices, FirType::Int32),
+            _ => {}
+        }
         let scaled = b.binop(FirBinOp::Mul, row, voices, FirType::Int32);
         b.binop(FirBinOp::Add, scaled, voice, FirType::Int32)
     }
@@ -648,6 +720,9 @@ impl<'a> Rewriter<'a> {
     /// every backend applies, is made explicit.
     fn stored_value(&mut self, value: FirId, elem: &FirType) -> Result<FirId, BatchError> {
         let value = self.rewrite(value)?;
+        if self.mutation == Mutation::DropCast {
+            return Ok(value);
+        }
         match self.store.value_type(value) {
             Some(typ) if &typ != elem => Ok(FirBuilder::new(self.store).cast(elem.clone(), value)),
             _ => Ok(value),
@@ -668,6 +743,10 @@ impl<'a> Rewriter<'a> {
         }
         let out = match match_fir(self.store, id) {
             FirMatch::LoadVar { name, access, typ } => match self.placed(&name, access) {
+                Some(_) if self.mutation == Mutation::LeaveOneAccess && !self.left_one => {
+                    self.left_one = true;
+                    id
+                }
                 Some((arena, elem, base)) => {
                     if typ != elem {
                         return Err(BatchError::UnsupportedAccess {

@@ -2,8 +2,8 @@
 
 Date: 2026-11-07
 
-Status: **decisions D1 to D4 taken 2026-11-07 (§6); G3.0 and G3.2 done
-(outcome §7); G3.3 next.**
+Status: **decisions D1 to D4 taken 2026-11-07 (§6); G3.0, G3.2 and G3.3
+done (outcomes §7, §8); G3.4 next.**
 Parent plan: `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
 (G3 in §3, the measurements that call for it in §8).
 
@@ -303,4 +303,48 @@ programs keep shared fields (generator state); every program has an
 `osc` drops from 262,180 bytes per voice in G2 to 3 `Float32`, 2
 `FaustFloat` and 1 `Int32` elements, its table shared; `freeverb` has
 37,440 `Float32` elements per voice, `zita_rev1` 119,905.
+
+## 8. G3.3 outcome (2026-11-07)
+
+`crates/fir/src/batch/check.rs`: `check_voice_layout(src, src_module, dst,
+dst_module) -> Result<(), LayoutViolation>`, with a named rule per
+violation. It shares no code with the producer beyond the FIR matcher and
+restates the contract (the added names, the instance functions) itself.
+
+- *Classification* is read from the output and checked against the source:
+  a source `Struct` variable absent from the output structure is per-voice,
+  one present must be declared identically and is shared. The semantics is
+  then checked on the source: no instance function touches a shared field,
+  no other function (`staticInit` included) touches a per-voice one, every
+  control is per-voice, a literal table stays shared, and the output adds
+  exactly `fVoices` and one `Ptr(T)` arena per per-voice element type.
+- *Bases* are recomputed from the source declarations (per element type, in
+  declaration order, each after the previous length), so the checker never
+  reads the producer's `VoiceLayout`.
+- *Bodies* are walked in lockstep across the two stores (tags compared by
+  name, memoised by node pair): a per-voice access must sit on its arena at
+  `(base + i) * fVoices + voice`, `i` the source index, a store cast to the
+  arena type exactly when its value's type differs; every other node must be
+  identical. Signatures: the four instance functions gain `voice` after
+  `dsp`; any other function must keep its own.
+- *Controls*: `fVoiceControls` holds the bases in user-interface order,
+  declared only when there is a control.
+
+`layout_voices` now returns its output only once the checker accepts it
+(fail closed, `BatchError::Rejected`), as `fir::schedule` does. The producer
+without its checker is `layout_voices_with(.., Mutation)`, crate-private,
+whose `Mutation` injects one defect for the rejecting tests.
+
+Tests (18 in the module, 4 new): the checker accepts the producer, with and
+without a cast store; it rejects each of eight mutations under the expected
+rule, the seven of §3.3 and a dropped cast (overlapping bases, a length one
+short, the stride dropped, the voice dropped: `index`; a shared field moved
+into an arena: `class use`; an access left on its field: `residual`; the voice
+added to `staticInit`: `signature`; an uncast store: `store`); it rejects an
+output checked against another source, and the unchanged source.
+
+**Corpus, the pass criterion.** Through a temporary driver (deleted): the
+checker accepts the producer on all 132 programs the producer lays out
+(`sound` refused as before), none rejected. Producer and checker together
+take at most 9 ms per program (`spectral_level`), in release mode.
 
