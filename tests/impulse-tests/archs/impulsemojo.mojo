@@ -17,7 +17,6 @@
 from std.math import *
 from std.memory import *
 from std.memory.alloc import *
-from std.memory.unsafe_pointer import *
 from std.sys.defines import *
 from std.sys.info import *
 

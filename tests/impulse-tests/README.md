@@ -140,8 +140,9 @@ See the design write-up in
 - Node.js for the WASM and AssemblyScript impulse runners.
 - `rustc` (already required to build the workspace) for the Rust backend gate.
 - Julia with the `StaticArrays` package for the Julia backend gate.
-- Mojo (`mojo`, tested with `1.1.0.dev2026090705`) for the optional Mojo
-  backend gate; `MOJO=` overrides the command.
+- Mojo (`mojo`, tested with `1.1.0.dev2026090705` and
+  `1.3.0.dev2026110705`) for the optional Mojo backend gate; `MOJO=`
+  overrides the command.
 - Cmajor's `cmaj` command for the optional Cmajor backend gate; override its
   path with `CMAJ_BIN=/path/to/cmaj` and its C++ compiler with `CMAJ_CXX`.
 - `asc` (AssemblyScript compiler) on `PATH`, or `ASC=/path/to/asc`.

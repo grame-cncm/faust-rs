@@ -1546,8 +1546,9 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
     `ref dsp = self`, where upstream writes `mut dsp`: Mojo
     `1.1.0.dev2026090705` never finishes compiling field accesses through the
     receiver inside nested loops (clock domains, `-vec`), and compiles them
-    at once through a local reference. Callers do not see the receiver's
-    name;
+    at once through a local reference (fixed in Mojo `1.3.0.dev2026110705`;
+    the alias goes when the pull request's pinned toolchain moves). Callers
+    do not see the receiver's name;
   - field layout and numbering follow faust-rs FIR (DIFF-BEH-009): 59 of the
     91 impulse programs differ from upstream in field types (a one-sample
     recursion is a scalar where upstream keeps a two-cell array); the method
@@ -1563,8 +1564,9 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   [`mojo-backend-port-analysis-and-plan-2026-11-06-en.md`](mojo-backend-port-analysis-and-plan-2026-11-06-en.md);
   `crates/codegen/src/backends/mojo/tests.rs`; the opt-in impulse lane
   `make mojo` (`tests/impulse-tests/Make.mojo`, `archs/impulsemojo.mojo`):
-  131/131 programs (soundfiles excluded), scalar prefix, Mojo
-  `1.1.0.dev2026090705`.
+  132/132 programs (`sound` excluded), scalar prefix, on Mojo
+  `1.1.0.dev2026090705` and `1.3.0.dev2026110705`; `-vec -lv 0` and
+  `-vec -lv 1` 132/132 on `1.1.0.dev2026090705`.
 
 ## 7. Public API and representation adaptations
 

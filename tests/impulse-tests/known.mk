@@ -116,7 +116,7 @@ KNOWN_FAIL_julia :=
 # --- Mojo backend (scalar prefix through the local Mojo harness) ------------
 # Soundfiles are not supported by the Mojo backend (FRS-CGEN-MOJO-0003), as in
 # the C++ Mojo backend of grame-cncm/faust#1293.
-KNOWN_FAIL_mojo := echo_bug sound
+KNOWN_FAIL_mojo := sound
 
 # --- Cmajor backend (full upstream Cmajor impulse adapter) -------------------
 # `control` is excluded by Make.cmajor for parity with the pinned C++ lane; it

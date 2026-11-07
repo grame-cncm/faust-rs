@@ -4,7 +4,7 @@ Date: 2026-11-06
 
 Status: **M1, M2 and M3 landed on the branch `mojo-backend` (2026-11-07);
 M4 run once by hand; M5(b) not started; the Mojo compiler hang is worked
-around, not yet reported upstream.** §6 records the decisions, §9 the
+around for the pinned Mojo 1.1 and fixed in the 1.3 nightly.** §6 records the decisions, §9 the
 outcome.
 
 ## Scope and relation to the earlier analysis
@@ -425,8 +425,9 @@ D5 as proposed.
   type aliases and the three traits of the pull request's architecture, an
   impulse GUI holding the button zones, the C++ impulse protocol), and
   `Make.mojo` with the opt-in targets `make mojo`, `mojo-vec0`, `mojo-vec1`
-  (`MOJO=` names the command). `KNOWN_FAIL_mojo` lists the two soundfile
-  programs.
+  (`MOJO=` names the command). `KNOWN_FAIL_mojo` lists `sound`, the one
+  soundfile program (`echo_bug`, listed at first, only cites
+  `soundfiles.lib` in its metadata and passes).
 
 ### Findings made on the way
 
@@ -477,16 +478,16 @@ Probed on Mojo `1.1.0.dev2026090705` (the pull request's `pixi.lock`):
 
 ### Validation
 
-- `make mojo` (scalar, `-double`): **131/131**, scalar prefix,
-  `filesCompare -part`, with `CPP_ORACLE_UNSUPPORTED=` so the 40
-  clock-domain programs the local oracle manifest leaves out are run against
-  their references too; the whole lane builds and runs in 54 s at `-j6`
-  (2026-11-07, after the receiver alias). The two soundfile programs are
-  `KNOWN_FAIL_mojo`.
-- `make mojo-vec0` / `mojo-vec1`: 91/91 each on the oracle-admitted set
-  before the receiver alias; the rerun on the 131 programs was in progress
-  at commit time (`mojo-vec0` at 128 passed, none failed). The next commit
-  records the result.
+All on 2026-11-07, after the receiver alias, scalar prefix,
+`filesCompare -part`, with `CPP_ORACLE_UNSUPPORTED=` so the 40 clock-domain
+programs the local oracle manifest leaves out are run against their
+references too; 132 programs per lane (`sound` excluded).
+
+| lane | Mojo `1.1.0.dev2026090705` (pinned by the pull request) | Mojo `1.3.0.dev2026110705` (nightly) |
+| --- | --- | --- |
+| `make mojo` (scalar, `-double`) | **132/132**, 54 s at `-j6` | **132/132**, 84 s at `-j4` |
+| `make mojo-vec1` | **132/132**, 521 s at `-j6` | not run |
+| `make mojo-vec0` | **132/132**: 131 at `-j6` in 701 s, `reverb_designer` built alone (599 s) | `reverb_designer` alone: 361 s, matches the reference |
 - The same faust-rs output built against the pull request's own
   `architecture/mojo/impulse.mojo` (`osc`, `reverb_tester`): identical to the
   reference, so the contract holds against the upstream runtime too.
@@ -505,17 +506,25 @@ Probed on Mojo `1.1.0.dev2026090705` (the pull request's `pixi.lock`):
 ### Costs and open items
 
 - `-vec` output is 5 to 7 times the scalar text (`bells` 15,678 lines against
-  2,698). The ten-minute `mojo build -O3` times seen before were the
-  receiver hang above, not the size: with the alias, the `-vec` lane runs
-  at the pace of the scalar one.
-- The receiver hang is a Mojo defect to report upstream
-  (modular/modular). Not filed yet: the 19-line reproducer hangs on
-  `1.1.0.dev2026090705`, and it has to be checked on the current nightly
-  first. Each single change to it still hangs (`self` for the receiver,
-  `Int` loops, no `var` loop variable, no local, no accumulator), but a
-  program written from scratch with one field and `for _ in range` does
-  not, so the trigger is not pinned down yet. The reproducer is kept
-  outside the repository, for the report.
+  2,698; `reverb_designer` at `-lv 0` 27,259 lines and 3,557 loops in one
+  `compute`, against 3,689 lines scalar). Most of the ten-minute
+  `mojo build -O3` times seen before were the receiver hang above: with the
+  alias, `mojo-vec1` runs all 132 programs in under nine minutes. One build
+  stays slow: `reverb_designer` at `-lv 0` takes 599 s alone on 1.1 (more
+  than ten minutes under `-j6`) and 361 s on 1.3, plain compile cost of one
+  very large function. `@always_inline` on `compute` and splitting the
+  vector loops into functions are the levers, not tried.
+- **The receiver hang is fixed in Mojo `1.3.0.dev2026110705`**: the
+  reproducers and `upsampling_04` without the alias build there in a few
+  seconds, so there is nothing to report to modular/modular (no matching
+  issue was found there either). The alias stays while the pull request pins
+  `1.1.0.dev2026090705`; it can go when the pinned toolchain moves to 1.3 or
+  later. The reproducer was pinned down only partly: each single change to it
+  still hangs on 1.1, while a program written from scratch with one field
+  and `for _ in range` does not.
+- `impulsemojo.mojo` no longer imports `std.memory.unsafe_pointer`, a module
+  Mojo 1.3 removed; 1.1 does not need it either (`osc` byte-identical), so
+  the runtime builds on both.
 - M5(b), explicit SIMD as a FIR pass, needs its own plan.
 - The contract is pinned to an open pull request: re-check it when it is
   merged.
