@@ -6,7 +6,9 @@ Date: 2026-11-07
 
 - Branch: `mojo-backend`, from `main` at `16c414d7`, in the main checkout.
   Not pushed (the user pushes).
-- HEAD: the commit containing this handoff. Its parent is `8477baac` (G4).
+- HEAD: the commit containing this handoff. Its parent is `32b1eea1`.
+- **Ready to merge into `main-dev`** as a fast-forward: `main-dev` is still at
+  `16c414d7`, so the 22 commits sit directly on it and no rebase is needed.
 
 Commits since `main` (oldest first):
 
@@ -23,6 +25,15 @@ Commits since `main` (oldest first):
 - `854e23b3` — G3.4, batch modules in the interpreter and the CPU differential.
 - `052df77a` — G3.5, `MojoOptions::batch` and the GPU batch lanes.
 - `8477baac` — G4, `make mojo-gpu-poly`.
+- `6a935ed5` — the first version of this handoff.
+- `fa47453a` — `porting/faust-gpu-audio-synthesis-2026-11-07-en.md`, does GPU
+  audio with Faust make sense.
+- `a77cb7bd` — the GPU voices in the golden corpus (`tests/corpus/gpu_*.dsp`).
+- `4a2f8eb6`, `42af1df7` — the carillon, `make mojo-gpu-bells`, and its two
+  tunes.
+- `32b1eea1` — the carillon against an ordinary CPU program: the GPU gains
+  ×1.15 to ×1.9 from about 220 bells, not ×5.7 to ×9.7; the synthesis states
+  which CPU baseline each figure uses.
 
 ## Working Tree
 
@@ -33,7 +44,7 @@ Commits since `main` (oldest first):
 
 ## Current Goal(s)
 
-- None open. Both streams are complete:
+- None open; the branch waits for the user's merge. Both streams are complete:
   - the Mojo backend (`porting/mojo-backend-port-analysis-and-plan-2026-11-06-en.md`, §9);
   - the GPU batch plan, G1 to G4 (`porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
     §7 to §9; G3 in `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`
@@ -99,9 +110,22 @@ Commits since `main` (oldest first):
 
 ## Validation Run
 
-- `cargo fmt --all`, `cargo clippy --workspace --all-targets -D warnings`: clean.
-- `cargo test --workspace --all-targets`: 3,575 passed, 0 failed.
-- The five structure gates, `code-graphs --check` and `golden-check` pass.
+Merge readiness, on `32b1eea1`, in a clean worktree (without the user's
+`rules.rs` change):
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -D
+  warnings`: clean.
+- `cargo test --workspace --all-targets`: 3,576 passed, 0 failed.
+- The five structure gates (`cli-parser-check`, `error-model-check`,
+  `ffi-boundary-check`, `structure-check`, `code-graphs --check`) and
+  `golden-check` pass.
+- Compilation cost, by hand because `compile-budget-check` cannot run on this
+  machine: the 18 measurements of the basket (5 codegen cases, scalar and
+  vector, and 8 `--check` cases), best of 5, release `faust-rs` of `main-dev`
+  against HEAD: every ratio between 0.991 and 1.010, total 0.996.
+
+Earlier:
+
 - Codegen identity: default Mojo output is byte-identical to the build before
   G3.5 over the 634 `.dsp` of `tests/` and `examples/`. The 79 outputs that differ
   are errors in both builds, from missing libraries.
@@ -111,8 +135,8 @@ Commits since `main` (oldest first):
   - `mojo-gpu` 131/131 and `mojo-gpu-batch` 131/131 (`sound` and `math` excluded);
   - `mojo-gpu-poly`: 256 voices for 30 s with no underruns, at 256 frames and 48 kHz
     with 43 ms latency.
-- Not run: the compile-budget gate cannot run on this machine. The new code paths
-  only run behind `MojoOptions::batch` or the batch interpreter entry point.
+- The carillon (`make mojo-gpu-bells`): one bell matches `pm.standardBell` to
+  1.5e-4; 37, 64, 256 and 1,024 bells play without an underrun.
 
 ## Open Issues / Blockers
 
@@ -129,9 +153,13 @@ Commits since `main` (oldest first):
 
 ## Next Steps (ordered)
 
-1. The user reviews and pushes `mojo-backend`, rebased on `main` (linear history).
+1. The user merges `mojo-backend` into `main-dev` (fast-forward) and pushes.
 2. If wanted: reduce and report the two Metal/Mojo findings above.
 3. If wanted: a callback-based PortAudio runner (G4 follow-up).
+4. If the GPU's relevance is to be settled: a CPU baseline with SIMD across
+   voices (the most important caveat of the synthesis, §4), then an offline
+   batch case (variant rendering or population calibration with `fad`/`rad`),
+   the use case most favourable to the GPU and the only one not yet shown.
 
 ## Useful Commands to Resume
 
