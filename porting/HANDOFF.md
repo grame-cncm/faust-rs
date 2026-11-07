@@ -1,129 +1,170 @@
 # Session Handoff
 
-Date: 2026-10-18
+Date: 2026-11-07
 
 ## Repo State
 
-- Branch: `codegen-factorization` (from `main-dev` at `d4f3f6a5`), checked
-  out in the main checkout. Not pushed. The user asked for the work to be
-  done on this branch and to stay visible to them.
-- HEAD: the commit containing this handoff update. Its parent is
-  `e5bd488d` (five-key banner).
+- Branch: `mojo-backend`, from `main` at `16c414d7`, in the main checkout.
+  Not pushed (the user pushes).
+- HEAD: the commit containing this handoff. Its parent is `8477baac` (G4).
 
-Commits since `main-dev` (oldest first):
+Commits since `main` (oldest first):
 
-- `2c91ac52` — the analysis.
-- 32 code commits, `43b650f1` … `6c481627`; the list and the outcome are in
-  `porting/codegen-factorization-analysis-2026-10-18-en.md` §9.
-- `f459ec95` — the outcome, registry, journal and handoff.
-- The §9.5 follow-up, done at the user's request:
-  - `550ea14b`: the metadata transport for `RustOptions`/`CmajorOptions`;
-  - `e5bd488d`: the five-key banner.
+- `8fefe4ed` — the Mojo backend analysis and port plan.
+- `b3f04be4` — `-lang mojo`, the backend of grame-cncm/faust#1293.
+- `ebbc6995` — the Mojo lanes on 132 programs, on the Mojo 1.1 and 1.3 toolchains.
+- `50e73099` — `make mojo` stops early when the Mojo command is missing.
+- `dfd4ae6d`, `7a97d8df` — the GPU batch plan; the decision to use Mojo 1.3.
+- `45c494f6` — G1, `make mojo-gpu`.
+- `8a104629` — G2, `make mojo-gpu-bench`.
+- `a1767d8f`, `c88696be` — the G3 design and its decisions D1 to D4.
+- `30ec34db` — G3.2, `fir::batch::layout_voices`.
+- `e1fbc5a2` — G3.3, its independent checker.
+- `854e23b3` — G3.4, batch modules in the interpreter and the CPU differential.
+- `052df77a` — G3.5, `MojoOptions::batch` and the GPU batch lanes.
+- `8477baac` — G4, `make mojo-gpu-poly`.
 
 ## Working Tree
 
-- Tracked changes: none after this commit.
-- Untracked: `tests/impulse-tests/reference-spectral/`. It belongs to the
-  user, was present before the session, and was not touched.
+- Tracked changes: `crates/sigtype/src/rules.rs`. This change predates the
+  session, belongs to the user, and was kept out of every commit.
+- Untracked: `tests/impulse-tests/reference-spectral/`. Also the user's, not
+  touched.
 
 ## Current Goal(s)
 
-- Factor `crates/codegen` per the analysis (R1–R4, Q1–Q4) and fix the drifts
-  it found. Done; see §9 for what was built, what was rejected on reading the
-  code, and what was left.
+- None open. Both streams are complete:
+  - the Mojo backend (`porting/mojo-backend-port-analysis-and-plan-2026-11-06-en.md`, §9);
+  - the GPU batch plan, G1 to G4 (`porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
+    §7 to §9; G3 in `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`
+    §7 to §10).
 
 ## What Changed This Session
 
-- **New shared modules:**
-  - `backends/module_view.rs`: decode, lookups, module-shape diagnostics,
-    function collectors, the flatten/schedule/survivor preamble, sub-module
-    views.
-  - `backends/literals.rs`: `RealSpelling`, string dialects, the C-comment
-    banner.
-  - `backends/table_bytes.rs`: the static-table encoder.
-  - `textual::c_like_token*`.
-  - `fir`: `FirBinOp::is_comparison` and `FirMathOp::arity`.
-- **Drift fixes.** D1–D20 (minus §9.5), each with a failing-before test. The
-  ones that change output on the corpus:
-  - D13: foreign variables in rust, julia and asc;
-  - D7: codebox `min`/`max`;
-  - D18: banners;
-  - D17: JSON addresses equal upstream's.
-- **New contract test:** `crates/codegen/tests/textual_backend_contract.rs`
-  (9 tests over the seven textual backends).
-- **Public API:**
-  - `WasmBackendError` is an alias of `BackendError<…>`.
-  - `RealPrecision` replaces three identical enums, which remain as aliases.
-  - code-graphs regenerated.
-- **Documentation:**
-  - Registry: DIFF-BACK-006, DIFF-BEH-005 and the "Last reviewed" line.
-  - Journal: `porting/journal/2026-10-18.md`.
-  - `crates/codegen/README.md`: the error-code ranges.
-  - `structure_check.rs`: asc, cmajor and julia exceptions removed.
+- `-lang mojo`: an emitter with the contract of PR 1293, pinned at `05ac86fb1`, in
+  `crates/codegen/src/backends/mojo/` (`mod.rs`, `batch.rs`, `names.rs`, `tests.rs`).
+  Registry entry: DIFF-BACK-010.
+- `fir::batch` (`crates/fir/src/batch/`): `layout_voices` lays out per-voice state
+  as a structure of arrays, `(base + k) * N + v`. `check::check_voice_layout` is its
+  independent checker, and `layout_voices` fails closed on it.
+- The interpreter runs batch modules: `generate_interp_batch_module`,
+  `instance_init_voice`, `compute_voice`.
+- `MojoOptions::batch` emits the Rust-only batch contract, `struct
+  mydsp(FaustDspBatch)`:
+  - the struct is built over one state buffer of `state_bytes(voices)` bytes;
+  - `voice` comes after `dsp` in every lifecycle method that runs per voice;
+  - controls go through `set_control`.
+  It has no CLI switch (decision D3). `crates/compiler/examples/mojo_batch.rs`
+  emits it for the lanes.
+- `tests/impulse-tests` gains six opt-in lanes, all needing `MOJO=`:
+
+  | lane | what it does |
+  |---|---|
+  | `mojo` | the scalar backend; also `mojo-vec0` and `mojo-vec1` |
+  | `mojo-gpu` | G1, the original per-voice structs on the GPU |
+  | `mojo-gpu-batch` | the batch contract on the GPU |
+  | `mojo-gpu-bench` | G2, timings for the per-voice structs |
+  | `mojo-gpu-bench-batch` | timings for the batch contract |
+  | `mojo-gpu-poly` | G4, the real-time runner |
+
+  Harnesses live in `archs/*mojo*.mojo`. The runner's instrument is
+  `poly/voice.dsp`.
 
 ## Decisions / Constraints (important for resume)
 
-- The user's choices for the six decision points are in analysis §9.1.
-- Rejected after trying or reading:
-  - the error-code macro, because the text-based API baseline cannot see
-    macro-generated items;
-  - a `TextTarget` walker trait;
-  - merging cranelift's layout into `memory_layout`;
-  - a shared scalar-math module.
-- wasm keeps `_acosh` for both precisions, because that is the JS host
-  contract; a module needing both precisions is refused.
-- **Compile budget:** the local gate cannot conclude on this machine, so a
-  manual A/B was run instead (below).
+- **Mojo toolchain.** The GPU work uses the latest 1.3 nightly
+  (`1.3.0.dev2026110705`) with `modular` `26.8.0.dev2026110705`. The scalar Mojo
+  lanes were also run on 1.1, the version PR 1293 pins.
+- **Receiver alias.** Methods with loops alias their receiver (`ref dsp = self`).
+  This works around a Mojo 1.1 compiler hang that is fixed in 1.3; keep the alias
+  while the PR pins 1.1.
+- **G3 decisions** (user, 2026-11-07):
+  - D1: N is a run-time value.
+  - D2: controls are per voice, through the control table.
+  - D3: emitter option only, no CLI switch.
+  - D4: the CPU differential runs in the Rust suite, through the interpreter.
+- **G3.5 landed with a gap.** `zita_rev1` at 1,024 voices gains ×1.9, under the ×2
+  criterion. The user decided to land it, and the gap is recorded in the design
+  (§10) and in DIFF-BACK-010.
+- **G4 choices** (user): PortAudio from conda-forge in a pixi environment, test
+  runs muted, scripted notes.
+- **GPU harness rules found on Metal.** Each was a silent failure:
+  - Channel tables must live in device memory. A pointer into thread-private
+    memory loses its writes through a `compute` that is not inlined.
+  - Every buffer a kernel reaches must be one of its arguments, otherwise it reads
+    zeros or stale data.
+  - Kernel arguments must be fixed-width types, not `Int`.
+- Never push. Run the AGENTS §3 gates before every commit.
 
 ## Validation Run
 
-- **Codegen-identity differential, per commit:** 632 `.dsp` × 23
-  configurations against the base binary. 0 diffs for every move; the
-  intentional diffs were reviewed and re-baselined. The harness is in the
-  session scratchpad (`identity/run.py`, `check.sh`). It is not in the repo.
-- **Literal equivalence:** old and new real formatters agree on 600,035
-  values (0 mismatches).
-- **Workspace and gates:**
-  - `cargo test --workspace --all-targets --no-fail-fast`: 0 failures.
-  - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-  - `cargo fmt --all --check`: clean.
-  - The five structure gates: OK.
-  - `cargo run -p xtask -- golden-check`: 292 OK.
-- **Compile-budget A/B** (best of 5, base vs new, both baskets): every case
-  at ratio 1.00. APF scalar showed 1.10 at 8.7 ms; re-timed over 30 runs it
-  is 7.81 vs 7.86 ms, i.e. noise.
-- **Impulse harness**, after `make clean` (the `ir/` outputs are cached and
-  give false greens otherwise), with `make -k -j8 <lane>`: all nine lanes
-  pass. interp, cranelift, wasm, cpp, c, rust, julia and assemblyscript run
-  93 comparisons each; cmajor runs 87.
+- `cargo fmt --all`, `cargo clippy --workspace --all-targets -D warnings`: clean.
+- `cargo test --workspace --all-targets`: 3,575 passed, 0 failed.
+- The five structure gates, `code-graphs --check` and `golden-check` pass.
+- Codegen identity: default Mojo output is byte-identical to the build before
+  G3.5 over the 634 `.dsp` of `tests/` and `examples/`. The 79 outputs that differ
+  are errors in both builds, from missing libraries.
+- Opt-in lanes (Apple M5, Mojo 1.3), program counts out of 132 with
+  `CPP_ORACLE_UNSUPPORTED=` empty:
+  - `make mojo` 132/132; `mojo-vec0` and `mojo-vec1` 132/132 on Mojo 1.1;
+  - `mojo-gpu` 131/131 and `mojo-gpu-batch` 131/131 (`sound` and `math` excluded);
+  - `mojo-gpu-poly`: 256 voices for 30 s with no underruns, at 256 frames and 48 kHz
+    with 43 ms latency.
+- Not run: the compile-budget gate cannot run on this machine. The new code paths
+  only run behind `MojoOptions::batch` or the batch interpreter entry point.
 
 ## Open Issues / Blockers
 
-- Nothing blocks the branch.
-- Left as is, recorded in §9.5:
-  - codebox NaN/infinity spelling;
-  - cpp alone synthesizes the empty UI box;
-  - the interpreter's name heuristics;
-  - the six UI tree walkers are not merged.
-- `tests/cli-transcripts` were stale before the branch (recorded
-  2026-10-10). Re-recording them is the user's call.
+- No blocker.
+- **Not reported upstream (Mojo):**
+  - writes lost through a private-memory pointer across a call;
+  - a buffer that is not a kernel argument is not visible to the kernel.
+  Each needs a reduced reproducer first.
+- **Possible follow-ups, none requested:**
+  - a callback-based PortAudio runner, for latency near the block length (the
+    blocking API gives 43 ms at 256 frames);
+  - sharing `fConst*` across voices;
+  - DIFF-BACK-010 must be re-checked when PR 1293 merges.
 
 ## Next Steps (ordered)
 
-1. Review the branch and push it (the user pushes).
-2. Optionally re-record the CLI transcripts:
-   `cargo run -p xtask -- cli-transcript-gen`.
-3. Optional follow-up from §9.5: one UI tree iterator.
+1. The user reviews and pushes `mojo-backend`, rebased on `main` (linear history).
+2. If wanted: reduce and report the two Metal/Mojo findings above.
+3. If wanted: a callback-based PortAudio runner (G4 follow-up).
 
 ## Useful Commands to Resume
 
-- `cargo test -p codegen`
-- `cargo test -p codegen --test textual_backend_contract`
-- `cargo run -p xtask -- code-graphs --check`
-- `cd tests/impulse-tests && make clean && make -k -j8 interp cranelift wasm cpp c rust`
+The scratch pixi environments of the session were under `/private/tmp` and are
+gone. Recreate one with Mojo 1.3, `modular` and `portaudio` (for example
+`pixi init`, then `pixi add mojo modular portaudio` with the channels
+`https://conda.modular.com/max-nightly` and `conda-forge`), then:
+
+```bash
+M="pixi run --manifest-path <env>/pixi.toml -q mojo"
+```
+
+```bash
+make -C tests/impulse-tests mojo-gpu-batch MOJO="$M" CPP_ORACLE_UNSUPPORTED=
+```
+
+```bash
+make -C tests/impulse-tests mojo-gpu-bench-batch MOJO="$M"
+```
+
+```bash
+make -C tests/impulse-tests mojo-gpu-poly MOJO="$M" PORTAUDIO_LIB=<env>/.pixi/envs/default/lib
+```
+
+```bash
+cargo test -p compiler --test batch_voices_interp
+```
 
 ## Notes
 
-- A `make <lane>` right after a rebuild prints "Nothing to be done" when
-  `ir/` already holds outputs: run `make clean` first. It removes `ir` and
-  `build`, never `reference`.
+- `tests/impulse-tests/build/ref/cpp-oracle-manifest.mk` is a local, untracked file.
+  It excludes 40 clock-domain programs from the lanes. Pass
+  `CPP_ORACLE_UNSUPPORTED=` to include them.
+- `RUST/faust-pr1293` is a git worktree of the C++ repository at `05ac86fb1`, with
+  PR 1293's compiler and its Mojo 1.1 pixi environment. It is used only for
+  comparisons. Remove it with:
+  `git -C ../faust worktree remove --force ../faust-pr1293`.
