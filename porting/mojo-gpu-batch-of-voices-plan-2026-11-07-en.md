@@ -2,7 +2,8 @@
 
 Date: 2026-11-07
 
-Status: **plan; G1 started 2026-11-07 on Mojo 1.3 (§4).** §2 records a hand-written probe run
+Status: **G1 landed 2026-11-07 on Mojo 1.3 (§4, outcome §7); G2 to G4
+not started.** §2 records a hand-written probe run
 on the day; no file of the repository changed for it.
 
 ## Scope
@@ -95,11 +96,8 @@ September analysis: 256 frames at 44.1 kHz pass, 32 would not).
   bytes of state per voice) and `karplus32` (481,724 bytes) build, launch
   and return without error, and their device output stays at zero; the
   CPU run of the same voice is not zero. Their timings therefore measure
-  nothing and are not reported. Not diagnosed. The first hypothesis is
-  the size: a struct copied into the thread's private memory on the
-  call, which would exceed a Metal limit (on the CPU, passing `dsp[]` to
-  a `mut` parameter is already known to copy the struct). To be settled
-  first (G1).
+  nothing and are not reported. *Settled in G1 (§7): not the size; the
+  channel pointers were in the thread's private memory.*
 - **Failures are silent.** A kernel that builds its channel pointers in a
   local `Array` of pointers also writes nothing, without an error; the
   same pointers in a two-field struct work. The harness must check that
@@ -219,3 +217,75 @@ underruns at 256 frames, 48 kHz.
 - `porting/mojo-backend-port-analysis-and-plan-2026-11-06-en.md`.
 - grame-cncm/faust#1293 at `05ac86fb1`: `compiler/generator/mojo/mojo_instructions_gpu.cpp`,
   `architecture/mojo/gpu/device.mojo`, `architecture/mojo/portaudio-terminal-gpu.mojo`.
+
+## 7. G1 outcome (2026-11-07)
+
+Mojo `1.3.0.dev2026110705`, `modular` `26.8.0.dev2026110705`, Apple M5.
+
+**What landed.** `make mojo-gpu` (`tests/impulse-tests/Makefile`,
+`Make.mojo`), the device harness `archs/runimpulsemojogpu.mojo` concatenated
+after the CPU runtime `archs/impulsemojo.mojo` and the faust-rs output, as
+the CPU lane does. 64 voices per program, `-single`. Even voices get the
+impulse protocol of the CPU lane, odd voices silence; buttons are held in
+the first block for all. The harness fails the program unless:
+
+- every even voice is bit-identical to voice 0 and every odd voice to
+  voice 1 (a voice reading another voice's state breaks one of the two);
+- voices 0 and 1 match the same `f32` program run on the CPU in the same
+  process, impulse and silence, within 1e-4 × max(1, peak of the CPU
+  output);
+- voice 0 is not silent where its CPU run is not.
+
+**The oracle is the same program on the CPU, not the C++ reference.** The
+references are `f64`; the CPU Mojo lane run in `-single` (`f32`) passes
+only 85 of 132 programs against them, and the GPU lane failed on the same
+programs for the same reason. Device execution is what G1 checks, so the
+GPU is compared with the host running the identical text; correctness of
+the text against C++ stays with `make mojo` (`-double`, 132/132). This
+replaces the pass criterion of G1 in §3 ("within the impulse tolerance,
+`-part`, `f32`").
+
+**Result: 131/131 programs pass** (133 in the corpus; `sound` uses a
+soundfile, `math` computes an integer power through `f64` even in
+`-single`, as C++ does, and the Apple GPU has no `f64`; both are
+`KNOWN_FAIL_mojo-gpu`). About 120 programs give the same output as the
+CPU or differ at the last ulp (relative 1e-5 or less; 1e-38 where the GPU
+flushes denormals). The lane builds and runs in about 2.5 minutes at
+`-j4`.
+
+**Eight programs drift** (`MOJO_GPU_DRIFT` in `known.mk`): the GPU/CPU gap
+starts at rounding level and grows with feedback, for instance
+`cubic_distortion` crosses 1e-7 at frame 85, 1e-5 at 547, 1e-3 at 2,942;
+three programs jump at frame 950 and `thru_zero_flanger` at frame 265,
+where a delay index or a comparison flips on that small difference. The
+largest gaps over the 15,000 frames, relative to the peak: `phaser_flanger`
+0.45, `parametric_eq` 0.28, `spectral_tilt` 0.17, `cubic_distortion` 0.077,
+`modulations` 0.020, `vcf_wah_pedals` 0.0083, `bells` 0.0019,
+`thru_zero_flanger` 0.00083. They run with every check but the GPU/CPU
+tolerance. The source of the first difference is not isolated: the device
+math functions are not it (`tan`, `sqrt`, `atan` identical to the CPU over
+(0, 1.5), `sin`, `cos`, `exp`, `log`, `pow` within 1.3e-6 relative), and
+both sides contract multiply-adds; the code generation differs, and the
+GPU flushes denormals.
+
+**Findings.**
+
+- *The silent failure of §2.3 is a pointer into private memory.* The
+  probe built the channel tables (`ImmStreams`, `MutStreams`) in the
+  thread's private memory. `compute` of a large program is not inlined; a
+  pointer to private memory passed to it loses its writes on Metal, with no
+  error: `freeverb`'s thread runs, `compute` returns, nothing reaches the
+  output. With the tables in device memory, written by a set-up kernel,
+  every program writes. The generated text did not change. Likely a Mojo
+  defect (the address space of a private pointer lost across a call); not
+  reported yet, a reproducer is to be reduced first.
+- *Mojo 1.3 removed `UnsafePointer`*: the harness uses `Pointer` with
+  `MutAnyOrigin`, as the pull request does. Kernel arguments must be
+  fixed-width (`Int32`, `Int64`), not `Int`.
+- *`tan` now builds for the Apple GPU*, which 1.1 refused (`lowboost`,
+  `zita_rev1` pass).
+- *Tables travel with each voice*, as §2.3 expected: `osc`, `table`,
+  `table2` and the waveform programs pass.
+
+**Not done in G1.** No timing (G2); the voice count is fixed at 64
+(`MOJOGPUOPTIONS="-D NVOICES=<n>"` changes it).

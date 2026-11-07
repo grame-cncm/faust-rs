@@ -53,6 +53,16 @@ See the design write-up in
      the locked environment of grame-cncm/faust#1293 (`pixi run --manifest-path
      <faust>/architecture/mojo/pixi.toml -q mojo`). `mojo-vec0`/`mojo-vec1`
      run it with `-vec -lv 0/1`.
+   - `make mojo-gpu` — the same programs on the GPU, 64 voices per program,
+     one GPU thread per voice running the unchanged scalar `compute`
+     (`archs/runimpulsemojogpu.mojo`, `-single`). The device is checked against
+     the same program run on the CPU in the same process (voices bit-identical
+     by class, voice 0 and 1 within 1e-4 of the CPU, no silent output), not
+     against the f64 C++ reference; `MOJO_GPU_DRIFT` lists the programs whose
+     GPU and CPU runs drift apart through feedback. Needs a Mojo with its
+     device package, tested with Mojo 1.3.0.dev2026110705 and `modular`
+     26.8.0.dev2026110705 on Apple silicon (plan:
+     `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`).
    - `make cmajor` — faust-rs emits scalar-double Cmajor, `cmaj generate
      --target=cpp` produces a native class, and the pinned C++ Faust
      `cmajor_cpp_dsp` adapter runs the upstream impulse protocol. Each DSP uses
