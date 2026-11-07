@@ -78,6 +78,14 @@ See the design write-up in
      API, muted unless `POLY_AUDIBLE=audible`; fails on an underrun and prints
      the latency PortAudio grants (`archs/polymojogpubatch.mojo`;
      `PORTAUDIO_LIB` names the directory of `libportaudio`).
+   - `make mojo-gpu-bells` — a carillon: `BELLS` (256) bells, each a strike
+     and the 50 `pm.modeFilter` modes of `pm.standardBellModel`, one GPU
+     instance per mode with its own frequency, decay and gain (the mode table
+     read from the installed `physmodels.lib` by `tools/bell_modes.py`). It
+     checks one bell against the original `pm.standardBell`
+     (`../corpus/gpu_bell_reference.dsp`), times the carillon on the GPU
+     against the CPU threads, and plays it for `BELLS_SECONDS`, muted unless
+     `POLY_AUDIBLE=audible` (`archs/bellsmojogpubatch.mojo`; PortAudio).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

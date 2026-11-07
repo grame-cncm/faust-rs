@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_bell_mode.dsp
+bytes=718
+lines=16
+fnv1a64=092291c3666ed27c

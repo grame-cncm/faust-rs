@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -343,6 +343,33 @@ mojo-gpu-poly:
 	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
 	build/mojo-gpu-poly/poly $(POLY_VOICES) $(POLY_SECONDS) $(POLY_AUDIBLE) $(POLY_BLOCK)
 
+# A carillon on the GPU (modal synthesis use case): BELLS bells, each a
+# `pm.strikeModel` strike and the 50 `pm.modeFilter` modes of
+# `pm.standardBellModel`, one GPU instance per mode with its own frequency,
+# decay and gain (../corpus/gpu_bell_strike.dsp, gpu_bell_mode.dsp; the mode
+# table read from the installed physmodels.lib by tools/bell_modes.py).
+# Checks one bell against the original pm.standardBell
+# (../corpus/gpu_bell_reference.dsp), times BELLS bells on the GPU against
+# the CPU threads, then plays them for BELLS_SECONDS (muted unless
+# POLY_AUDIBLE=audible). Needs PortAudio (PORTAUDIO_LIB).
+BELLS ?= 256
+BELLS_SECONDS ?= 10
+mojo-gpu-bells:
+	cargo build --release -p compiler --example mojo_batch
+	mkdir -p build/mojo-gpu-bells
+	python3 tools/bell_modes.py $(FAUSTLIBS)/physmodels.lib build/mojo-gpu-bells/bell_data.mojo
+	../../target/release/examples/mojo_batch ../corpus/gpu_bell_strike.dsp -I $(FAUSTLIBS) --cn strikedsp -o build/mojo-gpu-bells/strike.mojo
+	../../target/release/examples/mojo_batch ../corpus/gpu_bell_mode.dsp -I $(FAUSTLIBS) --cn modedsp -o build/mojo-gpu-bells/mode.mojo
+	$(FAUST_RS) -lang mojo -single -cn refdsp -I $(FAUSTLIBS) ../corpus/gpu_bell_reference.dsp -o build/mojo-gpu-bells/ref.mojo
+	cat archs/impulsemojo.mojo build/mojo-gpu-bells/bell_data.mojo build/mojo-gpu-bells/strike.mojo \
+	  build/mojo-gpu-bells/mode.mojo build/mojo-gpu-bells/ref.mojo archs/bellsmojogpubatch.mojo \
+	  > build/mojo-gpu-bells/bells_main.mojo
+	$(MOJO) build build/mojo-gpu-bells/bells_main.mojo -o build/mojo-gpu-bells/bells -O3 -D DFAUST=DType.float32 \
+	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
+	build/mojo-gpu-bells/bells validate
+	build/mojo-gpu-bells/bells bench $(BELLS)
+	build/mojo-gpu-bells/bells play $(BELLS) $(BELLS_SECONDS) $(POLY_AUDIBLE)
+
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).
 mojo-gpu-bench:
@@ -414,6 +441,7 @@ help:
 	@echo "  mojo-gpu       : the same, many voices per program on the GPU (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-batch : mojo-gpu with the batch contract (structure of arrays)"
 	@echo "  mojo-gpu-poly  : a polyphonic instrument played in real time (needs MOJO, PortAudio)"
+	@echo "  mojo-gpu-bells : a carillon, 50 modes per bell on the GPU (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-bench : GPU against CPU timings for many voices (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-bench-batch : the same with the batch layout (structure of arrays)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"

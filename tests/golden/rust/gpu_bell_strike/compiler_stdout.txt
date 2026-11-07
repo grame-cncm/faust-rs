@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_bell_strike.dsp
+bytes=628
+lines=16
+fnv1a64=163618e1cf53405d

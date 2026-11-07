@@ -273,6 +273,81 @@ sum are the parts to keep on the device: a summing kernel did this in the
 runner. In `f32`, high-Q, low-frequency modes are the precision risk, because
 their poles sit very close to the unit circle.
 
+### A real modal use case: a carillon (measured)
+
+The bank above uses identical, untuned resonators. A real modal model gives
+every mode its own parameters. It was built from `pm.standardBell` of
+physmodels.lib (the model behind `examples/physicalModeling/standardBell.dsp`):
+a `pm.strikeModel` strike drives 50 `pm.modeFilter` modes, whose frequencies,
+decays and gains `mesh2faust` derived from a finite-element model of a church
+bell, with 7 strike positions.
+
+- **Why many bells.** One bell is 50 modes, far below the crossover: on the
+  GPU it costs 0.6 ms per block against 0.06 ms on the CPU. The GPU use case
+  is a **carillon or a bell installation**: tens to thousands of bells, each
+  with its own size, strike position and decay, hence thousands of modes that
+  all have different parameters.
+- **Two Faust voices, written with the library itself**:
+  - `tests/corpus/gpu_bell_strike.dsp`: one strike per bell;
+  - `tests/corpus/gpu_bell_mode.dsp`: one mode, `pm.modeFilter(freq, t60,
+    gain)`, the state-variable realisation the library uses so that the
+    poles survive in `f32`. The direct-form resonator of the bank above is the
+    form that drifted by up to 5 % on a bell, and a GPU computes in `f32`.
+- **The parameters of every mode** come from the installed physmodels.lib
+  (`tests/impulse-tests/tools/bell_modes.py` reads the tables at build time,
+  so the repository holds no copy of them):
+  - bell b of B: frequencies scaled by 2^(semitones/12), from an octave below
+    the model to two octaves above;
+  - T60 by the library's formula, divided by the scale (a small bell rings
+    shorter);
+  - the gain row of strike position b % 7;
+  - modes above 0.45 times the sample rate muted.
+- **Per block on the GPU**:
+  - the strikes run (one instance per bell);
+  - the 50·B modes run, each reading its own bell's strike output directly:
+    its channel table points into the strike data, so nothing is copied;
+  - a two-stage mix sums each bell's modes, then the panned bells;
+  - only the stereo mix returns to the host.
+- **Validation.** One bell on the GPU (one strike instance and 50 mode
+  instances, summed and divided by 50) reproduces the original
+  `pm.standardBell`, computed as one program on the CPU, to **1.5e-4
+  relative** for every strike position over 2 s. The difference comes from
+  the mode parameters, computed in `f64` on the host where the original
+  computes them in `f32`, and from the order of summation.
+
+Measured at 256 frames and 48 kHz. The CPU runs the same generated code with
+the same mix, on 4 or 10 threads:
+
+| bells | modes | GPU | CPU threads | GPU vs CPU |
+|---|---|---|---|---|
+| 1 | 50 | 0.61 ms | 0.06 ms | ×0.09 |
+| 20 | 1,000 | 0.62 ms | 0.65 ms | ×1.1 |
+| 64 | 3,200 | 0.67 ms | 1.23 ms | ×1.8 |
+| 256 | 12,800 | 0.85 ms | 4.8 ms | ×5.7 |
+| 1,024 | 51,200 | 2.0 ms | 19.7 ms | ×9.7 |
+
+In real time (PortAudio, 43 ms latency, muted), 64, 256 and 1,024 bells play
+10 s without an underrun. A block then takes about 2.7 ms whatever the size:
+paced by the audio output, the GPU idles between blocks and its clock drops.
+The CPU threads alone could play about 280 bells; the GPU plays 1,024 at half
+its budget.
+
+Two lessons from building it:
+
+- **The reduction must be parallel.** The first mix gave one thread per frame
+  and walked every mode: 256 threads summing up to 51,200 outputs each. It
+  made the carillon *slower* on the GPU than on the CPU (×0.6 at every size).
+  A first stage with one thread per bell and frame, then one thread per frame
+  over the bells, gave ×5.7 to ×9.7. Summing voices is part of the GPU work,
+  and its shape matters as much as the voices'.
+- **Composition stays on the device.** Two batch programs, strikes and
+  modes, are chained by pointing one's inputs at the other's outputs. Faust
+  describes each voice; the host wires the voices into a scene.
+
+The lane is `make -C tests/impulse-tests mojo-gpu-bells BELLS=256`
+(`archs/bellsmojogpubatch.mojo`). It validates, times, and plays muted;
+`POLY_AUDIBLE=audible` plays the carillon aloud.
+
 ### Filter banks, vocoders, analysis bands: a good fit beyond about 1,000 bands
 
 This is the modal structure again: many band filters on one input, each band
@@ -401,6 +476,9 @@ which grows as N × block × tape width.
   - `make mojo-gpu` and `make mojo-gpu-batch` (correctness);
   - `make mojo-gpu-bench` and `make mojo-gpu-bench-batch` (cost);
   - `make mojo-gpu-poly` (real time).
+- The carillon of §5: `tests/corpus/gpu_bell_strike.dsp`,
+  `gpu_bell_mode.dsp` and the reference `gpu_bell_reference.dsp` (the
+  original `pm.standardBell`); `make mojo-gpu-bells`.
 - The GPU voices measured for §2.5 and §5 are in the golden corpus:
   - `tests/corpus/gpu_voice_saw.dsp`, the real-time runner's instrument;
   - `tests/corpus/gpu_partial_sine.dsp`, the additive partial;
