@@ -239,20 +239,24 @@ fn FbcDspFactory::optimize
 fn FbcDspFactory::soundfile_count
 fn FbcDspInstance::class_init
 fn FbcDspInstance::compute
+fn FbcDspInstance::compute_voice
 fn FbcDspInstance::cycle
 fn FbcDspInstance::get_num_inputs
 fn FbcDspInstance::get_num_outputs
 fn FbcDspInstance::get_real_zone
 fn FbcDspInstance::get_sample_rate
+fn FbcDspInstance::get_voice_zone
 fn FbcDspInstance::init
 fn FbcDspInstance::instance_clear
 fn FbcDspInstance::instance_constants
 fn FbcDspInstance::instance_init
+fn FbcDspInstance::instance_init_voice
 fn FbcDspInstance::instance_reset_user_interface
 fn FbcDspInstance::is_initialized
 fn FbcDspInstance::new
 fn FbcDspInstance::set_real_zone
 fn FbcDspInstance::set_soundfile
+fn FbcDspInstance::set_voice_zone
 fn FbcDspInstance::try_compute
 fn FbcDspInstance::ui_instructions
 fn FbcExecutor::execute_block
@@ -306,6 +310,7 @@ fn ForeignSignature::encode
 fn HostFunctionSignature::parse
 fn HostFunctionSignature::prototype
 fn HostScalarType::c_name
+fn InterpBatch::from_layout
 fn JitDspModule::compute_body_lowered
 fn JitDspModule::compute_entry_addr
 fn JitDspModule::compute_subset_gap
@@ -374,6 +379,7 @@ fn generate_codebox_module
 fn generate_cpp_from_fbc
 fn generate_cpp_module
 fn generate_cranelift_module
+fn generate_interp_batch_module
 fn generate_interp_module
 fn generate_julia_module
 fn generate_mojo_module
@@ -453,6 +459,7 @@ struct CraneliftBackendError
 struct CraneliftOptions
 struct EvalError
 struct ExternFunction
+struct FbcBatchLayout
 struct FbcBlock
 struct FbcBlockArena
 struct FbcCompileResult
@@ -468,6 +475,7 @@ struct FieldLayout
 struct FirToFbcCompiler
 struct ForeignSignature
 struct HostFunctionSignature
+struct InterpBatch
 struct InterpOptions
 struct JitDspModule
 struct JsonBuildOptions
@@ -514,7 +522,7 @@ use compiler
 use core
 use crate::backends::host_function
 use executor
-use factory::FbcDspFactory
+use factory
 use fbc_to_cpp
 use foreign
 use instance

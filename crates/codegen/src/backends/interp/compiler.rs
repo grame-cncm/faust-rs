@@ -219,6 +219,9 @@ pub struct FirToFbcCompiler<R: FbcReal> {
     soundfile_slots: HashMap<String, usize>,
     /// Number of soundfile slots allocated so far.
     num_soundfile_slots: usize,
+    /// Batch mode (`generate_interp_batch_module`): the slots of every voice
+    /// arena, `elements * voices`, by arena field name. Empty otherwise.
+    batch_arenas: HashMap<String, i32>,
 }
 
 impl<R: FbcReal> Default for FirToFbcCompiler<R> {

@@ -2,8 +2,8 @@
 
 Date: 2026-11-07
 
-Status: **decisions D1 to D4 taken 2026-11-07 (§6); G3.0, G3.2 and G3.3
-done (outcomes §7, §8); G3.4 next.**
+Status: **decisions D1 to D4 taken 2026-11-07 (§6); G3.0 and G3.2 to G3.4
+done (outcomes §7 to §9); G3.5 next.**
 Parent plan: `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
 (G3 in §3, the measurements that call for it in §8).
 
@@ -347,4 +347,44 @@ output checked against another source, and the unchanged source.
 checker accepts the producer on all 132 programs the producer lays out
 (`sound` refused as before), none rejected. Producer and checker together
 take at most 9 ms per program (`spectral_level`), in release mode.
+
+## 9. G3.4 outcome (2026-11-07)
+
+**The interpreter runs batch modules** (D4), through a separate entry point
+so that the 19 callers that build `InterpOptions` literally are untouched:
+`codegen::backends::interp::generate_interp_batch_module(store, module,
+options, &InterpBatch)`, `InterpBatch::from_layout(voices, &VoiceLayout)`.
+
+- The interpreter has one int heap and one real heap and no indirection, so
+  each arena (`Ptr(T)` field) gets a region of `elements * N` slots on the
+  heap of its element type; the layout's indices stay inside it.
+- The `voice` argument is a reserved int slot, as `count` already was;
+  `fVoices` is written by the instance at construction (`FbcBatchLayout` on
+  the factory, not written to `.fbc`).
+- Each control resolves to its voice-0 slot (`base * N` in its arena), so the
+  user-interface offsets keep working and a host adds the voice.
+- The instance gains `instance_init_voice(sample_rate, voice)`,
+  `compute_voice(voice, count, inputs, outputs)`, `set_voice_zone` and
+  `get_voice_zone`; `class_init` runs once for all voices.
+- The ordinary path is unchanged: the new storage rule applies only to the
+  arenas named by a batch, and the `voice` slot only to a `voice` argument,
+  which no ordinary module reads.
+
+**The differential** (`crates/compiler/tests/batch_voices_interp.rs`, in CI):
+seven inline programs without libraries (a recursion behind a slider, a
+variable delay with its circular line and counter, an integer recursion
+behind a slider, a wrapped-phase oscillator, a generated table whose
+generator state stays shared, two channels, a button), each laid out and run
+for N = 1, 3 and 64 voices against N independent scalar instances, at
+interpreter optimisation levels 0 and max. Every voice has its own inputs
+(an impulse scaled per voice plus a sine of voice-dependent frequency) and
+its own control values, and the test asserts that voices 0 and 1 differ.
+**Pass: every voice bit-identical to its scalar instance, on every program,
+voice count and optimisation level.** Sanity: with `set_voice_zone`
+temporarily writing voice 0's control for every voice, the test fails at
+once (`onepole`, 3 voices, voice 1 at frame 1); restored, it passes.
+
+No registry entry yet: the layout is reachable only through the Rust API
+of the tests; the entry comes with the generated Mojo batch contract
+(G3.5), as D3 says.
 

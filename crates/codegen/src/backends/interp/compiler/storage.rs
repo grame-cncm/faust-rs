@@ -88,7 +88,9 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
                 });
             self.field_table.insert(name.to_string(), desc);
         }
-        if access == AccessType::FunArgs && name == "count" && !self.field_table.contains_key(name)
+        if access == AccessType::FunArgs
+            && (name == "count" || name == fir::batch::VOICE_ARG)
+            && !self.field_table.contains_key(name)
         {
             // Reserve a stable int heap slot for the runtime-set `count` pseudo argument.
             let offset = self.int_heap_offset;
@@ -356,6 +358,11 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         }
         let (elem_type, array_size) = match typ {
             FirType::Array(elem, size) => (elem.as_ref(), *size as i32),
+            // A voice arena of a batch module: a region holding every voice,
+            // on the heap of its element type (`fir::batch`).
+            FirType::Ptr(elem) if self.batch_arenas.contains_key(name) => {
+                (elem.as_ref(), self.batch_arenas[name])
+            }
             _ => (typ, 1),
         };
         // Soundfile handles get a slot index, not a heap slot.
@@ -364,6 +371,30 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
             return;
         }
         let _ = self.alloc_storage_desc(name, elem_type, array_size);
+    }
+
+    /// Batch mode: the slots of each voice arena (`elements * voices`), set
+    /// before the structure is predeclared.
+    pub(crate) fn set_batch_arenas(&mut self, arenas: &[(String, i32)]) {
+        self.batch_arenas = arenas.iter().cloned().collect();
+    }
+
+    /// Batch mode: every control resolves to its voice-0 slot in its arena,
+    /// so the user-interface instructions carry that offset and a host adds
+    /// the voice. Call after the structure is predeclared.
+    pub(crate) fn alias_batch_controls(&mut self, controls: &[(String, String, i32)]) {
+        for (control, arena, slot) in controls {
+            if let Some(region) = self.field_table.get(arena).cloned() {
+                self.field_table.insert(
+                    control.clone(),
+                    MemoryDesc {
+                        offset: region.offset + slot,
+                        size: 1,
+                        heap_type: region.heap_type,
+                    },
+                );
+            }
+        }
     }
 
     /// Reserves heap storage for a table declaration without compiling values.

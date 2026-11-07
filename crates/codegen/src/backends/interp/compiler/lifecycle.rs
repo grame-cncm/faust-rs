@@ -26,6 +26,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
             ui_instructions: Vec::new(),
             soundfile_slots: HashMap::new(),
             num_soundfile_slots: 0,
+            batch_arenas: HashMap::new(),
         }
     }
 

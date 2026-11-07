@@ -92,12 +92,68 @@ impl<'a, R: FbcReal> FbcDspInstance<'a, R> {
             .map(|_| Box::new(Soundfile::default_silence()))
             .collect();
 
+        if let Some(batch) = factory.batch {
+            executor.int_heap[batch.voices_offset as usize] = batch.voices;
+        }
+
         Self {
             factory,
             executor,
             initialized: false,
             cycle: 0,
         }
+    }
+
+    // ── Batch (`generate_interp_batch_module`) ──────────────────────────
+
+    /// Publishes the voice the next block runs for. Panics on a factory that
+    /// is not a batch one, or a voice out of range: both are caller bugs.
+    fn select_voice(&mut self, voice: i32) {
+        let batch = self
+            .factory
+            .batch
+            .expect("a per-voice call on a factory that is not a batch one");
+        assert!(
+            (0..batch.voices).contains(&voice),
+            "voice {voice} out of 0..{}",
+            batch.voices
+        );
+        self.executor.int_heap[batch.voice_offset as usize] = voice;
+    }
+
+    /// `instanceInit` of one voice: its constants, controls and state.
+    /// `class_init` runs once for all voices.
+    pub fn instance_init_voice(&mut self, sample_rate: i32, voice: i32) {
+        self.select_voice(voice);
+        self.instance_constants(sample_rate);
+        self.instance_reset_user_interface();
+        self.instance_clear();
+    }
+
+    /// `compute` of one voice, on its own inputs and outputs.
+    ///
+    /// # Errors
+    /// As [`Self::try_compute`].
+    pub fn compute_voice(
+        &mut self,
+        voice: i32,
+        count: i32,
+        inputs: &[&[R]],
+        outputs: &mut [&mut [R]],
+    ) -> Result<(), FbcDspRuntimeError> {
+        self.select_voice(voice);
+        self.try_compute(count, inputs, outputs)
+    }
+
+    /// Writes control `offset` (a user-interface offset, voice 0) of `voice`.
+    pub fn set_voice_zone(&mut self, offset: i32, voice: i32, value: R) -> bool {
+        self.set_real_zone(offset + voice, value)
+    }
+
+    /// Reads control `offset` (a user-interface offset, voice 0) of `voice`.
+    #[must_use]
+    pub fn get_voice_zone(&self, offset: i32, voice: i32) -> Option<R> {
+        self.get_real_zone(offset + voice)
     }
 
     /// Full initialization entrypoint used by the public DSP lifecycle.

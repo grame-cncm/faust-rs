@@ -5,7 +5,8 @@ Date: 2026-11-07
 Status: **G1 and G2 landed 2026-11-07 on Mojo 1.3 (§4; outcomes §7, §8);
 G2 calls for G3, designed in
 `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md` (G3.2, the
-layout pass, and G3.3, its checker, landed); G4 not started.** §2 records a hand-written probe run
+layout pass, G3.3, its checker, and G3.4, the CPU differential, landed); G4
+not started.** §2 records a hand-written probe run
 on the day; no file of the repository changed for it.
 
 ## Scope

@@ -47,7 +47,7 @@ pub use bytecode::{
 };
 pub use compiler::{CompileError, FbcCompileResult, FirToFbcCompiler, HeapType, MemoryDesc};
 pub use executor::{FbcExecError, FbcExecutor, FbcStackKind};
-pub use factory::FbcDspFactory;
+pub use factory::{FbcBatchLayout, FbcDspFactory};
 pub use fbc_to_cpp::{FbcCppError, FbcCppOptions, generate_cpp_from_fbc};
 pub use foreign::{
     ForeignScalarType, ForeignSignature, clear_foreign_functions, is_registered_foreign_function,
@@ -187,13 +187,71 @@ pub fn generate_interp_module<R: real::FbcReal>(
     module: fir::FirId,
     options: &InterpOptions,
 ) -> Result<FbcDspFactory<R>, CodegenError> {
-    fir::on_compile_stack(|| generate_interp_module_step(store, module, options))
+    fir::on_compile_stack(|| generate_interp_module_step(store, module, options, None))
+}
+
+/// The voices of a batch module and where its controls live, from the
+/// `fir::batch::VoiceLayout` of the pass.
+///
+/// The voice count is a host decision and the arena sizes are what a host
+/// allocates, so they come with the module rather than in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterpBatch {
+    /// N, the number of voices.
+    pub voices: usize,
+    /// Per arena field: its slots for all voices, `elements * N`.
+    pub arenas: Vec<(String, i32)>,
+    /// Per control: its arena and its voice-0 slot, `base * N`.
+    pub controls: Vec<(String, String, i32)>,
+}
+
+impl InterpBatch {
+    /// The batch of `voices` voices of a module laid out as `layout`.
+    #[must_use]
+    pub fn from_layout(voices: usize, layout: &fir::batch::VoiceLayout) -> Self {
+        let slots = |n: usize| i32::try_from(n.saturating_mul(voices)).unwrap_or(i32::MAX);
+        Self {
+            voices,
+            arenas: layout
+                .arenas
+                .iter()
+                .map(|a| (a.name.clone(), slots(a.elements)))
+                .collect(),
+            controls: layout
+                .controls
+                .iter()
+                .filter_map(|c| layout.placement(c))
+                .map(|p| (p.field.clone(), p.arena.clone(), slots(p.base)))
+                .collect(),
+        }
+    }
+}
+
+/// [`generate_interp_module`] for a module laid out by `fir::batch`: one
+/// instance holds `batch.voices` voices, each arena a region of
+/// `elements * voices` slots on the heap of its element type, the `voice`
+/// argument a reserved slot. The instance runs one voice per call
+/// ([`FbcDspInstance::compute_voice`]).
+///
+/// Design: `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`
+/// §3.4 (G3.4). Rust-only (`adapted`): C++ has no batch layout.
+///
+/// # Errors
+/// As [`generate_interp_module`]; also when the module has no `fVoices`.
+pub fn generate_interp_batch_module<R: real::FbcReal>(
+    store: &fir::FirStore,
+    module: fir::FirId,
+    options: &InterpOptions,
+    batch: &InterpBatch,
+) -> Result<FbcDspFactory<R>, CodegenError> {
+    fir::on_compile_stack(|| generate_interp_module_step(store, module, options, Some(batch)))
 }
 
 fn generate_interp_module_step<R: real::FbcReal>(
     store: &fir::FirStore,
     module: fir::FirId,
     options: &InterpOptions,
+    batch: Option<&InterpBatch>,
 ) -> Result<FbcDspFactory<R>, CodegenError> {
     use fir::match_fir;
     use std::collections::HashMap;
@@ -272,6 +330,9 @@ fn generate_interp_module_step<R: real::FbcReal>(
 
     // 3. Compile each function body using a shared FirToFbcCompiler.
     let mut compiler: compiler::FirToFbcCompiler<R> = compiler::FirToFbcCompiler::new();
+    if let Some(batch) = batch {
+        compiler.set_batch_arenas(&batch.arenas);
+    }
     compiler
         .predeclare_storage_block(store, dsp_struct)
         .map_err(|e| {
@@ -288,6 +349,9 @@ fn generate_interp_module_step<R: real::FbcReal>(
                 format!("in module globals predeclare: {e}"),
             )
         })?;
+    if let Some(batch) = batch {
+        compiler.alias_batch_controls(&batch.controls);
+    }
     // Pre-declare static tables so function bodies can reference them by name.
     compiler
         .predeclare_storage_block(store, static_decls)
@@ -431,6 +495,29 @@ fn generate_interp_module_step<R: real::FbcReal>(
     // (notably the temporary legacy bridge) did not materialize these symbols.
     let sr_offset = reserve_pseudo_int_slot(sr_offset_existing, &mut int_heap_size);
     let count_offset = reserve_pseudo_int_slot(count_offset_existing, &mut int_heap_size);
+    let batch_layout = match batch {
+        None => None,
+        Some(batch) => {
+            let voices_offset = field_table
+                .get(fir::batch::VOICES_FIELD)
+                .map(|d| d.offset)
+                .ok_or_else(|| {
+                    CodegenError::new(
+                        CodegenErrorCode::CompilationFailed,
+                        "batch module without a voice count field",
+                    )
+                })?;
+            let voice_offset = reserve_pseudo_int_slot(
+                field_table.get(fir::batch::VOICE_ARG).map(|d| d.offset),
+                &mut int_heap_size,
+            );
+            Some(FbcBatchLayout {
+                voices: i32::try_from(batch.voices).unwrap_or(i32::MAX),
+                voices_offset,
+                voice_offset,
+            })
+        }
+    };
     let iota_offset = field_table
         .get("IOTA")
         .or_else(|| field_table.get("fIOTA"))
@@ -475,6 +562,7 @@ fn generate_interp_module_step<R: real::FbcReal>(
         compute_dsp_block,
     );
 
+    factory.batch = batch_layout;
     if options.opt_level > 0 {
         factory.optimize();
     }

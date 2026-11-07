@@ -37,6 +37,16 @@ use super::real::FbcReal;
 /// in `FbcDspInstance`, not here.
 ///
 /// [`INTERP_FILE_VERSION`]: super::opcode::INTERP_FILE_VERSION
+/// The run-time layout of a batch factory (`generate_interp_batch_module`):
+/// the voice count, the slot of `fVoices` the instance writes it into, and the
+/// slot of the `voice` argument it writes before each per-voice call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FbcBatchLayout {
+    pub voices: i32,
+    pub voices_offset: i32,
+    pub voice_offset: i32,
+}
+
 #[derive(Debug)]
 pub struct FbcDspFactory<R: FbcReal> {
     // ── Identity / metadata ────────────────────────────────────────────
@@ -74,6 +84,10 @@ pub struct FbcDspFactory<R: FbcReal> {
     pub clear_block: BlockId,
     pub compute_block: BlockId,
     pub compute_dsp_block: BlockId,
+
+    // ── Batch ──────────────────────────────────────────────────────────
+    /// `Some` for a factory of a `fir::batch` module; not written to `.fbc`.
+    pub batch: Option<FbcBatchLayout>,
 }
 
 impl<R: FbcReal> FbcDspFactory<R> {
@@ -129,6 +143,7 @@ impl<R: FbcReal> FbcDspFactory<R> {
             clear_block,
             compute_block,
             compute_dsp_block,
+            batch: None,
         }
     }
 
