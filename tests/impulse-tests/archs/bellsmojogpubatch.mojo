@@ -625,8 +625,10 @@ def validate() raises:
         raise Error("a GPU bell differs from pm.standardBell")
 
 
-# The same scene on the CPU: host instances over host state, the strikes then
-# the modes split in `workers` slices; returns the median block in ns.
+# The batch code of the GPU run on the CPU: host instances over host state,
+# the strikes then the modes split in `workers` slices; returns the median
+# block in ns. Not the baseline to beat (`cpu_faust_block_ns` is): it shows
+# what the GPU's layout costs a CPU.
 def cpu_block_ns(scene: Carillon, block: Int, workers: Int, blocks: Int) raises -> Int:
     var bells = scene.bells
     var n = bells * scene.modes
@@ -729,15 +731,104 @@ def cpu_block_ns(scene: Carillon, block: Int, workers: Int, blocks: Int) raises 
     return median(times)
 
 
+# The carillon as a CPU program would be written: one ordinary instance of
+# `pm.standardBell` per bell (`refdsp`, the scalar contract: its own struct,
+# its 50 modes in one `compute`), the bells split in `workers` slices, each
+# worker summing its bells, panned, into its own stereo buffer. This is the
+# baseline the GPU has to beat. The batch code run on the CPU
+# (`cpu_block_ns`) is 3 to 6 times slower: its voice-interleaved layout,
+# made for the GPU, puts each voice's state N elements apart, and every mode
+# is a call of its own. Every bell keeps the model's pitch here, which does
+# not change the cost (the modes the GPU scene mutes above 0.45 SR are
+# computed in both). Returns the median block in ns.
+def cpu_faust_block_ns(scene: Carillon, block: Int, workers: Int, blocks: Int) raises -> Int:
+    var bells = scene.bells
+    var insts = unsafe_alloc[refdsp](bells)
+    var gates = unsafe_alloc[Ptr[FaustFloat, MUT_NOTRK]](bells)
+    var outs = unsafe_alloc[FaustFloat](bells * block)
+    var heads = unsafe_alloc[Ptr[FaustFloat, MUT_NOTRK]](bells)
+    for b in range(bells):
+        insts.unsafe_offset(b).unsafe_write(refdsp())
+        insts.unsafe_offset(b)[].init(RATE)
+        var zones = ZoneGui()
+        insts.unsafe_offset(b)[].build_user_interface(zones)
+        zones.set("position", FaustFloat(b % BELL_POSITIONS))
+        gates.unsafe_offset(b).unsafe_write(zones.zones[index_of(zones.labels, "gate")])
+        heads.unsafe_offset(b).unsafe_write(outs.unsafe_offset(b * block).unsafe_origin_cast[MUT_NOTRK]())
+    var acc = unsafe_alloc[FaustFloat](workers * 2 * block)
+    var mix = unsafe_alloc[FaustFloat](2 * block)
+    var pan = unsafe_alloc[FaustFloat](2 * bells)
+    for i in range(2 * bells):
+        pan[unsafe_offset=i] = scene.pans[i]
+    var ip = insts.unsafe_origin_cast[MUT_NOTRK]()
+    var hp = heads.unsafe_origin_cast[MUT_NOTRK]()
+    var accp = acc.unsafe_origin_cast[MUT_NOTRK]()
+    var panp = pan.unsafe_origin_cast[MUT_NOTRK]()
+    var outp = outs.unsafe_origin_cast[MUT_NOTRK]()
+    var times = List[Int]()
+    for k in range(blocks):
+        for b in range(bells):
+            gates[unsafe_offset=b][] = score_gate(b, k)
+        var t0 = perf_counter_ns()
+
+        def bell_slice(
+            w: Int,
+        ) {var ip, var hp, var bells, var workers, var block, var accp, var panp, var outp}:
+            var a = accp.unsafe_offset(w * 2 * block)
+            for i in range(2 * block):
+                a[unsafe_offset=i] = FaustFloat(0.0)
+            for b in range(bells * w // workers, bells * (w + 1) // workers):
+                var h = hp.unsafe_offset(b)
+                ip.unsafe_offset(b)[].compute(S32(block), h.unsafe_bitcast[Ptr[FaustFloat, IMM_NOTRK]]().unsafe_mut_cast[False]().unsafe_origin_cast[IMM_NOTRK](), h)
+                var l = panp[unsafe_offset=2 * b]
+                var r = panp[unsafe_offset=2 * b + 1]
+                var o = outp.unsafe_offset(b * block)
+                for i in range(block):
+                    a[unsafe_offset=2 * i] += o[unsafe_offset=i] * l
+                    a[unsafe_offset=2 * i + 1] += o[unsafe_offset=i] * r
+
+        if workers == 1:
+            bell_slice(0)
+        else:
+            parallelize(bell_slice, workers)
+        for i in range(2 * block):
+            var x = FaustFloat(0.0)
+            for w in range(workers):
+                x += acc[unsafe_offset=w * 2 * block + i]
+            mix[unsafe_offset=i] = x
+        var t1 = perf_counter_ns()
+        if k >= 3:
+            times.append(Int(t1 - t0))
+    insts.unsafe_free()
+    gates.unsafe_free()
+    outs.unsafe_free()
+    heads.unsafe_free()
+    acc.unsafe_free()
+    mix.unsafe_free()
+    pan.unsafe_free()
+    return median(times)
+
+
+# The GPU against two CPU baselines: ordinary instances of pm.standardBell
+# (`faust1`, `faust4`, `faust10`: 1, 4 and 10 threads), the baseline to
+# beat, and the batch code run on the CPU (`batch4`, `batch10`), kept to
+# show what the GPU layout costs a CPU. `gpu_vs_cpu` is against the fastest
+# ordinary run.
 def bench(bells: Int, block: Int) raises:
     var scene = Carillon(bells, -1)
     var g = Int(run_scene(scene, block, 100, MODE_BENCH, -1, False))
-    var c4 = cpu_block_ns(scene, block, 4, 13)
-    var c10 = cpu_block_ns(scene, block, 10, 13)
+    var f1 = cpu_faust_block_ns(scene, block, 1, 13)
+    var f4 = cpu_faust_block_ns(scene, block, 4, 13)
+    var f10 = cpu_faust_block_ns(scene, block, 10, 13)
+    var b4 = cpu_block_ns(scene, block, 4, 13)
+    var b10 = cpu_block_ns(scene, block, 10, 13)
+    var budget = F64(block) * 1e6 / F64(RATE)
     print(
-        "bells", bells, "modes", bells * BELL_MODES, "block", block,
-        "gpu_us", F64(g) / 1000.0, "cpu4_us", F64(c4) / 1000.0, "cpu10_us", F64(c10) / 1000.0,
-        "gpu_vs_cpu", F64(min(c4, c10)) / F64(g), "budget_us", F64(block) * 1e6 / F64(RATE),
+        "bells", bells, "modes", bells * BELL_MODES, "block", block, "budget_us", budget,
+        "gpu_us", F64(g) / 1000.0, "faust1_us", F64(f1) / 1000.0,
+        "faust4_us", F64(f4) / 1000.0, "faust10_us", F64(f10) / 1000.0,
+        "batch4_us", F64(b4) / 1000.0, "batch10_us", F64(b10) / 1000.0,
+        "gpu_vs_cpu", F64(min(f1, min(f4, f10))) / F64(g),
     )
 
 

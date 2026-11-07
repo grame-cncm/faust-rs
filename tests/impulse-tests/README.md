@@ -84,7 +84,9 @@ See the design write-up in
      read from the installed `physmodels.lib` by `tools/bell_modes.py`). It
      checks one bell against the original `pm.standardBell`
      (`../corpus/gpu_bell_reference.dsp`), times the carillon on the GPU
-     against the CPU threads, and plays it for `BELLS_SECONDS`, muted unless
+     against two CPU baselines (ordinary `pm.standardBell` instances on 1, 4
+     and 10 threads, the one to beat, and the GPU's batch code on the CPU),
+     and plays it for `BELLS_SECONDS`, muted unless
      `POLY_AUDIBLE=audible`, with the score `BELLS_SCORE`: `cloud` (every bell,
      staggered; the default), `melody` (Beethoven's "Ode to Joy") or `chime`
      (the Westminster Quarters), the two tunes with `BELLS=37`, one bell per

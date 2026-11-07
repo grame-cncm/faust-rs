@@ -33,12 +33,19 @@ are:
 - **×2 to ×5 against the 4 to 10 CPU threads;**
 - **×7 to ×18 against one core.**
 
+These gains are against the same program run one instance per voice on the
+CPU. For voices as small as one mode, a CPU program would rather group them
+(50 modes in one bell, a bank of modes in one program), and that is a much
+stronger baseline: against it, the carillon of §5 gains **×1.15 to ×1.9**,
+from about 11,000 modes.
+
 **No, for everything else**, in particular:
 
 - **one instance of a program, however heavy.** A single reverb runs 30 to 100
   times slower on the GPU than on one CPU core;
 - **ordinary polyphony.** Tens to a few hundred voices sit below the crossover,
-  which is about 1,000 voices for small programs and about 4,000 for large ones;
+  which is about 1,000 voices for small programs and about 4,000 for large ones
+  (about 10,000 for modes grouped in a CPU program, §5);
 - **very small blocks (64 frames and less):** a fixed cost of about 0.2 ms per
   block makes them fail;
 - **`f64` work**, and programs whose result is very sensitive to rounding;
@@ -100,6 +107,12 @@ frames.
 | `freeverb` | 150 KB | 4,096 voices | ×2.2 |
 | `zita_rev1` | 480 KB | 4,096 voices | ×2.2 |
 
+The CPU side of this table runs one instance per voice. That is a fair
+baseline for a voice that does real work per sample (a reverb, 32 strings, a
+sine), and a weak one for a voice as small as one resonator: a CPU program
+would put many of them in one `compute`, which is 4 to 7 times cheaper (§5,
+modal synthesis and the carillon).
+
 The last three rows (large state) depend on the structure-of-arrays layout.
 With one structure per voice they never beat the CPU, and they got worse as
 voices were added: `freeverb` was 14 times slower than the CPU at 4,096
@@ -159,7 +172,9 @@ PortAudio's blocking API, with voices driven by scripted notes.
 - **No new DSP code.** A Faust program written for one voice runs N times as
   it is. The compiler handles the state layout; nothing else changes.
 - **Throughput at scale.** Between ×2 and ×5 the throughput of 4 to 10 CPU
-  threads, and ×7 to ×18 that of one core.
+  threads, and ×7 to ×18 that of one core, against one instance per voice on
+  the CPU; ×1.15 to ×1.9 against a CPU program that groups small voices (the
+  carillon, §5).
 - **It frees the CPU.** Even where the GPU does not play more voices than the
   CPU threads (`APF` on the grid measured), moving them to the GPU leaves the
   cores to the rest of the application.
@@ -176,8 +191,9 @@ PortAudio's blocking API, with voices driven by scripted notes.
 ## 4. What speaks against it
 
 - **The crossover is high.** Below about 1,000 voices for small programs, and
-  about 4,000 for large ones, the CPU threads win. Most musical uses of Faust
-  sit far below that.
+  about 4,000 for large ones, the CPU threads win. When the voices are tiny
+  and a CPU program can group them (modes), it is about 10,000. Most musical
+  uses of Faust sit far below that.
 - **The fixed cost per block and the latency.** About 0.2 ms per block, plus
   copies and synchronisation, excludes small blocks. The real-time runner
   needed 30 to 43 ms of output latency. This is fine for a sound installation
@@ -199,11 +215,14 @@ PortAudio's blocking API, with voices driven by scripted notes.
      passed as an argument, reads zeros;
   3. a compiler hang on nested loops (fixed in Mojo 1.3).
   The whole path is opt-in, needs a 1.5 GB toolchain, and is outside CI.
-- **The CPU baseline is not the strongest possible.** The CPU numbers run one
-  voice per call, without SIMD across voices. The same structure-of-arrays
-  layout would let the CPU process 4 to 16 voices per instruction, which would
-  narrow the gap, possibly to nothing for small programs. This has not been
-  measured, and it is the most important caveat on the ratios above.
+- **The CPU baseline is not the strongest possible.** Most CPU numbers run
+  one voice per call, without SIMD across voices. For tiny voices, grouping
+  them in one CPU program was measured on the carillon, and it cut the GPU's
+  gain from what one call per voice suggested (×5.7 to ×9.7 against the batch
+  code on the CPU) to ×1.15 to ×1.9. SIMD across voices, which the
+  structure-of-arrays layout allows, would narrow the gap further, possibly
+  to nothing for small programs. This has not been measured, and it is the
+  most important caveat on the ratios above.
 - **Not measured:** power and heat; a GPU shared with graphics (inside a DAW
   or with a visual front end); discrete GPUs, where copies cross a bus rather
   than unified memory.
@@ -240,7 +259,7 @@ Two qualifications:
   (its own envelope, noise, filter, nonlinearity), which the FFT method cannot
   express.
 
-### Modal synthesis: a good fit (measured)
+### Modal synthesis: a fit only at very large scale (measured)
 
 Each mode is a resonator instance (frequency, T60, gain;
 `tests/corpus/gpu_mode_resonator.dsp`). All modes are fed the same
@@ -267,8 +286,26 @@ At 65,536 modes the copies take 5.0 ms and the kernel 1.9 ms: summed on the
 device, the bank would fit in a 256-frame block where the table shows it
 just over.
 
-This suits large modal models (bells, plates, rooms described by thousands of
-modes) and scenes of many modal objects. The excitation input and the output
+**The CPU column of this table is weak.** It runs one instance per mode, one
+call each, and a resonator is only a few operations per sample, so the calls
+dominate. A CPU program would hold the modes in one program. Written so
+(`par(i, N, mode(i))` with its own controls per mode, summed) and compiled with
+`faustbench-llvm`, the bank costs, on **one** core:
+
+| modes | GPU (above) | CPU threads (above) | one program, 1 core (LLVM) |
+|---|---|---|---|
+| 1,024 | 0.22 ms | 0.30 ms | 0.18 ms |
+| 4,096 | 0.38 ms | 1.06 ms | 1.25 ms |
+
+One core already beats the GPU at 1,024 modes, and a few cores would at
+4,096. The carillon below measures this baseline in the same process, with
+threads: the GPU wins from about 11,000 modes. The same check on the additive
+partials finds a smaller bias, because the sine dominates each partial: one
+program of 1,024 partials takes 0.53 ms on one core, against 0.22 ms on the
+threads one instance at a time, and 4,096 take 4.5 ms.
+
+This suits very large modal models (rooms or plates described by tens of
+thousands of modes) and large scenes of modal objects. The excitation input and the output
 sum are the parts to keep on the device: a summing kernel did this in the
 runner. In `f32`, high-Q, low-frequency modes are the precision risk, because
 their poles sit very close to the unit circle.
@@ -283,10 +320,10 @@ decays and gains `mesh2faust` derived from a finite-element model of a church
 bell, with 7 strike positions.
 
 - **Why many bells.** One bell is 50 modes, far below the crossover: on the
-  GPU it costs 0.6 ms per block against 0.06 ms on the CPU. The GPU use case
-  is a **carillon or a bell installation**: tens to thousands of bells, each
-  with its own size, strike position and decay, hence thousands of modes that
-  all have different parameters.
+  GPU it costs 0.6 ms per block against 0.013 ms on one CPU core. The GPU use
+  case is a **carillon or a bell installation**: hundreds to thousands of
+  bells, each with its own size, strike position and decay, hence thousands
+  of modes that all have different parameters.
 - **Two Faust voices, written with the library itself**:
   - `tests/corpus/gpu_bell_strike.dsp`: one strike per bell;
   - `tests/corpus/gpu_bell_mode.dsp`: one mode, `pm.modeFilter(freq, t60,
@@ -315,38 +352,64 @@ bell, with 7 strike positions.
   the mode parameters, computed in `f64` on the host where the original
   computes them in `f32`, and from the order of summation.
 
-Measured at 256 frames and 48 kHz. The CPU runs the same generated code with
-the same mix, on 4 or 10 threads:
+Measured at 256 frames and 48 kHz, as the median block, with the same score
+and the same panned mix on both sides. The CPU baseline is the program a CPU
+user would write: one ordinary instance of `pm.standardBell` per bell (the
+scalar contract, its 50 modes in one `compute`), the bells split over 1, 4 or
+10 threads. The last CPU column runs the GPU's batch code on the CPU instead:
 
-| bells | modes | GPU | CPU threads | GPU vs CPU |
-|---|---|---|---|---|
-| 1 | 50 | 0.61 ms | 0.06 ms | ×0.09 |
-| 20 | 1,000 | 0.62 ms | 0.65 ms | ×1.1 |
-| 64 | 3,200 | 0.67 ms | 1.23 ms | ×1.8 |
-| 256 | 12,800 | 0.85 ms | 4.8 ms | ×5.7 |
-| 1,024 | 51,200 | 2.0 ms | 19.7 ms | ×9.7 |
+| bells | modes | GPU | CPU, 1 thread | CPU, 4 threads | batch code, 4 CPU threads | GPU vs best CPU |
+|---|---|---|---|---|---|---|
+| 1 | 50 | 0.62 ms | 0.013 ms | 0.05 ms | 0.06 ms | ×0.02 |
+| 20 | 1,000 | 0.62 ms | 0.25 ms | 0.084 ms | 0.59 ms | ×0.14 |
+| 37 | 1,850 | 0.64 ms | 0.47 ms | 0.15 ms | 0.85 ms | ×0.24 |
+| 64 | 3,200 | 0.67 ms | 0.84 ms | 0.24 ms | 1.23 ms | ×0.36 |
+| 256 | 12,800 | 0.84 ms | 3.47 ms | 0.97 ms | 4.87 ms | ×1.15 |
+| 1,024 | 51,200 | 2.0 ms | 13.7 ms | 3.88 ms | 19.6 ms | ×1.9 |
+
+- The 10 threads were slower than the 4 at every size.
+- The one-thread column agrees with LLVM: `faustbench-llvm` puts one
+  `pm.standardBell` at 0.23 % of a core at 48 kHz, and 37 distinct bells in
+  one program at 8.2 %, or 0.44 ms per block.
+- **The GPU overtakes the CPU threads at about 220 bells (11,000 modes)**, and
+  gains ×1.9 at 1,024. Below that, its fixed cost of about 0.6 ms per block
+  (six kernel launches, three copies and a synchronisation) is more than the
+  whole work: by the slope of the table, 37 bells are about 50 µs of GPU
+  computation.
 
 In real time (PortAudio, 43 ms latency, muted), 64, 256 and 1,024 bells play
 10 s without an underrun. A block then takes about 2.7 ms whatever the size:
 paced by the audio output, the GPU idles between blocks and its clock drops.
-The CPU threads alone could play about 280 bells; the GPU plays 1,024 at half
-its budget.
+The two tunes (37 bells) take a median of 2.3 to 2.4 ms per block in real
+time, 43 to 46 % of the budget, and their worst blocks reach 10.7 ms; the
+latency absorbs them. The same 37 bells cost 0.47 ms on one CPU core, 9 % of
+the budget. On the CPU threads, 1,024 bells take 73 % of the budget in the
+bench (not run in real time), so four cores could play about 1,400 bells;
+the GPU's 2.0 ms at 1,024 suggests about twice that. Neither limit was run.
 
 Two lessons from building it:
 
 - **The reduction must be parallel.** The first mix gave one thread per frame
   and walked every mode: 256 threads summing up to 51,200 outputs each. It
-  made the carillon *slower* on the GPU than on the CPU (×0.6 at every size).
-  A first stage with one thread per bell and frame, then one thread per frame
-  over the bells, gave ×5.7 to ×9.7. Summing voices is part of the GPU work,
-  and its shape matters as much as the voices'.
+  was 10 to 16 times slower than the two-stage mix that replaced it: one
+  thread per bell and frame, then one thread per frame over the bells.
+  Summing voices is part of the GPU work, and its shape matters as much as
+  the voices'.
+- **The baseline must be the program a CPU user would write.** The first
+  version of this section compared the GPU with its own batch code run on the
+  CPU, and reported ×5.7 to ×9.7. That code is 4 to 5 times slower on a CPU
+  than ordinary instances of `pm.standardBell` (table above): its layout,
+  made for the GPU, keeps each voice's state N elements apart, and every mode
+  is a call of its own. Against the ordinary program the gain is ×1.15 to
+  ×1.9.
 - **Composition stays on the device.** Two batch programs, strikes and
   modes, are chained by pointing one's inputs at the other's outputs. Faust
   describes each voice; the host wires the voices into a scene.
 
 The lane is `make -C tests/impulse-tests mojo-gpu-bells BELLS=256`
 (`archs/bellsmojogpubatch.mojo`). It validates, times, and plays muted;
-`POLY_AUDIBLE=audible` plays the carillon aloud. `BELLS_SCORE` chooses the
+`bench` prints the GPU and both CPU baselines. `POLY_AUDIBLE=audible` plays
+the carillon aloud. `BELLS_SCORE` chooses the
 score: `cloud` (every bell, staggered), or two tunes on 37 bells, one per
 semitone: `melody` (Beethoven's "Ode to Joy") and `chime` (the Westminster
 Quarters, then a low hour bell). Both play with no underrun.
@@ -448,7 +511,8 @@ which grows as N × block × tape width.
 - **SIMD across voices on the CPU.** The structure-of-arrays layout lets a
   CPU process 4 to 16 voices per instruction. This would give the fair
   baseline, and probably a CPU win of its own for small programs (§4). It is
-  the first thing to measure.
+  the first thing to measure. The grouped-program baseline was measured for
+  the carillon only; the §2.3 grid still runs one instance per voice.
 - **A real-time runner driven by the audio callback**, to bring the latency
   from 43 ms towards the block period.
 - **Inputs and mixes as device-side primitives:** broadcast inputs, sums by
