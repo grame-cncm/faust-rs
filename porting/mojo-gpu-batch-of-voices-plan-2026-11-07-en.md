@@ -2,7 +2,7 @@
 
 Date: 2026-11-07
 
-Status: **plan; nothing implemented.** §2 records a hand-written probe run
+Status: **plan; G1 started 2026-11-07 on Mojo 1.3 (§4).** §2 records a hand-written probe run
 on the day; no file of the repository changed for it.
 
 ## Scope
@@ -187,9 +187,11 @@ underruns at 256 frames, 48 kHz.
 
 ## 4. Decisions open before G1
 
-- **Mojo version.** 1.1 is what the pull request pins; 1.3 (nightly) fixes
-  the receiver hang and may add device math functions. A lane on 1.3 only
-  would drop the receiver alias from the measurements' path.
+- **Mojo version. Decided 2026-11-07: the latest 1.3 nightly**
+  (`1.3.0.dev2026110705` on the day, with its device package), not the 1.1
+  the pull request pins. 1.3 fixes the receiver hang and is where device
+  math functions are being added; §2 was measured on 1.1 and is re-measured
+  on 1.3 in G1.
 - **Shared or per-voice tables.** Per-voice copies are free in compiler
   work and cost memory; sharing them needs the tables out of the instance
   structure (a layout change, as in G3).
