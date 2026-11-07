@@ -95,11 +95,12 @@ const INPUTS: [(&str, &str); 3] = [
 ];
 
 /// Backends reachable through `--lang`.
-const LANGS: [&str; 12] = [
+const LANGS: [&str; 13] = [
     "cpp",
     "c",
     "rust",
     "julia",
+    "mojo",
     "asc",
     "codebox",
     "codebox-test",

@@ -150,13 +150,17 @@ mod tests {
         fn forwarded(error: &dyn BackendCodegenError) -> Option<fir::FirId> {
             error.fir_node()
         }
-        use crate::backends::{asc, c, cmajor, codebox, julia, rust, wasm};
+        use crate::backends::{asc, c, cmajor, codebox, julia, mojo, rust, wasm};
         let nodes = [
             forwarded(
                 &c::CodegenError::new(c::CodegenErrorCode::UnsupportedNode, "x").at_node(node),
             ),
             forwarded(
                 &julia::CodegenError::new(julia::CodegenErrorCode::UnsupportedNode, "x")
+                    .at_node(node),
+            ),
+            forwarded(
+                &mojo::CodegenError::new(mojo::CodegenErrorCode::UnsupportedNode, "x")
                     .at_node(node),
             ),
             forwarded(

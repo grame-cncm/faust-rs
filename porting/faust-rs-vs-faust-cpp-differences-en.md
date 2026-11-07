@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-11-02 (guidance for an evaluation cycle through a delay, an unresolved import and the operator a composition mismatch may have wanted: added to DIFF-BEH-005 and DIFF-BEH-018); 2026-11-01 (guidance for a section of `-`, a name of an imported file and a size beside a `waveform`: added to DIFF-BEH-005); 2026-10-31 (syntax errors in the tokens of the language: DIFF-CLI-016 recorded); 2026-10-30 (`--color` for human diagnostics, `faust-rs` and `faustprobe`: DIFF-CLI-015 recorded); 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-11-07 (`-lang mojo` from grame-cncm/faust#1293: DIFF-BACK-010 recorded); 2026-11-02 (guidance for an evaluation cycle through a delay, an unresolved import and the operator a composition mismatch may have wanted: added to DIFF-BEH-005 and DIFF-BEH-018); 2026-11-01 (guidance for a section of `-`, a name of an imported file and a size beside a `waveform`: added to DIFF-BEH-005); 2026-10-31 (syntax errors in the tokens of the language: DIFF-CLI-016 recorded); 2026-10-30 (`--color` for human diagnostics, `faust-rs` and `faustprobe`: DIFF-CLI-015 recorded); 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1513,6 +1513,58 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   tests in `crates/fir/src/schedule/tests.rs` and `tests_reuse.rs` (producers
   and the checkers' mutations) and `crates/compiler/tests/fir_schedule.rs` (interpreter outputs
   with and without the pass, FIR verification).
+
+### DIFF-BACK-010 — `-lang mojo`, ported from an open upstream pull request
+
+- Status: `adapted` (scalar), `narrower` (soundfiles, explicit SIMD),
+  `excluded` (`-gpu`).
+- The pinned C++ reference (`8eebea429`) has no Mojo backend. `-lang mojo`
+  follows the generated contract of the C++ Mojo backend of the open pull
+  request grame-cncm/faust#1293, pinned at `05ac86fb1`: the struct
+  `mydsp(FaustDsp)` with a `null_val` zone, snake-case lifecycle methods,
+  `Some[FaustGui]`/`Some[FaustMeta]` callbacks, no imports (the pull request's
+  `architecture/mojo` supplies the prelude and the traits). Names follow the
+  C++ `snakeCase`.
+- Implemented differences, all in the generated text:
+  - literals are typed (`F64(0.5)`, `F32(0.5)`, `S32(1)`), where upstream writes
+    double-precision literals bare;
+  - integer `/` and `%`, real `%`/`fmod` and C `round` call `faust_idiv`,
+    `faust_irem`, `faust_fmod` and `faust_round`, emitted at the top of the
+    file on use, and C `rint` is `std.math.round`: Mojo `//`, `%` and `mod`
+    floor and its `round` rounds half to even, so upstream's `//`/`%`, `mod`
+    and `round` differ from C on negative operands and on halves; the
+    generated file calls `std.math` only, where upstream also calls the
+    architecture's `mod`, `rint` and `pow_unrolled`;
+  - a snake-case rename that would merge two FIR names fails with
+    `FRS-CGEN-MOJO-0004`, a Mojo keyword gets a trailing `_`; upstream checks
+    neither;
+  - `-vec` emits the vector FIR as plain loops; upstream emits explicit SIMD,
+    requires `-double`, `-vs` equal to the `f32` SIMD width and buffers of a
+    whole number of vectors. Mojo does not autovectorize, so faust-rs `-vec`
+    Mojo code is correct but not SIMD;
+  - a method whose body has a loop takes its receiver as `self` and opens with
+    `ref dsp = self`, where upstream writes `mut dsp`: Mojo
+    `1.1.0.dev2026090705` never finishes compiling field accesses through the
+    receiver inside nested loops (clock domains, `-vec`), and compiles them
+    at once through a local reference. Callers do not see the receiver's
+    name;
+  - field layout and numbering follow faust-rs FIR (DIFF-BEH-009): 59 of the
+    91 impulse programs differ from upstream in field types (a one-sample
+    recursion is a scalar where upstream keeps a two-cell array); the method
+    set is identical on all 91.
+- Narrower: soundfiles are refused with `FRS-CGEN-MOJO-0003`, as the C++
+  visitor refuses them; `-ec`/`-os` are refused (no C++ Mojo reference).
+  Excluded: `-gpu`, the C++ Mojo GPU path.
+- Compatibility impact: faust-rs output builds against the pull request's
+  `architecture/mojo` unchanged. Numeric results follow C, not upstream Mojo,
+  on the operators listed above. The contract may move until the pull request
+  is merged; it is re-checked then.
+- Evidence:
+  [`mojo-backend-port-analysis-and-plan-2026-11-06-en.md`](mojo-backend-port-analysis-and-plan-2026-11-06-en.md);
+  `crates/codegen/src/backends/mojo/tests.rs`; the opt-in impulse lane
+  `make mojo` (`tests/impulse-tests/Make.mojo`, `archs/impulsemojo.mojo`):
+  131/131 programs (soundfiles excluded), scalar prefix, Mojo
+  `1.1.0.dev2026090705`.
 
 ## 7. Public API and representation adaptations
 

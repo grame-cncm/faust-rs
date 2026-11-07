@@ -12,6 +12,7 @@ use codegen::backends::cpp::CppOptions;
 use codegen::backends::cranelift::CraneliftOptions;
 use codegen::backends::interp::{FbcCppOptions, InterpOptions, generate_cpp_from_fbc, read_fbc};
 use codegen::backends::julia::JuliaOptions;
+use codegen::backends::mojo::MojoOptions;
 use codegen::backends::rust::RustOptions;
 use codegen::backends::wasm::WasmOptions;
 use compiler::{Compiler, FirVerifyOptions, golden_snapshot_from_file};
@@ -709,6 +710,47 @@ pub(crate) fn run_source_mode(
                 }
             }
             Err(err) => report_pipeline_failure("Julia pipeline failed", &err, cli),
+        }
+        timer.total();
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Mojo)) {
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        let options = MojoOptions {
+            class_name: selected_class_name(cli),
+            real_type: selected_mojo_real_type(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Mojo)),
+            )),
+            // Metadata transport and the embedded JSON description are filled
+            // by the lowering, which is where the compilation snapshot lives.
+            ..MojoOptions::default()
+        };
+        let result = compiler.compile_file_to_mojo_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
+        timer.phase("mojo-codegen");
+
+        match result {
+            Ok(mojo) => {
+                let rendered = wrap_backend_with_architecture(&mojo, cli);
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Mojo);
+                }
+            }
+            Err(err) => report_pipeline_failure("Mojo pipeline failed", &err, cli),
         }
         timer.total();
         return;

@@ -15,6 +15,7 @@ use codegen::backends::cranelift::{
 };
 use codegen::backends::interp::InterpOptions;
 use codegen::backends::julia::{JuliaOptions, generate_julia_module};
+use codegen::backends::mojo::{MojoOptions, generate_mojo_module};
 use codegen::backends::rust::{RustOptions, generate_rust_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
 use fir::{checker::verify_fir_module, dump_fir};
@@ -264,6 +265,34 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             }
             Err(err) => {
                 eprintln!("Julia fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Mojo)) {
+        let options = MojoOptions {
+            class_name: selected_class_name(cli),
+            real_type: selected_mojo_real_type(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Mojo)),
+            )),
+            // A FIR fixture has no source session behind it: there is no
+            // filename, no metadata snapshot, and no JSON description to embed.
+            ..MojoOptions::default()
+        };
+        match generate_mojo_module(&store, module, &options) {
+            Ok(mojo) => {
+                let rendered = wrap_backend_with_architecture(&mojo, cli);
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_fixture_json_companion(cli, &store, module, "mojo");
+                }
+            }
+            Err(err) => {
+                eprintln!("Mojo fixture codegen failed: {err}");
                 std::process::exit(1);
             }
         }

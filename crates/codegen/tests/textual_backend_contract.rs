@@ -13,7 +13,7 @@
 //! Each statement's body stores to a state field, so a construct that is
 //! emitted is visible in the text even when its own syntax is empty.
 
-use codegen::backends::{asc, c, cmajor, codebox, cpp, julia, rust};
+use codegen::backends::{asc, c, cmajor, codebox, cpp, julia, mojo, rust};
 use codegen::fixtures;
 use fir::{AccessType, FirBuilder, FirId, FirStore, FirType};
 
@@ -35,6 +35,10 @@ fn backends() -> Vec<(&'static str, &'static str, Generator)> {
         }),
         ("julia", "compute", |s, m| {
             julia::generate_julia_module(s, m, &julia::JuliaOptions::default())
+                .map_err(|e| e.to_string())
+        }),
+        ("mojo", "compute", |s, m| {
+            mojo::generate_mojo_module(s, m, &mojo::MojoOptions::default())
                 .map_err(|e| e.to_string())
         }),
         ("asc", "compute", |s, m| {
@@ -253,7 +257,7 @@ fn every_textual_backend_refuses_an_iterator_for_loop() {
 fn a_foreign_variable_is_read_never_declared_as_state() {
     for (backend, _, generate) in backends()
         .into_iter()
-        .filter(|(name, _, _)| ["c", "cpp", "rust", "julia", "asc"].contains(name))
+        .filter(|(name, _, _)| ["c", "cpp", "rust", "julia", "mojo", "asc"].contains(name))
     {
         let mut store = FirStore::new();
         let mut b = FirBuilder::new(&mut store);

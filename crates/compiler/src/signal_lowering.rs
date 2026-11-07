@@ -49,6 +49,8 @@ pub(crate) type LowerToCppError = LowerError<CppCodegenError>;
 pub(crate) type LowerToCError = LowerError<CCodegenError>;
 /// Lower error for the Julia backend.
 pub(crate) type LowerToJuliaError = LowerError<JuliaCodegenError>;
+/// Lower error for the Mojo backend.
+pub(crate) type LowerToMojoError = LowerError<MojoCodegenError>;
 /// Lowering error surface for the Rust backend.
 pub(crate) type LowerToRustError = LowerError<RustCodegenError>;
 /// Lowering error surface for the AssemblyScript backend.
@@ -490,6 +492,23 @@ pub(crate) fn lower_signals_to_julia(
         options,
         ctx,
         lower_signals_to_julia_transform_fastlane,
+    )
+}
+
+/// Dispatches mojo lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_mojo(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &MojoOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToMojoError> {
+    lower_signals_with_validation(
+        "mojo",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_mojo_transform_fastlane,
     )
 }
 
@@ -1127,6 +1146,78 @@ pub(crate) fn lower_signals_to_julia_transform_fastlane(
     }
     time_phase_with_sink(timing_sink, "julia-codegen", || {
         generate_julia_module(&lowered.store, lowered.module, &codegen_options)
+    })
+    .map_err(|error| LowerError::Codegen {
+        error,
+        origins: lowered.origins.clone(),
+    })
+}
+
+/// Lowers signals through the transform fast lane, verifies FIR, then emits Mojo.
+pub(crate) fn lower_signals_to_mojo_transform_fastlane(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &MojoOptions,
+    ctx: &SignalLoweringContext,
+) -> Result<String, LowerToMojoError> {
+    let module_name = resolve_module_name(options.class_name.as_deref(), source_name);
+    let timing_sink = ctx.timing_sink.as_ref();
+    let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
+        lower_signals_to_fir_transform_fastlane_with_timing(
+            output,
+            module_name,
+            ctx.real_type,
+            ctx.max_copy_delay,
+            ctx.delay_line_threshold,
+            ctx.bra_tape_block_size,
+            ctx.compute_mode,
+            ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
+            ctx.table_init_mode,
+            ctx.table_init_sample_rate,
+            ctx.check_table,
+            timing_sink,
+        )
+    })
+    .map_err(LowerError::Transform)?;
+    time_phase_with_sink(timing_sink, "fir-verify", || {
+        maybe_verify_fir_module(&lowered, ctx.fir_verify)
+    })
+    .map_err(|report| LowerError::Verify {
+        report,
+        origins: lowered.origins.clone(),
+    })?;
+    let mut codegen_options = options.clone();
+    codegen_options.real_type = match ctx.real_type {
+        RealType::Float32 => MojoRealType::Float32,
+        RealType::Float64 => MojoRealType::Float64,
+    };
+    fill_compilation_metadata(
+        &mut codegen_options.metadata_name,
+        &mut codegen_options.metadata_filename,
+        &mut codegen_options.metadata_entries,
+        codegen_options.compile_options.as_deref(),
+        source_name,
+        output,
+    );
+    if codegen_options.dsp_json.is_none() {
+        let dsp_name = codegen_options
+            .metadata_name
+            .clone()
+            .unwrap_or_else(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
+        codegen_options.dsp_json = embedded_json_description(
+            &lowered.store,
+            lowered.module,
+            source_name,
+            &dsp_name,
+            output,
+            codegen_options.compile_options.as_deref(),
+            ctx.real_type,
+        );
+    }
+    time_phase_with_sink(timing_sink, "mojo-codegen", || {
+        generate_mojo_module(&lowered.store, lowered.module, &codegen_options)
     })
     .map_err(|error| LowerError::Codegen {
         error,

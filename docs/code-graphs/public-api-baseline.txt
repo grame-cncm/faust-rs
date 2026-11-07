@@ -376,6 +376,7 @@ fn generate_cpp_module
 fn generate_cranelift_module
 fn generate_interp_module
 fn generate_julia_module
+fn generate_mojo_module
 fn generate_rust_module
 fn generate_wasm_module
 fn generate_wasm_module_with_context
@@ -426,6 +427,7 @@ mod julia
 mod layout
 mod llvm
 mod memory_layout
+mod mojo
 mod opcode
 mod optimizer
 mod real
@@ -481,6 +483,7 @@ struct MemoryDesc
 struct MemoryLayout
 struct MemoryZone
 struct MemoryZoneId
+struct MojoOptions
 struct Program
 struct RustOptions
 struct Soundfile
@@ -502,6 +505,7 @@ type CodegenError
 type CompilerParts
 type FirFixtureBuilder
 type JuliaRealType
+type MojoRealType
 type RustRealType
 type WasmBackendError
 use api
@@ -575,6 +579,8 @@ fn Compiler::compile_file_default_to_json_with_lane_and_compile_options
 fn Compiler::compile_file_default_to_json_with_lane_compile_options_and_memory
 fn Compiler::compile_file_default_to_julia
 fn Compiler::compile_file_default_to_julia_with_lane
+fn Compiler::compile_file_default_to_mojo
+fn Compiler::compile_file_default_to_mojo_with_lane
 fn Compiler::compile_file_default_to_rust
 fn Compiler::compile_file_default_to_rust_with_lane
 fn Compiler::compile_file_default_to_signals
@@ -603,6 +609,8 @@ fn Compiler::compile_file_to_json_with_compile_options_and_memory
 fn Compiler::compile_file_to_json_with_compile_options_memory_and_class_name
 fn Compiler::compile_file_to_julia
 fn Compiler::compile_file_to_julia_with_lane
+fn Compiler::compile_file_to_mojo
+fn Compiler::compile_file_to_mojo_with_lane
 fn Compiler::compile_file_to_rust
 fn Compiler::compile_file_to_rust_with_lane
 fn Compiler::compile_file_to_signals
@@ -635,6 +643,8 @@ fn Compiler::compile_source_to_json_with_lane_and_compile_options
 fn Compiler::compile_source_to_json_with_lane_compile_options_and_memory
 fn Compiler::compile_source_to_julia
 fn Compiler::compile_source_to_julia_with_lane
+fn Compiler::compile_source_to_mojo
+fn Compiler::compile_source_to_mojo_with_lane
 fn Compiler::compile_source_to_rust
 fn Compiler::compile_source_to_rust_with_lane
 fn Compiler::compile_source_to_signals
@@ -751,6 +761,7 @@ fn selected_codegen_lane
 fn selected_fir_verify_options
 fn selected_julia_real_type
 fn selected_memory_manager_mode
+fn selected_mojo_real_type
 fn selected_rust_real_type
 fn selected_super_class_name
 fn starts_with_compilation_options

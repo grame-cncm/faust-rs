@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use codegen::backends::interp::{InterpOptions, generate_interp_module, write_fbc};
 use codegen::backends::julia::JuliaRealType;
+use codegen::backends::mojo::MojoRealType;
 use codegen::backends::rust::RustRealType;
 use codegen::backends::wasm::WasmOptions;
 use codegen::fixtures::backend_test_fixtures;
@@ -43,7 +44,7 @@ use super::{fixture_mode::run_fir_fixture_mode, source_mode::run_source_mode};
 pub fn print_global_usage_and_exit() -> ! {
     eprintln!("Usage:");
     eprintln!(
-        "  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|rust|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
+        "  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|mojo|rust|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
     );
     eprintln!("                           [--no-fir-verify] [--fir-verify-strict]");
     eprintln!("  cargo run -p compiler -- --golden <input.dsp>");
@@ -231,6 +232,7 @@ pub fn cli_lang_name(lang: CliLang) -> &'static str {
         CliLang::Codebox => "codebox",
         CliLang::CodeboxTest => "codebox-test",
         CliLang::Julia => "julia",
+        CliLang::Mojo => "mojo",
         CliLang::Rust => "rust",
         CliLang::Wasm => "wasm",
         CliLang::Wast => "wast",
@@ -473,6 +475,16 @@ pub fn selected_julia_real_type(cli: &CliArgs) -> JuliaRealType {
         JuliaRealType::Float64
     } else {
         JuliaRealType::Float32
+    }
+}
+
+/// Maps CLI precision switches to the Mojo backend's real type, mirroring
+/// [`compiler::CompileOptionArgs::real_type`] for the Mojo code generator.
+pub fn selected_mojo_real_type(cli: &CliArgs) -> MojoRealType {
+    if cli.compile.double {
+        MojoRealType::Float64
+    } else {
+        MojoRealType::Float32
     }
 }
 

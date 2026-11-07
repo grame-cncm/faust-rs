@@ -141,6 +141,25 @@ pub(crate) fn lower_julia_error_to_compiler(
     )
 }
 
+/// Maps a `LowerToMojoError` into a [`CompilerError`], attaching the source name.
+pub(crate) fn lower_mojo_error_to_compiler(
+    source: &str,
+    output: &SignalCompileOutput,
+    error: LowerToMojoError,
+) -> CompilerError {
+    lower_error_to_compiler(
+        source,
+        output,
+        "mojo",
+        error,
+        |source, error, diagnostics| CompilerError::CodegenMojo {
+            source,
+            error,
+            diagnostics,
+        },
+    )
+}
+
 /// Maps a `LowerToAscError` into a [`CompilerError`], attaching the source name.
 pub(crate) fn lower_asc_error_to_compiler(
     source: &str,

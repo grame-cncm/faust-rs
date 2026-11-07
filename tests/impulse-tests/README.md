@@ -45,6 +45,14 @@ See the design write-up in
    - `make julia` — the faust-rs Julia backend is appended to a self-contained
      Julia impulse runtime, run by `julia`, and compared on the scalar prefix
      with `filesCompare -part` in 64-bit (`-double`) mode.
+   - `make mojo` — the faust-rs Mojo backend is placed between a
+     self-contained Mojo impulse runtime (`archs/impulsemojo.mojo`,
+     `archs/runimpulsemojo.mojo`), built with `mojo build -O3`, and compared on
+     the scalar prefix with `filesCompare -part` in 64-bit (`-double`) mode.
+     Opt-in, outside `make all`: `MOJO=` names the Mojo command, for instance
+     the locked environment of grame-cncm/faust#1293 (`pixi run --manifest-path
+     <faust>/architecture/mojo/pixi.toml -q mojo`). `mojo-vec0`/`mojo-vec1`
+     run it with `-vec -lv 0/1`.
    - `make cmajor` — faust-rs emits scalar-double Cmajor, `cmaj generate
      --target=cpp` produces a native class, and the pinned C++ Faust
      `cmajor_cpp_dsp` adapter runs the upstream impulse protocol. Each DSP uses
@@ -132,6 +140,8 @@ See the design write-up in
 - Node.js for the WASM and AssemblyScript impulse runners.
 - `rustc` (already required to build the workspace) for the Rust backend gate.
 - Julia with the `StaticArrays` package for the Julia backend gate.
+- Mojo (`mojo`, tested with `1.1.0.dev2026090705`) for the optional Mojo
+  backend gate; `MOJO=` overrides the command.
 - Cmajor's `cmaj` command for the optional Cmajor backend gate; override its
   path with `CMAJ_BIN=/path/to/cmaj` and its C++ compiler with `CMAJ_CXX`.
 - `asc` (AssemblyScript compiler) on `PATH`, or `ASC=/path/to/asc`.
@@ -157,6 +167,7 @@ make assemblyscript # check the AssemblyScript backend (scalar prefix)
 make rust          # check the Rust backend (scalar prefix, rustc)
 make julia         # check the Julia backend (scalar prefix, Julia)
 make cmajor        # check scalar Cmajor via cmaj-generated C++
+make mojo MOJO=... # check the Mojo backend (scalar prefix, opt-in)
 make all-mem0      # full dsp/ corpus on C, C++, Cranelift, then focused audit
 make mem0-smoke    # focused allocation/JSON/O0-O3 audit on dsp-mem0/
 make mem0-opt      # rerun the focused C/C++/Cranelift -mem0 O0/O3 matrix

@@ -15,6 +15,7 @@ use codegen::backends::cpp::CppOptions;
 use codegen::backends::cranelift::CraneliftOptions;
 use codegen::backends::interp::InterpOptions;
 use codegen::backends::julia::JuliaOptions;
+use codegen::backends::mojo::MojoOptions;
 use codegen::backends::rust::RustOptions;
 use codegen::backends::wasm::{WasmModule, WasmOptions, generate_wasm_module_with_context};
 pub use transform::signal_fir::RealType;
@@ -374,6 +375,88 @@ impl Compiler {
         lane: SignalFirLane,
     ) -> Result<String, CompilerError> {
         self.compile_file_to_julia_with_lane(path, &[], options, lane)
+    }
+
+    /// Parses + evaluates + propagates one source, then emits Mojo text.
+    pub fn compile_source_to_mojo(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &MojoOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_source_to_mojo_with_lane(
+            source_name,
+            source,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one source, then emits Mojo text using
+    /// the selected signal->FIR lowering lane.
+    pub fn compile_source_to_mojo_with_lane(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &MojoOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_source_to_signals(source_name, source)?;
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_mojo(source_name, &signals, options, ctx)
+            .map_err(|e| lower_mojo_error_to_compiler(source_name, &signals, e))
+    }
+
+    /// Parses + evaluates + propagates one file, then emits Mojo text.
+    pub fn compile_file_to_mojo(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &MojoOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_mojo_with_lane(
+            path,
+            search_paths,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file, then emits Mojo text using
+    /// the selected signal->FIR lowering lane.
+    pub fn compile_file_to_mojo_with_lane(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &MojoOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_file_to_signals(path, search_paths)?;
+        let source = path.display().to_string();
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_mojo(&source, &signals, options, ctx)
+            .map_err(|e| lower_mojo_error_to_compiler(&source, &signals, e))
+    }
+
+    /// Parses + evaluates + propagates one file with default import search path,
+    /// then emits Mojo text.
+    pub fn compile_file_default_to_mojo(
+        &self,
+        path: &Path,
+        options: &MojoOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_default_to_mojo_with_lane(path, options, SignalFirLane::TransformFastLane)
+    }
+
+    /// Parses + evaluates + propagates one file with default import search path,
+    /// then emits Mojo text using the selected signal->FIR lowering lane.
+    pub fn compile_file_default_to_mojo_with_lane(
+        &self,
+        path: &Path,
+        options: &MojoOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_mojo_with_lane(path, &[], options, lane)
     }
 
     // ── AssemblyScript backend ────────────────────────────────────────────────────

@@ -9,10 +9,10 @@ use super::{
     AscCodegenError, CCodegenError, CodeboxCodegenError, Compiler, CompilerError, ComputeMode,
     CppCodegenError, DiagnosticBundle, ExpandDspRequest, GenerateAuxFilesRequest, InferenceError,
     InterpCodegenError, InterpCodegenErrorCode, JuliaCodegenError, MemoryLayoutFlavor,
-    PropagateError, RealType, RustCodegenError, SchedulingStrategy, SignalFirError,
-    SignalFirErrorCode, SignalFirLane, SourceReaderError, WasmArtifactRequest, WasmBackendError,
-    build_import_search_paths, compile_options_json_string, default_import_search_paths,
-    golden_snapshot, resolve_module_name, resolve_ui_root_label,
+    MojoCodegenError, PropagateError, RealType, RustCodegenError, SchedulingStrategy,
+    SignalFirError, SignalFirErrorCode, SignalFirLane, SourceReaderError, WasmArtifactRequest,
+    WasmBackendError, build_import_search_paths, compile_options_json_string,
+    default_import_search_paths, golden_snapshot, resolve_module_name, resolve_ui_root_label,
 };
 use codegen::backends::wasm::WasmOptions;
 use parser::VirtualSourceMap;
@@ -1406,6 +1406,14 @@ fn compiler_error_source_classification_covers_every_variant() {
         source: "julia.dsp".into(),
         error: JuliaCodegenError::new(
             codegen::backends::julia::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<MojoCodegenError>(CompilerError::CodegenMojo {
+        source: "mojo.dsp".into(),
+        error: MojoCodegenError::new(
+            codegen::backends::mojo::CodegenErrorCode::RootNotModule,
             "root",
         ),
         diagnostics: empty(),

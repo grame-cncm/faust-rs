@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -294,6 +294,17 @@ julia-vec0:
 julia-vec1:
 	$(MAKE) -f Make.julia all outdir=julia-vec1 VECOPTS="-vec -lv 1"
 
+# Mojo is an opt-in external lane: it needs the Mojo toolchain (see Make.mojo),
+# so it is absent from `all` and from the scheduling matrix, as Cmajor is.
+mojo:
+	$(MAKE) -f Make.mojo all outdir=mojo
+
+mojo-vec0:
+	$(MAKE) -f Make.mojo all outdir=mojo-vec0 VECOPTS="-vec -lv 0"
+
+mojo-vec1:
+	$(MAKE) -f Make.mojo all outdir=mojo-vec1 VECOPTS="-vec -lv 1"
+
 # Cmajor is an opt-in external lane: it needs the Cmajor command-line tool and
 # the pinned C++ Faust adapter, so it is intentionally absent from `all` and the
 # scalar/vector scheduling matrix.
@@ -350,6 +361,7 @@ help:
 	@echo "  assemblyscript : check the faust-rs AssemblyScript backend (scalar prefix, Node/asc)"
 	@echo "  rust           : check the faust-rs Rust backend (scalar prefix, rustc)"
 	@echo "  julia          : check the faust-rs Julia backend (scalar prefix, Julia)"
+	@echo "  mojo           : check the faust-rs Mojo backend (scalar prefix, opt-in, needs MOJO)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"
 	@echo "  *-vec0/*-vec1  : check a backend with -vec -lv 0 / -vec -lv 1"
 	@echo "  all-vec        : run all vector-mode backend variants"

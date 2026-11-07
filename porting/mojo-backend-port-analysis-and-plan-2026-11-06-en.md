@@ -2,9 +2,10 @@
 
 Date: 2026-11-06
 
-Status: **plan, nothing landed.** §6 lists the decisions to take before
-phase M1 starts; §5 gives the phases, each with its deliverable and pass
-criterion.
+Status: **M1, M2 and M3 landed on the branch `mojo-backend` (2026-11-07);
+M4 run once by hand; M5(b) not started; the Mojo compiler hang is worked
+around, not yet reported upstream.** §6 records the decisions, §9 the
+outcome.
 
 ## Scope and relation to the earlier analysis
 
@@ -344,6 +345,13 @@ path; the registry records it as `excluded`.
 
 ## 6. Decisions to take before M1
 
+**Decided 2026-11-06 (user):** D1 pin `05ac86fb1` (default, no
+preference stated); D2 (a), `-vec` accepted and emitted as plain loops;
+D3 yes, the PR's compiler is built for M4; D4 yes, the PR's locked pixi
+environment (`architecture/mojo/pixi.lock`: `mojo 1.1.0.dev2026090705`,
+`modular >=26.6.0.dev2026090705` from `conda.modular.com/max-nightly`);
+D5 as proposed.
+
 - **D1 — Contract reference.** The PR is open and can still change. The
   proposal is to pin the contract to `05ac86fb1`, record that pin in the
   registry entry, and re-check it when the PR is merged.
@@ -395,3 +403,119 @@ path; the registry records it as `excluded`.
 - `porting/backend-lifecycle-contract-en.md`.
 - `porting/faust-rs-vs-faust-cpp-differences-en.md` (DIFF-BEH-003,
   DIFF-BEH-009, DIFF-BEH-010).
+
+## 9. Outcome (2026-11-07, branch `mojo-backend`)
+
+### What landed
+
+- **M1.** `crates/codegen/src/backends/mojo/` (`mod.rs`, `tests.rs`):
+  `generate_mojo_module`, `MojoOptions`, `MojoRealType`, error codes
+  `FRS-CGEN-MOJO-0001..0004`. Table generators are flattened
+  (`MergedStructFields`, as Julia); static declarations become struct fields
+  read through `dsp.`, as upstream declares every global as a field.
+- **M2.** `-lang mojo` in the CLI (source and fixture modes, `-a` wrapping),
+  the `Compiler::compile_*_to_mojo` facade, `CompilerError::CodegenMojo`, the
+  capability row (`-vec` accepted, `-ec`/`-os` refused), and the backend added
+  to the textual contract, lifecycle-leak, deep-expression, backend-error,
+  literal-spelling and CLI-transcript tests. A lifecycle conformance test
+  (`lifecycle_conformance_matches_the_cpp_contract`) covers the five points of
+  `porting/backend-lifecycle-contract-en.md`.
+- **M3.** `tests/impulse-tests/archs/impulsemojo.mojo` and
+  `runimpulsemojo.mojo`, a self-contained runtime written for the tests (the
+  type aliases and the three traits of the pull request's architecture, an
+  impulse GUI holding the button zones, the C++ impulse protocol), and
+  `Make.mojo` with the opt-in targets `make mojo`, `mojo-vec0`, `mojo-vec1`
+  (`MOJO=` names the command). `KNOWN_FAIL_mojo` lists the two soundfile
+  programs.
+
+### Findings made on the way
+
+Probed on Mojo `1.1.0.dev2026090705` (the pull request's `pixi.lock`):
+
+- Mojo integer `//` and `%` floor (`-7 // 2 == -4`, `-7 % 2 == 1`), real `%`
+  is a floor modulo (`-7.5 % 2.0 == 0.5`, C `fmod` gives `-1.5`), and
+  `std.math.round` rounds half to even (`round(2.5) == 2.0`). `std.math` has
+  no `rint` and no `fmod`; upstream's `mod` and `rint` come from the
+  architecture's `help/math.mojo`, where `mod` is `%`. So upstream's mapping
+  `fmod → mod` and `round → round` differs from C on negative operands and
+  on halves. The emitter writes `faust_idiv`, `faust_irem`, `faust_fmod` and
+  `faust_round` on use and spells C `rint` as `round`.
+- `min`/`max` absorb a NaN operand in both orders, as C `fmin`/`fmax` do: no
+  helper needed (Julia needed one).
+- Integer division by zero gives 0 and `INT_MIN // -1` wraps; a NaN cast to
+  `Int32` gives 0; an out-of-range real cast to `Int32` is not C's (C is
+  undefined there, the arm64 C++ reference saturates). Not exercised by the
+  corpus.
+- A list literal initializes an `Array` (`var t: Arr[F64, 3] = [...]`); the
+  variadic constructor does not exist.
+- Passing `dsp[]` to a `mut` parameter copies the struct: a runtime that
+  keeps pointers to the button zones must pass the DSP by pointer (the first
+  version of `impulsemojo.mojo` saw `reverb_tester`'s buttons never pressed).
+- The pull request rewrites the C++ Julia and JSFX type tables to `S32`/`S64`
+  (§1), a C++-side regression to report there.
+- **The Mojo compiler hangs on field accesses through the receiver inside
+  nested loops.** A method that reads or writes `dsp.x` inside two nested
+  `for ... in range`, or three nested `while`, never finishes compiling, at
+  `-O0` as at `-O3`, on scalar fields as on `Array` fields. Standalone
+  programs of 19 to 25 lines, without Faust, reproduce it. The same accesses
+  through a local reference (`ref d = dsp`, or a pointer to `dsp`) compile in
+  two seconds and give the same result. Every clock-domain program hits it
+  (`upsampling_*`, `downsampling_*`, `ondemand_*`: the domain loop sits in
+  the sample loop), and so does `-vec` (the vector loops nest), which is
+  where the ten-minute builds came from. A first workaround, nested counted
+  loops written as `while`, cured two levels and not three; it was replaced.
+  A generated method whose body has a loop now takes its receiver as `self`
+  and opens with `ref dsp = self`: the body text, the method names and their
+  argument types stay those of the C++ backend, loops keep the
+  `for ... in range` form, and only the receiver's name differs, which no
+  caller sees (test `methods_with_loops_alias_their_receiver`). Upstream
+  does not meet the hang on these programs: the pull request's compiler
+  predates the clock-domain primitives (`upsampling` is an undefined symbol
+  there), and its `-vec` `compute` for `osc` is a single loop over SIMD
+  vectors. By the standalone reproducers, nested loops of its own reaching
+  fields through `dsp` would hang it the same way (not tried).
+
+### Validation
+
+- `make mojo` (scalar, `-double`): **131/131**, scalar prefix,
+  `filesCompare -part`, with `CPP_ORACLE_UNSUPPORTED=` so the 40
+  clock-domain programs the local oracle manifest leaves out are run against
+  their references too; the whole lane builds and runs in 54 s at `-j6`
+  (2026-11-07, after the receiver alias). The two soundfile programs are
+  `KNOWN_FAIL_mojo`.
+- `make mojo-vec0` / `mojo-vec1`: 91/91 each on the oracle-admitted set
+  before the receiver alias; the rerun on the 131 programs was in progress
+  at commit time (`mojo-vec0` at 128 passed, none failed). The next commit
+  records the result.
+- The same faust-rs output built against the pull request's own
+  `architecture/mojo/impulse.mojo` (`osc`, `reverb_tester`): identical to the
+  reference, so the contract holds against the upstream runtime too.
+- M4, run once by hand: the C++ pull request's compiler (built from
+  `05ac86fb1`) and faust-rs on the same 91 programs give the same method set
+  everywhere; 59 programs differ in field types, from faust-rs's FIR layout
+  (DIFF-BEH-009, a one-sample recursion held as a scalar). Not wired as a
+  test: it needs the pull request's compiler.
+- Workspace: `cargo fmt`, `clippy -D warnings`, `cargo test --workspace
+  --all-targets`, the five structure gates and `code-graphs --check` green.
+  No other backend's emission code changed (only test tables and the CLI
+  dispatch), so the codegen-identity differential was not rerun; the
+  compile-budget gate cannot run on this machine (its calibration falls
+  under the floor) and the change adds no work to an existing lowering.
+
+### Costs and open items
+
+- `-vec` output is 5 to 7 times the scalar text (`bells` 15,678 lines against
+  2,698). The ten-minute `mojo build -O3` times seen before were the
+  receiver hang above, not the size: with the alias, the `-vec` lane runs
+  at the pace of the scalar one.
+- The receiver hang is a Mojo defect to report upstream
+  (modular/modular). Not filed yet: the 19-line reproducer hangs on
+  `1.1.0.dev2026090705`, and it has to be checked on the current nightly
+  first. Each single change to it still hangs (`self` for the receiver,
+  `Int` loops, no `var` loop variable, no local, no accumulator), but a
+  program written from scratch with one field and `for _ in range` does
+  not, so the trigger is not pinned down yet. The reproducer is kept
+  outside the repository, for the report.
+- M5(b), explicit SIMD as a FIR pass, needs its own plan.
+- The contract is pinned to an open pull request: re-check it when it is
+  merged.

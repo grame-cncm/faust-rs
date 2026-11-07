@@ -27,6 +27,7 @@ use codegen::backends::{
     codebox::{CodeboxOptions, generate_codebox_module},
     cpp::{CppOptions, generate_cpp_module},
     julia::{JuliaOptions, generate_julia_module},
+    mojo::{MojoOptions, generate_mojo_module},
     rust::{RustOptions, generate_rust_module},
 };
 use compiler::{Compiler, ControlRateMode, ProcessingApi, SignalFirLane, TableInitMode};
@@ -41,7 +42,9 @@ const SOURCE: &str = "t = (+(1) ~ _) - 1;\nprocess = rdtable(8, int(t * 2), int(
 /// There is no skip path: as of plan phase S5 every backend emits
 /// generated-table sub-modules, and a backend that starts refusing them again
 /// is a regression this guard must report, not step over.
-const BACKENDS: [&str; 7] = ["cpp", "c", "rust", "julia", "codebox", "asc", "cmajor"];
+const BACKENDS: [&str; 8] = [
+    "cpp", "c", "rust", "julia", "mojo", "codebox", "asc", "cmajor",
+];
 
 fn emit(backend: &str) -> String {
     let mut compiler = Compiler::new().with_table_init_mode(TableInitMode::Runtime);
@@ -62,6 +65,8 @@ fn emit(backend: &str) -> String {
         "rust" => generate_rust_module(&fir.store, fir.module, &RustOptions::default())
             .map_err(|e| e.to_string()),
         "julia" => generate_julia_module(&fir.store, fir.module, &JuliaOptions::default())
+            .map_err(|e| e.to_string()),
+        "mojo" => generate_mojo_module(&fir.store, fir.module, &MojoOptions::default())
             .map_err(|e| e.to_string()),
         "codebox" => generate_codebox_module(&fir.store, fir.module, &CodeboxOptions::default())
             .map_err(|e| e.to_string()),

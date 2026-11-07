@@ -268,12 +268,13 @@ mod tests {
     /// changing one is a change of generated code.
     #[test]
     fn backend_spellings_of_special_values() {
-        use crate::backends::{asc, c_family, cmajor, codebox, julia, rust};
+        use crate::backends::{asc, c_family, cmajor, codebox, julia, mojo, rust};
         let spellings = [
             ("c/cpp", c_family::C_FAMILY_REAL),
             ("asc", asc::ASC_REAL),
             ("rust", rust::RUST_REAL),
             ("julia", julia::JULIA_REAL),
+            ("mojo", mojo::MOJO_REAL),
             ("cmajor", cmajor::CMAJOR_REAL),
             ("codebox", codebox::CODEBOX_REAL),
         ];
@@ -301,6 +302,7 @@ mod tests {
                 "asc: NaN | Infinity | -Infinity | 0.0 | 0.0000000001 | 100000000000000000000000.0",
                 "rust: f64::NAN | f64::INFINITY | f64::NEG_INFINITY | 0.0 | 1e-10 | 1e23",
                 "julia: NaN | Inf | -Inf | 0.0 | 1e-10 | 1e23",
+                "mojo: nan | inf | -inf | 0.0 | 1e-10 | 1e23",
                 "cmajor: nan | inf | -inf | 0.0 | 0.0000000001 | 99999999999999991611392.0",
                 "codebox: NaN | inf | -inf | 0.0 | 0.0000000001 | 99999999999999991611392.0",
             ]

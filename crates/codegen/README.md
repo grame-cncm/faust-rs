@@ -30,6 +30,7 @@ JSON, or Cranelift JIT code.
 | `backends::interp` | `compiler/generator/interpreter/` |
 | `backends::interp::fbc_to_cpp` | `compiler/generator/interpreter/fbc_cpp_compiler.hh` (`FBCCPPCompiler`) |
 | `backends::julia` | `compiler/generator/julia/` |
+| `backends::mojo` | `compiler/generator/mojo/` of the open grame-cncm/faust#1293 (`05ac86fb1`) |
 | `backends::rust` | `compiler/generator/rust/` |
 | `backends::wasm` | `compiler/generator/wasm/` + `code_container.hh` JSON path |
 | Other backends | `compiler/generator/<backend>/` *(planned)* |
@@ -46,6 +47,7 @@ JSON, or Cranelift JIT code.
 | `cranelift` | 🔧 Bring-up | `generate_cranelift_module` |
 | `interp` | ✅ Implemented | `generate_interp_module` |
 | `julia` | 🔧 Bring-up | `generate_julia_module` |
+| `mojo` | 🔧 Scalar, plain-loop `-vec`; no soundfile, no explicit SIMD | `generate_mojo_module` |
 | `rust` | ✅ Implemented | `generate_rust_module` |
 | `interp::fbc_to_cpp` | ✅ Implemented | `generate_cpp_from_fbc` |
 | `wasm` | 🔧 Bring-up | `generate_wasm_module` |
@@ -78,7 +80,7 @@ Backends split into two shapes, matching what upstream does per target:
 | Shape | Backends | How |
 |---|---|---|
 | Native nested container | `cpp`, `c`, `rust`, `asc`, `cmajor` | Emit the sub-module as a nested class/struct with its two entry points, and render `staticInit` as the body of `classInit` |
-| Flattened | `interp`, `wasm`, `cranelift`, `codebox`, `julia` | `fir::subcontainer::flatten_sub_modules_owned` inlines the generator before decoding, under a `SubModuleStatePolicy` |
+| Flattened | `interp`, `wasm`, `cranelift`, `codebox`, `julia`, `mojo` | `fir::subcontainer::flatten_sub_modules_owned` inlines the generator before decoding, under a `SubModuleStatePolicy` |
 
 Three obligations a backend must meet, each of which was violated at least once
 during the port:
@@ -427,6 +429,49 @@ CLI entry point lives in `compiler`:
 ```sh
 cargo run -p compiler -- --lang julia my.dsp -o mydsp.jl
 cargo run -p compiler -- --lang julia -double my.dsp -o mydsp.jl
+```
+
+---
+
+### Mojo backend — `backends::mojo`
+
+Lowers a FIR module to the Mojo text of the C++ Mojo backend of the open pull
+request grame-cncm/faust#1293 (pinned at `05ac86fb1`): a
+`@fieldwise_init struct mydsp(FaustDsp)` with snake-case lifecycle methods,
+written for that pull request's `architecture/mojo` tree, which supplies the
+prelude and the `FaustDsp`/`FaustGui`/`FaustMeta` traits. Plan and contract:
+`porting/mojo-backend-port-analysis-and-plan-2026-11-06-en.md`.
+
+```rust
+use codegen::backends::mojo::{MojoOptions, MojoRealType, generate_mojo_module};
+
+let opts = MojoOptions {
+    real_type: MojoRealType::Float64,
+    ..Default::default()
+};
+let mojo = generate_mojo_module(&store, root_id, &opts)?;
+```
+
+Important emitter rules:
+
+- Names follow the C++ `snakeCase` (`fRec0` → `rec0`); a rename that would
+  merge two FIR names fails with `FRS-CGEN-MOJO-0004`.
+- Mojo has no implicit numeric conversion: operands are converted explicitly,
+  and literals are typed (`S32(1)`, `F64(0.5)`).
+- Integer `/` and `%`, `fmod` and C `round` go through `faust_*` helpers
+  emitted on use, because Mojo floors and rounds half to even.
+- Soundfiles are refused, as in the C++ backend; `-vec` emits plain loops,
+  not the C++ backend's explicit SIMD.
+
+| Item | Description |
+|---|---|
+| `MojoOptions` | `class_name`, `real_type`, `compile_options`, `metadata_name`, `metadata_filename`, `metadata_entries`, `dsp_json` |
+| `MojoRealType` | `Float32` (default) or `Float64` |
+| `generate_mojo_module` | `(&FirStore, FirId, &MojoOptions) -> Result<String, CodegenError>` |
+| `CodegenError` | Codes `FRS-CGEN-MOJO-0001..0004` |
+
+```sh
+cargo run -p compiler -- -lang mojo -double my.dsp -o mydsp.mojo
 ```
 
 ---

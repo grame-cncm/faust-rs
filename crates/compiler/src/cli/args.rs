@@ -39,6 +39,7 @@ pub enum CliLang {
     Interp,
     #[value(alias = "jl")]
     Julia,
+    Mojo,
     #[value(alias = "rs")]
     Rust,
     Wasm,

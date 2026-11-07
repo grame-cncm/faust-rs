@@ -150,6 +150,7 @@ pub mod jax;
 pub mod jsfx;
 pub mod julia;
 pub mod llvm;
+pub mod mojo;
 pub mod rust;
 pub mod sdf3;
 pub mod vhdl;

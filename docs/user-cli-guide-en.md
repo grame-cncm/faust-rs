@@ -232,7 +232,7 @@ cargo run -p compiler -- --svg tests/corpus/rep_01_passthrough.dsp
 
 See [SVG diagram options](#7-svg-block-diagram-generation) for the layout flags.
 
-### `--lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|rust|wasm|wast`
+### `--lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|mojo|rust|wasm|wast`
 
 Faust-style backend language selector.
 
@@ -256,7 +256,7 @@ For the backends that also have a dedicated flag, `-lang c`, `-lang cpp`,
 `-lang fir`, `-lang interp` and `-lang cranelift` are equivalent to
 `--dump-c`, `--dump-cpp`, `--dump-fir`, `--dump-interp` and
 `--dump-cranelift`. The rest (`asc`, `cmajor`, `codebox`, `codebox-test`,
-`julia`, `rust`, `wasm`, `wast`) are reachable only through `-lang`.
+`julia`, `mojo`, `rust`, `wasm`, `wast`) are reachable only through `-lang`.
 
 `codebox-test` is a second spelling of the `codebox` backend (RNBO codebox)
 that prefixes generated parameter names with `RB_`; it changes only naming,
@@ -268,7 +268,7 @@ not behavior.
 
 Legacy compatibility (raw process arguments, before `clap` parsing):
 
-- `-lang asc`, `-lang c`, `-lang cmajor`, `-lang codebox`, `-lang codebox-test`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang rust`, `-lang wasm`, and `-lang wast` are accepted.
+- `-lang asc`, `-lang c`, `-lang cmajor`, `-lang codebox`, `-lang codebox-test`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang mojo`, `-lang rust`, `-lang wasm`, and `-lang wast` are accepted.
 - `-lang -c` maps to `--lang c`.
 - `-lang -cpp` maps to `--lang cpp`.
 - `-lang -fir` maps to `--lang fir`.
@@ -283,6 +283,7 @@ faust-rs -lang cranelift foo.dsp
 faust-rs -lang fir foo.dsp
 faust-rs -lang interp foo.dsp
 faust-rs -lang julia foo.dsp
+faust-rs -lang mojo -double foo.dsp -o foo.mojo
 faust-rs -lang rust foo.dsp
 faust-rs -lang wasm foo.dsp -o foo.wasm
 faust-rs -lang wast foo.dsp
@@ -533,7 +534,7 @@ Support by backend:
   one sample at a time with external controls, so passing `-ec`/`-os` or
   omitting them produces identical output; `codebox` also rejects `-vec`
   outright since it has no block loop.
-- `interp`, `cranelift`, `wasm`, `wast`, `julia`: unsupported — rejected with
+- `interp`, `cranelift`, `wasm`, `wast`, `julia`, `mojo`: unsupported — rejected with
   a stable capability diagnostic (`FRS-EXEC-*`).
 
 Programs using the foreign runtime variable `count` or block reverse-mode AD
@@ -661,7 +662,7 @@ Valid with:
 - `--dump-interp`
 - `--dump-cranelift`
 - `--json`
-- `--lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|rust|wasm|wast`
+- `--lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|mojo|rust|wasm|wast`
 
 Invalid with:
 

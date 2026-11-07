@@ -110,6 +110,9 @@ use codegen::backends::interp::{
 use codegen::backends::julia::{
     CodegenError as JuliaCodegenError, JuliaOptions, JuliaRealType, generate_julia_module,
 };
+use codegen::backends::mojo::{
+    CodegenError as MojoCodegenError, MojoOptions, MojoRealType, generate_mojo_module,
+};
 use codegen::backends::rust::{
     CodegenError as RustCodegenError, RustOptions, RustRealType, generate_rust_module,
 };
@@ -2246,6 +2249,15 @@ pub enum CompilerError {
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
+    /// Mojo backend emission failed from FIR.
+    CodegenMojo {
+        /// Program provenance; see the shared field convention.
+        source: Box<str>,
+        /// Typed error from the stage that failed.
+        error: MojoCodegenError,
+        /// Rendered diagnostics for this failure.
+        diagnostics: DiagnosticBundle,
+    },
     /// AssemblyScript backend emission failed from FIR.
     CodegenAsc {
         /// Program provenance; see the shared field convention.
@@ -2371,6 +2383,9 @@ impl std::fmt::Display for CompilerError {
             Self::CodegenJulia { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
+            Self::CodegenMojo { source, error, .. } => {
+                write!(f, "code generation failed for {source}: {error}")
+            }
             Self::CodegenAsc { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
@@ -2412,6 +2427,7 @@ impl std::error::Error for CompilerError {
             Self::CodegenCpp { error, .. } => Some(error),
             Self::CodegenC { error, .. } => Some(error),
             Self::CodegenJulia { error, .. } => Some(error),
+            Self::CodegenMojo { error, .. } => Some(error),
             Self::CodegenAsc { error, .. } => Some(error),
             Self::CodegenCodebox { error, .. } => Some(error),
             Self::CodegenCmajor { error, .. } => Some(error),
@@ -2444,6 +2460,7 @@ impl CompilerError {
             | Self::CodegenCpp { diagnostics, .. }
             | Self::CodegenC { diagnostics, .. }
             | Self::CodegenJulia { diagnostics, .. }
+            | Self::CodegenMojo { diagnostics, .. }
             | Self::CodegenAsc { diagnostics, .. }
             | Self::CodegenCodebox { diagnostics, .. }
             | Self::CodegenCmajor { diagnostics, .. }
@@ -2635,6 +2652,7 @@ impl CompilerError {
             Self::CodegenCpp { diagnostics, .. } => diagnostics,
             Self::CodegenC { diagnostics, .. } => diagnostics,
             Self::CodegenJulia { diagnostics, .. } => diagnostics,
+            Self::CodegenMojo { diagnostics, .. } => diagnostics,
             Self::CodegenAsc { diagnostics, .. } => diagnostics,
             Self::CodegenCodebox { diagnostics, .. } => diagnostics,
             Self::CodegenCmajor { diagnostics, .. } => diagnostics,

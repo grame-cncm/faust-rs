@@ -167,6 +167,18 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
+    // `-vec` is accepted and the vector FIR emitted as plain loops: correct,
+    // but not SIMD, since Mojo does not autovectorize. C++ Mojo `-vec` emits
+    // explicit SIMD and requires `-double` (DIFF-BACK-010); `-ec`/`-os` have
+    // no C++ Mojo reference.
+    BackendExecutionCaps {
+        backend: "mojo",
+        external_control: ExecutionCapability::Unsupported,
+        one_sample: ExecutionCapability::Unsupported,
+        combined: ExecutionCapability::Unsupported,
+        vector: ExecutionCapability::Explicit,
+        canonical_compute_required: true,
+    },
     // Codebox is the one row where the execution options are not a choice.
     // RNBO calls the generated code once per sample and sets controls through
     // `@param` identifiers, so external control and the one-sample API are the
@@ -204,7 +216,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
 ///
 /// Identifiers match the primary `-lang` value (`"c"`, `"cpp"`, `"rust"`,
 /// `"fir"`, `"interp"`, `"cranelift"`, `"wasm"`, `"wast"`, `"asc"`,
-/// `"julia"`, `"codebox"`, `"cmajor"`). Unknown identifiers return `None` so callers fail
+/// `"julia"`, `"mojo"`, `"codebox"`, `"cmajor"`). Unknown identifiers return `None` so callers fail
 /// closed.
 #[must_use]
 pub fn backend_execution_caps(backend: &str) -> Option<&'static BackendExecutionCaps> {
@@ -399,7 +411,7 @@ pub fn validate_execution_options(
 mod tests {
     use super::*;
 
-    const ALL_BACKENDS: [&str; 12] = [
+    const ALL_BACKENDS: [&str; 13] = [
         "c",
         "cpp",
         "rust",
@@ -410,6 +422,7 @@ mod tests {
         "wast",
         "asc",
         "julia",
+        "mojo",
         "codebox",
         "cmajor",
     ];
@@ -442,7 +455,7 @@ mod tests {
 
     #[test]
     fn unsupported_backends_reject_each_flag_with_stable_codes() {
-        for backend in ["interp", "cranelift", "wasm", "wast", "julia"] {
+        for backend in ["interp", "cranelift", "wasm", "wast", "julia", "mojo"] {
             let os = validate_execution_options(
                 backend,
                 ControlRateMode::InlinePerBlock,

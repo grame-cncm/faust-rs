@@ -17,6 +17,7 @@ use codegen::backends::cpp::CppOptions;
 use codegen::backends::cranelift::CraneliftOptions;
 use codegen::backends::interp::InterpOptions;
 use codegen::backends::julia::JuliaOptions;
+use codegen::backends::mojo::MojoOptions;
 use codegen::backends::rust::RustOptions;
 use codegen::backends::wasm::WasmOptions;
 use compiler::Compiler;
@@ -67,6 +68,11 @@ fn a_deep_expression_compiles_on_a_host_thread_with_every_backend() {
         expect(
             "julia",
             c.compile_source_to_julia(name, &source, &JuliaOptions::default())
+                .map(drop),
+        );
+        expect(
+            "mojo",
+            c.compile_source_to_mojo(name, &source, &MojoOptions::default())
                 .map(drop),
         );
         expect(
