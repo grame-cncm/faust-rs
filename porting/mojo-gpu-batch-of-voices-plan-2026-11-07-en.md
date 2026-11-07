@@ -3,7 +3,9 @@
 Date: 2026-11-07
 
 Status: **G1 and G2 landed 2026-11-07 on Mojo 1.3 (§4; outcomes §7, §8);
-G2 calls for G3; G3 and G4 not started.** §2 records a hand-written probe run
+G2 calls for G3, designed in
+`porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md` (decisions
+open); G4 not started.** §2 records a hand-written probe run
 on the day; no file of the repository changed for it.
 
 ## Scope
@@ -149,6 +151,10 @@ program, of the voice count from which the device beats the four
 performance cores, or that it never does.
 
 ### G3 — State layout for large programs (only if G2 says so)
+
+*G2 said so (§8). Design, with a synthetic measurement (×31 at 4,096
+voices) and the decisions to take:
+`porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`.*
 
 If G2 shows that programs with long delay lines lose on the device because
 threads read their own structures at a stride of one structure (no
