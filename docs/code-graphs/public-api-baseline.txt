@@ -1531,11 +1531,16 @@ use sha1
 use strings
 
 ## fir
+const CONTROLS_TABLE
 const CRATE_NAME
 const DSP_API_FUNCTIONS
+const INSTANCE_FUNCTIONS
+const VOICES_FIELD
+const VOICE_ARG
 const fn
 enum AccessType
 enum BargraphType
+enum BatchError
 enum ButtonType
 enum FirBinOp
 enum FirDependencyKind
@@ -1630,7 +1635,9 @@ fn FirVerifyReport::errors
 fn FirVerifyReport::has_errors
 fn FirVerifyReport::warnings
 fn FlattenReport::is_clean
+fn VoiceLayout::placement
 fn analyze_fir_inliner
+fn arena_name
 fn canonical_fir_fingerprint
 fn clone_fir_hygienic
 fn clone_fir_hygienic_with_state
@@ -1643,6 +1650,7 @@ fn has_sub_modules
 fn inline_fir_module
 fn inline_fir_module_once
 fn is_obviously_side_effect_free_value
+fn layout_voices
 fn match_fir
 fn prepare_callee_body_for_inlining
 fn promote_static_tables_to_struct
@@ -1656,11 +1664,13 @@ fn verify_fir_function
 fn verify_fir_module
 fn verify_flattened
 fn verify_module_structure
+mod batch
 mod checker
 mod helpers
 mod inliner
 mod schedule
 mod subcontainer
+struct Arena
 struct DiagContext
 struct FirBuilder
 struct FirDiagnostic
@@ -1683,7 +1693,9 @@ struct FlattenReport
 struct FunctionSig
 struct ModuleSymbols
 struct NamedType
+struct Placement
 struct SliderRange
+struct VoiceLayout
 type FirId
 use builder::FirBuilder
 use dump

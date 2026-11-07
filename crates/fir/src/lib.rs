@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! FIR construction, matching, verification ([`checker`]), and FIR-to-FIR
-//! passes ([`inliner`], [`subcontainer`], [`schedule`]); [`helpers`] holds
+//! passes ([`inliner`], [`subcontainer`], [`schedule`], [`batch`]); [`helpers`] holds
 //! loop-construction helpers whose source lives in `crates/fir/helpers.rs`.
 //!
 //! # Source provenance (C++)
@@ -34,6 +34,7 @@
 //!   a separate type-reconstruction phase.
 //! - Dispatch is explicit and exhaustive via `match_fir`, no RTTI/dynamic-cast.
 
+pub mod batch;
 pub mod checker;
 #[path = "../helpers.rs"]
 pub mod helpers;

@@ -2,8 +2,8 @@
 
 Date: 2026-11-07
 
-Status: **design; decisions D1 to D4 taken 2026-11-07 (§6); G3.0 done,
-G3.2 next; nothing implemented.**
+Status: **decisions D1 to D4 taken 2026-11-07 (§6); G3.0 and G3.2 done
+(outcome §7); G3.3 next.**
 Parent plan: `porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`
 (G3 in §3, the measurements that call for it in §8).
 
@@ -123,7 +123,9 @@ flattened module, after `prepare_flat_module`.
    keeps its signature (shared state only).
 5. Refuse (`BatchError`) what the pass does not handle rather than pass it
    through: a `LoadVarAddress`, `TeeVar` or `ShiftArrayVar` on an instance
-   field, a remaining sub-module, a `-vec` module (scope: scalar first).
+   field, a remaining sub-module, a soundfile, a field touched by both
+   `staticInit` and the instance lifecycle. A `-vec` module is not refused
+   (nothing in its FIR marks it reliably); it is untested until G3.4.
 
 The output is a backend-neutral FIR module: the arithmetic of the layout is
 FIR, visible to every checker and backend, and the emitter only renders
@@ -253,3 +255,52 @@ The options as they were put:
   suite through the interpreter or Cranelift backend (recommended: in CI, on
   every platform, no Mojo needed), which needs those backends to accept the
   batch signatures; or only in the opt-in Mojo CPU lane.
+
+## 7. G3.2 outcome (2026-11-07)
+
+`crates/fir/src/batch/` (`mod.rs`, `tests.rs`): `layout_voices`, `VoiceLayout`,
+`Placement`, `Arena`, `BatchError`, `arena_name`, and the names it adds
+(`VOICES_FIELD`, `VOICE_ARG`, `CONTROLS_TABLE`, `INSTANCE_FUNCTIONS`). Built
+like `fir::schedule`: import into a fresh store, rewrite, rebuild the
+module. The rewrite is generic: a node that is not one of the four access
+kinds is rebuilt from its arena kind with its children rewritten, so every
+FIR construct, present or future, is traversed without a per-variant arm.
+Not wired into any backend: no output changes.
+
+Choices made while implementing, within the design:
+
+- *Shared `Struct` fields.* Under `MergedStructFields`, an inlined table
+  generator keeps its working state in `Struct` fields written by
+  `staticInit`. A field touched only by `staticInit` stays shared; one
+  touched by both `staticInit` and the instance lifecycle is refused. A
+  literal `Struct` table is shared and must not be written.
+- *Explicit store coercion.* The producer stores a `Float32` constant into a
+  `FaustFloat` field with a `StoreVar`, which the FIR verifier does not
+  type; as a `StoreTable` on the arena it does (FIR-T02). The pass casts the
+  stored value to the arena's element type when the two differ, making the
+  coercion every backend applies on a store explicit.
+- *Indices are `Int32`.* A host must keep `elements * N` under 2^31:
+  `karplus32` (120,419 `Float32` elements per voice) allows about 17,800
+  voices.
+
+Unit tests (14): the layout of a hand-built module with every kind of state
+(bases, lengths, arenas, shared fields, controls), the rebuilt `dsp_struct`
+and control table, the voice argument on the four instance functions and
+nowhere else, no access left to a per-voice field, the exact index shape
+for an element and a scalar, an explicit cast on a mistyped store,
+determinism, the FIR verifier accepting the output, and one refusal per
+`BatchError` the module can trigger.
+
+**Corpus, the pass criterion.** The 133 programs of
+`tests/impulse-tests/dsp`, lowered by the transform lane and flattened with
+`MergedStructFields` (as `-lang mojo` does), through a temporary driver not
+committed (the corpus needs the local Faust libraries, which committed
+tests must not): 132 laid out, 1 refused with its reason (`sound`,
+soundfile), none failing. The FIR verifier reports no new error on any of
+them (the `sin` errors some programs carry exist before the pass). 36
+programs keep shared fields (generator state); every program has an
+`Int32` arena, 102 a `Float32` one, 89 a `FaustFloat` one (their controls).
+`osc` drops from 262,180 bytes per voice in G2 to 3 `Float32`, 2
+`FaustFloat` and 1 `Int32` elements, its table shared; `freeverb` has
+37,440 `Float32` elements per voice, `zita_rev1` 119,905.
+
