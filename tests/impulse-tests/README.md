@@ -110,6 +110,11 @@ See the design write-up in
      hall's tail is heard. The built binary takes `reverb dry=<x> wet=<x>
      t60=<s> gap=<s>` after `play <singers> <seconds> [audible]` (defaults
      0.4, 2, 5 s and 3 s).
+   - `make mojo-gpu-choir-render` — both versions rendered offline, as fast as
+     the GPU goes, to `build/mojo-gpu-choir/choir-dry.wav` (one cycle, 20 s)
+     and `choir-reverb.wav` (one cycle and the hall's tail, 69 s): 24-bit,
+     48 kHz, peak at -1 dBFS (`render <singers> <seconds> <out.f32> [reverb
+     ...]`, then `tools/f32_to_wav.py`).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

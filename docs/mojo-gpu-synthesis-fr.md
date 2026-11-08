@@ -386,6 +386,11 @@ silences) dure 64 s. Mesurez ou écoutez un seul chœur à la fois : deux chœur
 lancés ensemble se partagent le GPU, chacun met environ deux fois plus de
 temps par bloc, et les deux se coupent.
 
+Les deux versions peuvent aussi être rendues hors temps réel en fichiers WAV,
+pour les écouter sans la chaîne d'outils : `make -C tests/impulse-tests
+mojo-gpu-choir-render` écrit `build/mojo-gpu-choir/choir-dry.wav` (20 s) et
+`choir-reverb.wav` (69 s). Le GPU les calcule plus vite que le temps réel.
+
 Le carillon :
 
 ```bash

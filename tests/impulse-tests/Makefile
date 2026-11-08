@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -398,6 +398,14 @@ mojo-gpu-choir: mojo-gpu-choir-build
 	build/mojo-gpu-choir/choir play $(CHOIR) $(CHOIR_SECONDS) $(POLY_AUDIBLE)
 mojo-gpu-choir-reverb: mojo-gpu-choir-build
 	build/mojo-gpu-choir/choir play $(CHOIR) $(CHOIR_SECONDS) $(POLY_AUDIBLE) reverb
+# Both versions rendered offline to WAV files: one cycle of the dry choir
+# (four chords, 20 s) and one of the choir in the hall (eight chords and
+# their rests, 64 s, plus 5 s for the tail).
+mojo-gpu-choir-render: mojo-gpu-choir-build
+	build/mojo-gpu-choir/choir render $(CHOIR) 20 build/mojo-gpu-choir/choir-dry.f32
+	python3 tools/f32_to_wav.py build/mojo-gpu-choir/choir-dry.f32 build/mojo-gpu-choir/choir-dry.wav
+	build/mojo-gpu-choir/choir render $(CHOIR) 69 build/mojo-gpu-choir/choir-reverb.f32 reverb
+	python3 tools/f32_to_wav.py build/mojo-gpu-choir/choir-reverb.f32 build/mojo-gpu-choir/choir-reverb.wav
 
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).
@@ -473,6 +481,7 @@ help:
 	@echo "  mojo-gpu-bells : a carillon, 50 modes per bell on the GPU (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-choir : an additive choir, ~48,000 rich partials on the GPU (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-choir-reverb : the same choir in a hall, the reverb on the CPU (needs MOJO, PortAudio)"
+	@echo "  mojo-gpu-choir-render : both choir versions rendered offline to WAV files"
 	@echo "  mojo-gpu-bench : GPU against CPU timings for many voices (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-bench-batch : the same with the batch layout (structure of arrays)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"

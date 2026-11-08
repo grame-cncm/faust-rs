@@ -17,6 +17,11 @@
 #   <binary> validate                         a small choir, GPU against CPU
 #   <binary> bench <singers> [<block>]        GPU against the CPU threads
 #   <binary> play <singers> <seconds> [audible] [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>]
+#   <binary> render <singers> <seconds> <out.f32> [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>]
+#
+# `render` computes the same scene offline, as fast as the GPU goes, and
+# writes the stereo mix (after the hall, with `reverb`) as raw interleaved
+# 32-bit floats at 48 kHz; tools/f32_to_wav.py makes a WAV file of it.
 #
 # With `reverb`, `play` passes the stereo mix through the hall on the CPU
 # before the sound card; `dry=`, `wet=` and `t60=` set the hall's controls
@@ -424,10 +429,40 @@ struct Choir(Movable):
 comptime MODE_VALIDATE = 0
 comptime MODE_BENCH = 1
 comptime MODE_PLAY = 2
+comptime MODE_RENDER = 3
 
 
 def address[T: AnyType](p: Ptr[T, MUT_NOTRK]) -> UInt64:
     return UInt64(Int(p.__int__()))
+
+
+# A C string (null-terminated bytes) of `s`, to free by the caller.
+def c_string(s: String) -> Ptr[UInt8, MUT_NOTRK]:
+    var b = s.as_bytes()
+    var p = unsafe_alloc[UInt8](len(b) + 1).unsafe_origin_cast[MUT_NOTRK]()
+    for i in range(len(b)):
+        p[unsafe_offset=i] = b[i]
+    p[unsafe_offset=len(b)] = UInt8(0)
+    return p
+
+
+# Writes `xs` to `path` as raw native-endian 32-bit floats (C stdio).
+def write_f32(path: String, xs: List[F32]) raises:
+    var cpath = c_string(path)
+    var cmode = c_string("wb")
+    var f = external_call["fopen", UInt64](address(cpath), address(cmode))
+    cpath.unsafe_free()
+    cmode.unsafe_free()
+    if f == 0:
+        raise Error(String("cannot open ") + path)
+    var buf = unsafe_alloc[F32](max(len(xs), 1)).unsafe_origin_cast[MUT_NOTRK]()
+    for i in range(len(xs)):
+        buf[unsafe_offset=i] = xs[i]
+    var written = external_call["fwrite", UInt64](address(buf), UInt64(4), UInt64(len(xs)), f)
+    _ = external_call["fclose", Int32](f)
+    buf.unsafe_free()
+    if Int(written) != len(xs):
+        raise Error(String("short write to ") + path)
 
 
 def median(mut xs: List[Int]) -> Int:
@@ -550,6 +585,7 @@ def run_choir(
     mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Bool, reverb: Bool = False,
     gap: F64 = 0.0,
     hall_labels: List[String] = List[String](), hall_values: List[FaustFloat] = List[FaustFloat](),
+    path: String = "",
 ) raises -> F64:
     var n = choir.n
     var singers = choir.singers
@@ -625,7 +661,12 @@ def run_choir(
     var underflows = 0
     var peak = F64(0.0)
     var latency_s = F64(-1.0)
+    # `render` drops the same warm-up blocks as `play`, so that a file holds
+    # what the sound card receives: every partial starts at phase 0, and the
+    # first few milliseconds sum the harmonics in phase (a peak five times the
+    # steady level) until vibrato and detuning spread them.
     var warmup = 0 if mode == MODE_VALIDATE else WARMUP
+    var rendered = List[F32]()
     var times = List[Int]()
     var score = 1
     for k in range(blocks + warmup):
@@ -675,7 +716,7 @@ def run_choir(
                 var want = F64(cpu.mix[unsafe_offset=i])
                 diff = max(diff, abs(got - want))
                 peak_ref = max(peak_ref, abs(want))
-        elif mode == MODE_PLAY:
+        elif mode == MODE_PLAY or mode == MODE_RENDER:
             if reverb:
                 for i in range(block):
                     rin[unsafe_offset=i] = mix_host[2 * i]
@@ -694,6 +735,10 @@ def run_choir(
                 var x = F32(mix_host[i])
                 peak = max(peak, abs(F64(x)))
                 out[unsafe_offset=i] = x * F32(0.5) if audible else F32(0.0)
+                if mode == MODE_RENDER:
+                    rendered.append(x)
+            if mode == MODE_RENDER:
+                continue
             if kb == 0:
                 if external_call["Pa_Initialize", Int32]() != 0:
                     raise Error("Pa_Initialize failed")
@@ -728,6 +773,12 @@ def run_choir(
         result = diff / peak_ref
     elif mode == MODE_BENCH:
         result = F64(median(times))
+    elif mode == MODE_RENDER:
+        write_f32(path, rendered)
+        print(
+            "rendered", path, "frames", len(rendered) // 2, "peak", peak,
+            "compute_median_us", F64(median(times)) / 1000.0,
+        )
     else:
         _ = external_call["Pa_StopStream", Int32](stream)
         _ = external_call["Pa_CloseStream", Int32](stream)
@@ -811,6 +862,17 @@ def play(
         raise Error(String(Int(underflows)) + " underruns")
 
 
+def render(
+    singers: Int, seconds: F64, path: String, reverb: Bool, gap: F64,
+    hall_labels: List[String], hall_values: List[FaustFloat],
+) raises:
+    var choir = Choir(singers, reverb)
+    var blocks = Int(seconds * F64(RATE) / 256.0)
+    _ = run_choir(
+        choir, 256, blocks, MODE_RENDER, False, reverb, gap, hall_labels, hall_values, path
+    )
+
+
 def main() raises -> None:
     comptime assert dfaust == f32, "the Apple GPU computes in f32: -D DFAUST=DType.float32"
     var args = argv()
@@ -823,6 +885,24 @@ def main() raises -> None:
         validate()
     elif args[1] == "bench":
         bench(atol(args[2]), atol(args[3]) if len(args) > 3 else 256)
+    elif args[1] == "render":
+        var reverb = False
+        var hall_labels = List[String]()
+        var hall_values = List[FaustFloat]()
+        var gap = F64(-1.0)
+        for i in range(5, len(args)):
+            var a = String(args[i])
+            if a == "reverb":
+                reverb = True
+            elif a.startswith("gap="):
+                gap = atof(a.split("=")[1])
+            elif a.startswith("dry=") or a.startswith("wet=") or a.startswith("t60="):
+                var kv = a.split("=")
+                hall_labels.append(String(kv[0]))
+                hall_values.append(FaustFloat(atof(kv[1])))
+        if gap < 0.0:
+            gap = 3.0 if reverb else 0.0
+        render(atol(args[2]), atof(args[3]), String(args[4]), reverb, gap, hall_labels, hall_values)
     elif args[1] == "play":
         var audible = False
         var reverb = False

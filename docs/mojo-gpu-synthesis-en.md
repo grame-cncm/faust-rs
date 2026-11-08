@@ -363,6 +363,11 @@ A full cycle of the version in the hall (eight chords and their rests) lasts
 64 s. Measure or listen to one choir at a time: two choirs started together
 share the GPU, each takes about twice as long per block, and both break up.
 
+Both versions can also be rendered offline to WAV files, to listen without
+the toolchain: `make -C tests/impulse-tests mojo-gpu-choir-render` writes
+`build/mojo-gpu-choir/choir-dry.wav` (20 s) and `choir-reverb.wav` (69 s).
+The GPU renders them faster than real time.
+
 The carillon:
 
 ```bash
