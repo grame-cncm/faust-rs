@@ -458,7 +458,10 @@ mojo-gpu-modal-fad: mojo-gpu-modal-fad-build
 # BELL_EPOCHS epochs of BELL_UPDATE at rate BELL_LR on the GPU, one instance
 # of ../corpus/gpu_modal_fad_voice_phase.dsp per mode. Writes the fitted modes
 # (fit.modes.txt) and target.wav, model.wav and residual.wav, all three at the
-# target's gain, to build/mojo-gpu-modal-fad-bell/.
+# target's gain, to build/mojo-gpu-modal-fad-bell/. Then times the same fit on
+# the CPU (archs/modalfadcpufile.cpp: ../corpus/gpu_modal_fad_group_phase.dsp,
+# four modes per program, clang, on MODAL_THREADS threads) against the GPU's
+# epoch_ms printed by the fit.
 BELL_WAV ?=
 BELL_START ?= 0
 BELL_SECONDS ?= 4
@@ -486,6 +489,11 @@ mojo-gpu-modal-fad-bell:
 	sox -t f32 -r 48000 -c 1 $(BELL_DIR)/bell.target.f32 -b 24 $(BELL_DIR)/target.wav vol $$gain; \
 	sox -t f32 -r 48000 -c 1 $(BELL_DIR)/fit.model.f32 -b 24 $(BELL_DIR)/model.wav vol $$gain; \
 	sox -t f32 -r 48000 -c 1 $(BELL_DIR)/fit.residual.f32 -b 24 $(BELL_DIR)/residual.wav vol $$gain
+	$(FAUST_RS) -lang cpp -single -cn plainvoice -pn plain ../corpus/gpu_modal_fad_group_phase.dsp -o $(BELL_DIR)/plain.cpp
+	$(FAUST_RS) -lang cpp -single -cn fadvoice ../corpus/gpu_modal_fad_group_phase.dsp -o $(BELL_DIR)/fad.cpp
+	cat archs/modalfadcpu.cpp $(BELL_DIR)/plain.cpp $(BELL_DIR)/fad.cpp archs/modalfadcpufile.cpp > $(BELL_DIR)/cpufit_main.cpp
+	$(CXX_MODAL) $(BELL_DIR)/cpufit_main.cpp -o $(BELL_DIR)/cpufit
+	$(BELL_DIR)/cpufit $(BELL_DIR)/bell.target.f32 $(BELL_DIR)/bell.modes.txt 8 $(MODAL_THREADS)
 
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).

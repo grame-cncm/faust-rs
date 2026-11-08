@@ -404,9 +404,26 @@ bells from Wikimedia Commons were tried:
   the end of the decay, a beating doublet of the hum, and the treble above
   2 kHz, where the start placed no mode.
 
-More modes do not help: at 600 the result gets worse. At 300 modes the GPU
-is below its crossover; what serves here is the method, not the speed. The
-command is in §9.2.
+More modes do not help: at 600 the result gets worse.
+
+**Is the GPU faster here?** Hardly. The comparison is the same learning on
+the CPU (same target, same starting modes, same update), four modes per
+Faust program compiled by LLVM, on ten threads:
+
+| modes | GPU, one epoch | CPU, 10 threads | GPU gain |
+|---|---|---|---|
+| 100 | 38 ms | 22 to 23 ms | ×0.6: the CPU wins |
+| 200 | 37 ms | 41 ms | ×1.1 |
+| 300 | 36 to 38 ms | 59 to 65 ms | ×1.6 to ×1.8 |
+| 600 | 45 ms | 115 ms | ×2.6 |
+
+The GPU's time hardly moves between 100 and 300 modes. It does not count
+the modes; it pays the time one of its threads takes to run through the
+182,000 samples of its recursion, and a few hundred copies are too few to
+hide that wait. The CPU pays in proportion to the modes, and the two meet
+at about 200. A real bell, with 100 to 300 useful modes, sits below the
+crossover of §6.1: here the method serves, not the speed. The command is in
+§9.2.
 
 ## 7. CPU and GPU in the same program
 

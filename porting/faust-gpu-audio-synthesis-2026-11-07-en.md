@@ -834,17 +834,43 @@ starts after the peak (30.46 s).
 - **Parameters at the edges.** In the 300-mode fit, some T60 reach the upper
   clamp of 30 s and some fall to 20 ms. Those last absorb attack and noise
   rather than describe the bell.
-- **The GPU is not the reason it runs.** 300 modes is far below the
-  crossover. An epoch of 3.8 s at 300 modes takes 37 ms, about what ten CPU
-  threads would take with the C++ baseline (0.8 ns per mode and sample). The
-  value here is the pipeline (start, `fad` tangents, per-mode updates), not
-  the device.
+- **The GPU gains little here, and loses with few modes.** The CPU baseline
+  (`archs/modalfadcpufile.cpp`) is the same fit: same target, same starting
+  modes, same Adam update in the same coordinates. It runs four modes per
+  program (`tests/corpus/gpu_modal_fad_group_phase.dsp`), compiled by clang
+  `-O3 -ffast-math`, in two passes per epoch. Both sides start from the same
+  loss (0.2328 on the CPU, 0.2330 on the GPU, 300 modes). One epoch, Adam on
+  both:
+
+  | recording | modes | GPU | CPU, 1 core | CPU, 4 threads | CPU, 10 threads | GPU vs whole CPU |
+  |---|---|---|---|---|---|---|
+  | handbell, 3.99 s | 100 | 38.5 ms | 111 ms | 34.3 ms | 22.9 ms | ×0.6 |
+  | St. Georgen, 3.80 s | 100 | 38 ms | 106 ms | 32.9 ms | 22.3 ms | ×0.6 |
+  | St. Georgen | 200 | 37 ms | 213 ms | 60.9 ms | 40.7 ms | ×1.1 |
+  | St. Georgen | 300 | 36 to 38 ms | 322 to 344 ms | 90 to 100 ms | 59 to 65 ms | ×1.6 to ×1.8 |
+  | St. Georgen | 600 | 44.6 ms | 655 ms | 179 ms | 115 ms | ×2.6 |
+
+  - **The GPU's epoch hardly depends on the number of modes** (37 to 39 ms
+    from 100 to 300). It pays the time one GPU thread takes to run its
+    recursion through 182,000 samples, about 0.2 µs per sample, and a few
+    hundred threads cannot hide that latency.
+  - **Larger blocks change nothing** (33 to 38 ms from 2,048 to 16,384
+    frames at 100 and 300 modes, and slower at 600), so kernel launches are
+    not the cost.
+  - The CPU pays in proportion to the modes, so the two meet at about 200
+    modes. The full St. Georgen fit (300 modes, 1,500 epochs) takes 55 s on
+    the GPU and about 90 s on the ten CPU threads.
+  - This is the crossover of the rest of this section: the GPU needs
+    thousands of instances, and a real bell's 100 to 300 useful modes sit
+    below it. The value of this lane is the pipeline (start, `fad` tangents,
+    per-mode updates), not the device.
 
 The lane is `make -C tests/impulse-tests mojo-gpu-modal-fad-bell
 BELL_WAV=<recording> BELL_START=<s> BELL_SECONDS=<s> MOJO=<mojo>` (needs sox
 and numpy; `BELL_MODES`, `BELL_EPOCHS`, `BELL_UPDATE`, `BELL_LR`). It writes
 the fitted modes and `target.wav`, `model.wav` and `residual.wav` at the
-target's gain to `tests/impulse-tests/build/mojo-gpu-modal-fad-bell/`. A
+target's gain to `tests/impulse-tests/build/mojo-gpu-modal-fad-bell/`, then
+times the CPU baseline on `MODAL_THREADS` threads. A
 resynthesis from the fitted modes can run past the recording; that was
 rendered once for listening (10 s), but no lane does it.
 

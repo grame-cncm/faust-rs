@@ -138,7 +138,9 @@ See the design write-up in
      peaks, decays from their envelopes, amplitudes by joint least squares.
      Then `BELL_EPOCHS` epochs of `BELL_UPDATE` on the GPU (`fit-file`). It
      writes the fitted modes and `target.wav`, `model.wav` and `residual.wav`
-     to `build/mojo-gpu-modal-fad-bell/`.
+     to `build/mojo-gpu-modal-fad-bell/`, then times the same fit on the CPU
+     (`archs/modalfadcpufile.cpp`, four modes per program from
+     `../corpus/gpu_modal_fad_group_phase.dsp`, on `MODAL_THREADS` threads).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

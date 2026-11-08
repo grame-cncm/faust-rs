@@ -431,9 +431,26 @@ deux cloches de Wikimedia Commons :
   Ce qui reste : la fin de la décroissance, un doublet du bourdon qui bat, et
   les aigus au-dessus de 2 kHz, où le départ n'avait placé aucun mode.
 
-Plus de modes n'aide pas : à 600, le résultat se dégrade. À 300 modes, le
-GPU est sous son point de bascule ; c'est la méthode qui sert ici, pas la
-vitesse. La commande est au §9.2.
+Plus de modes n'aide pas : à 600, le résultat se dégrade.
+
+**Le GPU va-t-il plus vite ici ?** À peine. La comparaison est le même
+apprentissage sur le CPU (même cible, mêmes modes de départ, même mise à
+jour), quatre modes par programme Faust compilé par LLVM, sur dix threads :
+
+| modes | GPU, une époque | CPU, 10 threads | gain du GPU |
+|---|---|---|---|
+| 100 | 38 ms | 22 à 23 ms | ×0,6 : le CPU gagne |
+| 200 | 37 ms | 41 ms | ×1,1 |
+| 300 | 36 à 38 ms | 59 à 65 ms | ×1,6 à ×1,8 |
+| 600 | 45 ms | 115 ms | ×2,6 |
+
+Le temps du GPU bouge à peine entre 100 et 300 modes. Il ne compte pas les
+modes : il paie le temps qu'un de ses threads met à parcourir les 182 000
+échantillons de sa récursion, et quelques centaines de copies sont trop peu
+pour masquer cette attente. Le CPU, lui, paie à proportion des modes, et les
+deux se rejoignent vers 200. Une vraie cloche, avec 100 à 300 modes utiles,
+reste sous le point de bascule du §6.1 : c'est la méthode qui sert ici, pas
+la vitesse. La commande est au §9.2.
 
 ## 7. CPU et GPU dans le même programme
 
