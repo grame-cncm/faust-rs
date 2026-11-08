@@ -358,9 +358,26 @@ Two lessons from building it:
   argument directly. Fixed in `crates/codegen/src/backends/interp/mod.rs`,
   with a sample-rate program added to the differential.
 
-The lane is `make -C tests/impulse-tests mojo-gpu-choir CHOIR=448`. It
-validates, times and plays muted; `POLY_AUDIBLE=audible` plays the choir
-aloud.
+**A hall, on the CPU.** `make mojo-gpu-choir-reverb` (or `play ... reverb`)
+passes the stereo mix through `tests/corpus/gpu_choir_reverb.dsp`,
+`re.zita_rev1_stereo` mixed with the dry signal (dry 0.4, wet 2, T60 5 s by
+default: at steady state `zita_rev1` returns about 0.29 of its input, so the
+hall sits about 3 dB above the choir). The reverb is one instance, the shape
+a GPU runs 30 to 100 times slower than one core (§2.4), so it runs on the
+CPU, in the playback loop: **43 to 53 µs per block**, about 1 % of the
+budget, against 1 to 2.6 ms for one `zita_rev1` on the GPU. With it, 448 singers still play 20 s with no
+underrun. That version also sings a wider choir (registers from C2 to G5,
+per-part vibrato, breathiness and stage placement, harmonics up to 16 kHz so
+that 448 singers stay at 46,592 partials, about 3.5 ms per block) and eight
+chords (D minor, B flat, F, C, then G minor 7, the Neapolitan E flat, A7 and
+D major), each followed by 3 s of rest so that the hall's tail is heard. The work splits as the rest of this document says it should: the
+GPU computes and sums the 48,048 partials, the CPU runs the single program
+on the two channels that come back.
+
+The lanes are `make -C tests/impulse-tests mojo-gpu-choir CHOIR=448` (it
+validates, times and plays the choir dry) and `mojo-gpu-choir-reverb` (it
+validates and plays the choir in the hall); both play muted unless
+`POLY_AUDIBLE=audible`.
 
 ### Modal synthesis: a fit only at very large scale (measured)
 

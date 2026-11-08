@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_choir_reverb.dsp
+bytes=1008
+lines=19
+fnv1a64=58b374d5aa65978c

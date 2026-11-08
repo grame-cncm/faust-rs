@@ -98,8 +98,18 @@ See the design write-up in
      448 singers, a four-chord progression with the vowel "a". It checks 8
      singers against the same choir of scalar instances on the CPU, times the
      choir on the GPU against the generated code on 1, 4 and 10 CPU threads,
-     and plays it for `CHOIR_SECONDS`, muted unless `POLY_AUDIBLE=audible`
+     and plays it dry for `CHOIR_SECONDS`, muted unless `POLY_AUDIBLE=audible`
      (`archs/choirmojogpubatch.mojo`; PortAudio).
+   - `make mojo-gpu-choir-reverb` — the choir in a hall: the stereo mix that
+     comes back from the GPU goes through `../corpus/gpu_choir_reverb.dsp`
+     (`re.zita_rev1_stereo` mixed with the dry signal) on the CPU before the
+     sound card. This version sings a wider choir (registers from C2 to G5,
+     per-part vibrato, breathiness and stage placement, harmonics up to
+     16 kHz: 46,592 partials at 448 singers) and eight chords (D minor, B flat,
+     F, C, G minor 7, E flat, A7, D major), each followed by a rest so that the
+     hall's tail is heard. The built binary takes `reverb dry=<x> wet=<x>
+     t60=<s> gap=<s>` after `play <singers> <seconds> [audible]` (defaults
+     0.4, 2, 5 s and 3 s).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

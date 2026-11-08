@@ -7,14 +7,25 @@
 # singers is about 48,000 partials (porting/faust-gpu-audio-synthesis-
 # 2026-11-07-en.md, §5).
 #
-# Concatenated after `impulsemojo.mojo` and two generated programs:
-# `choirdsp` (the batch contract of gpu_choir_partial.dsp) and `refdsp` (its
-# scalar contract, one ordinary instance per partial, the CPU baseline).
+# Concatenated after `impulsemojo.mojo` and three generated programs:
+# `choirdsp` (the batch contract of gpu_choir_partial.dsp), `refdsp` (its
+# scalar contract, one ordinary instance per partial, the CPU baseline) and
+# `revdsp` (gpu_choir_reverb.dsp, the hall: `re.zita_rev1_stereo` mixed with
+# the dry signal).
 # Built with `-D DFAUST=DType.float32`, linked with `-lportaudio`.
 #
 #   <binary> validate                         a small choir, GPU against CPU
 #   <binary> bench <singers> [<block>]        GPU against the CPU threads
-#   <binary> play <singers> <seconds> [audible] [<block>]
+#   <binary> play <singers> <seconds> [audible] [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>]
+#
+# With `reverb`, `play` passes the stereo mix through the hall on the CPU
+# before the sound card; `dry=`, `wet=` and `t60=` set the hall's controls
+# (defaults 0.4, 2.0 and 5 s: a large hall about 3 dB above the dry choir).
+# `gap=` rests that many seconds after each chord, so that the hall's tail is
+# heard alone: 3 s by default with `reverb`, none without. The hall is one instance, the shape a GPU runs 30
+# to 100 times slower than one CPU core, so the work splits: the GPU computes
+# and sums the partials, the CPU runs the single reverb on the two channels
+# that come back.
 #
 # The score: four chords of four parts (D minor, B flat, F, C; a common
 # progression), 5 s each, looped. Singer s sings part s % 4, detuned by up to
@@ -221,26 +232,39 @@ def midi_hz(m: F64) -> F64:
     return 440.0 * 2.0 ** ((m - 69.0) / 12.0)
 
 
-# The chords, as MIDI notes of (bass, tenor, alto, soprano).
-def chord_note(c: Int, part: Int) -> Int:
-    var dm: List[Int] = [50, 57, 65, 74]
-    var bb: List[Int] = [46, 58, 65, 74]
-    var f: List[Int] = [41, 57, 65, 72]
-    var cm: List[Int] = [48, 55, 64, 72]
-    var k = c % 4
-    if k == 0:
-        return dm[part]
-    if k == 1:
-        return bb[part]
-    if k == 2:
-        return f[part]
-    return cm[part]
+# The chords, as MIDI notes of (bass, tenor, alto, soprano), flattened as
+# chord * 4 + part.
+#
+# The dry choir: four chords in close position (D minor, B flat, F, C).
+def dry_chords() -> List[Int]:
+    return [50, 57, 65, 74, 46, 58, 65, 74, 41, 57, 65, 72, 48, 55, 64, 72]
 
 
-def lowest_note(part: Int) -> Int:
+# The choir in the hall: the four registers spread from C2 to G5, and eight
+# chords: the same four in open position, then G minor 7, E flat (the
+# Neapolitan sixth of D minor), A7 (the dominant, with its C sharp) and D
+# major (a Picardy third), before the loop returns to D minor.
+def hall_chords() -> List[Int]:
+    return [
+        38, 57, 65, 74,  # D minor
+        46, 53, 62, 77,  # B flat
+        41, 60, 69, 77,  # F
+        36, 55, 64, 79,  # C
+        43, 58, 65, 74,  # G minor 7 (F in the alto)
+        39, 58, 67, 75,  # E flat, Neapolitan
+        45, 61, 67, 76,  # A7 (G in the alto, C sharp in the tenor)
+        38, 57, 66, 78,  # D major, Picardy third
+    ]
+
+
+def chord_note(chords: List[Int], c: Int, part: Int) -> Int:
+    return chords[(c % (len(chords) // 4)) * 4 + part]
+
+
+def lowest_note(chords: List[Int], part: Int) -> Int:
     var lo = 127
-    for c in range(4):
-        lo = min(lo, chord_note(c, part))
+    for c in range(len(chords) // 4):
+        lo = min(lo, chord_note(chords, c, part))
     return lo
 
 
@@ -292,9 +316,23 @@ struct Choir(Movable):
     var fc: List[F64]
     var fw: List[F64]
     var fa: List[F64]
+    var hall: Bool
+    var fmax: F64
+    var chords: List[Int]
+    var breath: List[F64]
 
-    def __init__(out c, singers: Int):
+    # `hall` selects the choir of the version in the hall: eight chords, the
+    # registers spread wider, each part with its own vibrato, breathiness and
+    # place on the stage (sopranos left, altos centre left, tenors centre
+    # right, basses right), and harmonics up to 16 kHz instead of 20 kHz, so
+    # that the deeper basses do not raise the partial count (448 singers stay
+    # near 48,000 partials).
+    def __init__(out c, singers: Int, hall: Bool = False):
         c.singers = singers
+        c.hall = hall
+        c.fmax = 16000.0 if hall else FMAX
+        c.chords = hall_chords() if hall else dry_chords()
+        c.breath = [0.8, 1.0, 1.2, 1.3] if hall else [1.0, 1.0, 1.0, 1.0]
         c.starts = List[Int32]()
         c.part = List[Int]()
         c.detune = List[F64]()
@@ -313,9 +351,13 @@ struct Choir(Movable):
             c.part.append(p)
             c.detune.append((hash01(s, 1) - 0.5) * 0.3)
             c.starts.append(Int32(v))
-            var count = Int(FMAX / midi_hz(F64(lowest_note(p))))
+            var count = Int(c.fmax / midi_hz(F64(lowest_note(c.chords, p))))
             var vrate = 4.8 + 1.6 * hash01(s, 2)
             var vdepth = 0.004 + 0.005 * hash01(s, 3)
+            if hall:
+                # Slower, narrower vibrato low; faster, wider high.
+                vrate = 4.6 + 0.4 * F64(p) + 0.6 * hash01(s, 2)
+                vdepth = 0.003 + 0.0015 * F64(p) + 0.002 * hash01(s, 3)
             var brate = 0.08 + 0.17 * hash01(s, 4)
             var phase = hash01(s, 5)
             for h in range(1, count + 1):
@@ -331,7 +373,11 @@ struct Choir(Movable):
                 c.ctl[1].append(FaustFloat(0.0))
                 c.ctl[5].append(FaustFloat(0.0))
                 v += 1
-            var angle = 1.5707963267948966 * hash01(s, 6)
+            var place = hash01(s, 6)
+            if hall:
+                # Stage order, from the left: soprano, alto, tenor, bass.
+                place = (F64(3 - p) + 0.15 + 0.7 * hash01(s, 6)) / 4.0
+            var angle = 1.5707963267948966 * place
             c.pans.append(FaustFloat(cos(angle)))
             c.pans.append(FaustFloat(sin(angle)))
         c.starts.append(Int32(v))
@@ -347,24 +393,32 @@ struct Choir(Movable):
             g += self.fa[p * 5 + i] / (1.0 + x * x)
         return g
 
+    # A rest: every partial's gain down to 1e-9 (-180 dB), not to 0: the
+    # program glides the gain geometrically towards its target, and towards 0
+    # it would enter the subnormal range of f32 within a second, which some
+    # hardware computes slowly. 1e-9 stays a normal number.
+    def silence(mut c):
+        for v in range(c.n):
+            c.ctl[1][v] = FaustFloat(1e-9)
+
     # Frequency, gain and noise share of every partial for chord `k`.
     def set_chord(mut c, k: Int):
         var level = 1.0 / sqrt(F64(c.singers))
         var f0s = List[F64]()
         for s in range(c.singers):
-            f0s.append(midi_hz(F64(chord_note(k, c.part[s])) + c.detune[s]))
+            f0s.append(midi_hz(F64(chord_note(c.chords, k, c.part[s])) + c.detune[s]))
         for v in range(c.n):
             var s = c.singer_of[v]
             var p = c.part[s]
             var h = c.harmonic[v]
             var hz = F64(h) * f0s[s]
             var g = 0.0
-            if hz < FMAX:
+            if hz < c.fmax:
                 # A source tilt of -9 dB per octave under the formants.
                 g = level * 0.5 * c.formant_gain(p, hz) / F64(h) ** 1.5
             c.ctl[0][v] = FaustFloat(hz)
             c.ctl[1][v] = FaustFloat(g)
-            c.ctl[5][v] = FaustFloat(min(0.9, 0.08 + 0.6 * hz / FMAX))
+            c.ctl[5][v] = FaustFloat(min(0.9, (0.08 + 0.6 * hz / FMAX) * c.breath[p]))
 
 
 comptime MODE_VALIDATE = 0
@@ -476,15 +530,27 @@ struct CpuChoir:
         cc.pan.unsafe_free()
 
 
-def chord_at(kb: Int, block: Int) -> Int:
-    return Int(F64(kb) * F64(block) / (CHORD_SECONDS * F64(RATE)))
+# The score at block kb: the chord, and whether the choir sings it or rests.
+# Each chord lasts CHORD_SECONDS, followed by `gap` seconds of rest (0 in the
+# dry version; the version in the hall rests so that its tail is heard). The
+# result is chord * 2 + 1 while singing, chord * 2 while resting.
+def score_at(kb: Int, block: Int, gap: F64) -> Int:
+    var t = F64(kb) * F64(block) / F64(RATE)
+    var period = CHORD_SECONDS + gap
+    var c = Int(t / period)
+    var singing = (t - F64(c) * period) < CHORD_SECONDS
+    return c * 2 + (1 if singing else 0)
 
 
 # The choir on the device, run for `blocks` blocks. MODE_VALIDATE compares the
 # mix with the CPU choir block by block and returns the relative difference;
 # MODE_BENCH returns the median block in ns; MODE_PLAY writes the mix to
 # PortAudio and returns the number of underruns.
-def run_choir(mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Bool) raises -> F64:
+def run_choir(
+    mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Bool, reverb: Bool = False,
+    gap: F64 = 0.0,
+    hall_labels: List[String] = List[String](), hall_values: List[FaustFloat] = List[FaustFloat](),
+) raises -> F64:
     var n = choir.n
     var singers = choir.singers
     var ctx = DeviceContext()
@@ -532,11 +598,27 @@ def run_choir(mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Boo
             dsps, state, values, S32(n), Int32(index[k]), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
         )
     ctx.synchronize()
-    var changing: List[Int] = [0, 1, 5]
 
     var cpu = CpuChoir(choir, block, 10) if mode == MODE_VALIDATE else CpuChoir(Choir(4), 1, 1)
     var diff = F64(0.0)
     var peak_ref = F64(0.0)
+
+    # The hall (MODE_PLAY with `reverb`), on the CPU: deinterleaved in and out.
+    var hall = unsafe_alloc[revdsp](1)
+    hall.unsafe_write(revdsp())
+    hall[].init(RATE)
+    var hall_gui = ZoneGui()
+    hall[].build_user_interface(hall_gui)
+    for i in range(len(hall_labels)):
+        hall_gui.zones[index_of(hall_gui.labels, hall_labels[i])][] = hall_values[i]
+    var rin = unsafe_alloc[FaustFloat](2 * block)
+    var rout = unsafe_alloc[FaustFloat](2 * block)
+    var rin_heads = unsafe_alloc[Ptr[FaustFloat, MUT_NOTRK]](2)
+    var rout_heads = unsafe_alloc[Ptr[FaustFloat, MUT_NOTRK]](2)
+    for c in range(2):
+        rin_heads.unsafe_offset(c).unsafe_write(rin.unsafe_offset(c * block).unsafe_origin_cast[MUT_NOTRK]())
+        rout_heads.unsafe_offset(c).unsafe_write(rout.unsafe_offset(c * block).unsafe_origin_cast[MUT_NOTRK]())
+    var hall_times = List[Int]()
 
     var out = unsafe_alloc[F32](2 * block)
     var stream = UInt64(0)
@@ -545,21 +627,27 @@ def run_choir(mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Boo
     var latency_s = F64(-1.0)
     var warmup = 0 if mode == MODE_VALIDATE else WARMUP
     var times = List[Int]()
-    var chord = 0
+    var score = 1
     for k in range(blocks + warmup):
         var kb = max(k - warmup, 0)
         var t0 = perf_counter_ns()
-        var c = chord_at(kb, block)
-        if c != chord:
-            chord = c
-            choir.set_chord(c)
-            for k in changing:
+        var sc = score_at(kb, block, gap)
+        if sc != score:
+            score = sc
+            if sc % 2 == 1:
+                choir.set_chord(sc // 2)
+            else:
+                choir.silence()
+            for kc in range(NCTL):
+                # A chord uploads freq, gain and noise; a rest only gain.
+                if not (kc == 1 or (sc % 2 == 1 and (kc == 0 or kc == 5))):
+                    continue
                 ctx.synchronize()
                 for v in range(n):
-                    values_host[v] = choir.ctl[k][v]
+                    values_host[v] = choir.ctl[kc][v]
                 ctx.enqueue_copy(dst_buf=values, src_buf=values_host)
                 ctx.enqueue_function[control_kernel](
-                    dsps, state, values, S32(n), Int32(index[k]), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
+                    dsps, state, values, S32(n), Int32(index[kc]), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
                 )
             if mode == MODE_VALIDATE:
                 cpu.set(choir)
@@ -588,6 +676,20 @@ def run_choir(mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Boo
                 diff = max(diff, abs(got - want))
                 peak_ref = max(peak_ref, abs(want))
         elif mode == MODE_PLAY:
+            if reverb:
+                for i in range(block):
+                    rin[unsafe_offset=i] = mix_host[2 * i]
+                    rin[unsafe_offset=block + i] = mix_host[2 * i + 1]
+                var h0 = perf_counter_ns()
+                hall[].compute(
+                    S32(block),
+                    rin_heads.unsafe_origin_cast[MUT_NOTRK]().unsafe_bitcast[Ptr[FaustFloat, IMM_NOTRK]](),
+                    rout_heads.unsafe_origin_cast[MUT_NOTRK](),
+                )
+                hall_times.append(Int(perf_counter_ns() - h0))
+                for i in range(block):
+                    mix_host[2 * i] = rout[unsafe_offset=i]
+                    mix_host[2 * i + 1] = rout[unsafe_offset=block + i]
             for i in range(2 * block):
                 var x = F32(mix_host[i])
                 peak = max(peak, abs(F64(x)))
@@ -639,8 +741,15 @@ def run_choir(mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Boo
             "compute_max_us", F64(worst) / 1000.0, "budget_us", F64(block) * 1e6 / F64(RATE),
             "peak", peak, "audible", audible, "output_latency_ms", latency_s * 1000.0,
         )
+        if reverb:
+            print("reverb on the CPU: median", F64(median(hall_times)) / 1000.0, "us per block")
         result = F64(underflows)
     cpu.free()
+    hall.unsafe_free()
+    rin.unsafe_free()
+    rout.unsafe_free()
+    rin_heads.unsafe_free()
+    rout_heads.unsafe_free()
     host.unsafe_free()
     out.unsafe_free()
     return result
@@ -687,10 +796,17 @@ def bench(singers: Int, block: Int) raises:
     )
 
 
-def play(singers: Int, seconds: F64, audible: Bool, block: Int) raises:
-    var choir = Choir(singers)
+def play(
+    singers: Int, seconds: F64, audible: Bool, reverb: Bool, gap: F64, block: Int,
+    hall_labels: List[String], hall_values: List[FaustFloat],
+) raises:
+    # The version in the hall sings the wider, eight-chord choir.
+    var choir = Choir(singers, reverb)
     var blocks = Int(seconds * F64(RATE) / F64(block))
-    var underflows = run_choir(choir, block, blocks, MODE_PLAY, audible)
+    var underflows = run_choir(
+        choir, block, blocks, MODE_PLAY, audible, reverb, gap, hall_labels, hall_values
+    )
+    print("partials", choir.n, "chords", len(choir.chords) // 4)
     if underflows > 0:
         raise Error(String(Int(underflows)) + " underruns")
 
@@ -699,19 +815,37 @@ def main() raises -> None:
     comptime assert dfaust == f32, "the Apple GPU computes in f32: -D DFAUST=DType.float32"
     var args = argv()
     if len(args) < 2:
-        raise Error("usage: validate | bench <singers> [<block>] | play <singers> <seconds> [audible] [<block>]")
+        raise Error(
+            "usage: validate | bench <singers> [<block>] | play <singers> <seconds> [audible] [reverb]"
+            + " [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>]"
+        )
     if args[1] == "validate":
         validate()
     elif args[1] == "bench":
         bench(atol(args[2]), atol(args[3]) if len(args) > 3 else 256)
     elif args[1] == "play":
         var audible = False
+        var reverb = False
         var block = 256
+        var hall_labels = List[String]()
+        var hall_values = List[FaustFloat]()
+        var gap = F64(-1.0)
         for i in range(4, len(args)):
-            if args[i] == "audible":
+            var a = String(args[i])
+            if a == "audible":
                 audible = True
+            elif a == "reverb":
+                reverb = True
+            elif a.startswith("gap="):
+                gap = atof(a.split("=")[1])
+            elif a.startswith("dry=") or a.startswith("wet=") or a.startswith("t60="):
+                var kv = a.split("=")
+                hall_labels.append(String(kv[0]))
+                hall_values.append(FaustFloat(atof(kv[1])))
             else:
-                block = atol(args[i])
-        play(atol(args[2]), atof(args[3]), audible, block)
+                block = atol(a)
+        if gap < 0.0:
+            gap = 3.0 if reverb else 0.0
+        play(atol(args[2]), atof(args[3]), audible, reverb, gap, block, hall_labels, hall_values)
     else:
         raise Error("unknown mode")

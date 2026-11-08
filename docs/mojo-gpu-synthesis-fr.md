@@ -1,0 +1,507 @@
+---
+title: "Faust sur le GPU avec le backend Mojo : une synthèse accessible"
+date: 2026-11-08
+page-size: A4
+margins: 20 22
+page-numbers: true
+font-body: Roboto
+font-heading: Roboto Condensed
+font-mono: Roboto Mono
+---
+
+**Date :** 2026-11-08
+
+**Public :** un lecteur curieux, un utilisateur de Faust ou un musicien qui se
+demande ce qu'une carte graphique peut faire pour le son. Aucune connaissance
+des GPU ni des compilateurs n'est supposée.
+
+Version anglaise : [mojo-gpu-synthesis-en.md](mojo-gpu-synthesis-en.md) (même
+contenu ; garder les deux versions synchronisées).
+
+**Documents de référence :**
+
+- [`faust-gpu-audio-synthesis-2026-11-07-en.md`](../porting/faust-gpu-audio-synthesis-2026-11-07-en.md),
+  les mesures et le verdict détaillé ;
+- [`mojo-backend-port-analysis-and-plan-2026-11-06-en.md`](../porting/mojo-backend-port-analysis-and-plan-2026-11-06-en.md),
+  le backend Mojo ;
+- [`mojo-gpu-batch-of-voices-plan-2026-11-07-en.md`](../porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md)
+  et
+  [`mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`](../porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md),
+  le travail sur le GPU ;
+- DIFF-BACK-010 dans
+  [`faust-rs-vs-faust-cpp-differences-en.md`](../porting/faust-rs-vs-faust-cpp-differences-en.md),
+  ce qui diffère de Faust C++.
+
+**Objectif :** expliquer ce que le backend Mojo rend possible (exécuter
+certains programmes Faust sur un GPU), la puissance de calcul que cela
+apporte par rapport au processeur, et où l'approche s'arrête.
+
+::: toc+
+- **De quoi s'agit-il ?** — un nouveau langage de sortie pour Faust.
+- **Un CPU et un GPU** — quelques cuisiniers rapides ou mille cuisiniers lents.
+- **Pourquoi un programme Faust seul ne va pas plus vite** — l'ordre du temps dans les récursions.
+- **L'idée qui marche : beaucoup de copies du même programme** — voix, partiels, modes.
+- **Ce que fait le compilateur** — la mémoire rangée pour le GPU.
+- **Ce qui a été mesuré** — d'un GPU plus lent à un programme que seul le GPU peut jouer.
+- **CPU et GPU dans le même programme** — le chœur dans une salle.
+- **Essayer** — les commandes, avec et sans la salle.
+- **Les limites actuelles** — ce que l'approche ne fait pas, ou pas encore.
+- **À retenir** — la carte en une page.
+:::
+
+## 1. De quoi s'agit-il ?
+
+Faust décrit un traitement du son (un oscillateur, un filtre, une
+réverbération, un synthétiseur entier) sous forme de formule. Le compilateur
+transforme cette formule en code dans un autre langage : C, C++, Rust,
+WebAssembly, et d'autres.
+
+`faust-rs` sait maintenant écrire aussi du **Mojo** : `faust-rs -lang mojo
+foo.dsp`. Mojo est un langage récent, proche de Python par sa syntaxe,
+compilé en code machine rapide, et conçu pour exécuter le même code sur un
+processeur (CPU) ou sur une carte graphique (GPU). Le backend suit le contrat
+d'un backend Mojo proposé pour Faust C++ (la pull request
+grame-cncm/faust#1293), si bien que le code qu'il écrit se branche sur les
+mêmes fichiers d'architecture Mojo.
+
+Sur un CPU, un programme Faust en Mojo calcule la même chose qu'en C++ : le
+backend passe les 132 programmes de la suite de tests de réponse
+impulsionnelle. La nouveauté, c'est que le même code généré peut tourner
+**sur le GPU**, à condition de demander au GPU la bonne chose.
+
+## 2. Un CPU et un GPU
+
+::: definition [CPU et GPU]
+Un **CPU** a quelques cœurs (10 sur la machine mesurée ici, un Apple M5),
+chacun très rapide et très polyvalent. Un **GPU** a des milliers de petites
+unités de calcul, chacune plus lente, groupées pour exécuter la même
+instruction au même moment sur des données différentes.
+:::
+
+Une image aide. Un CPU, c'est une cuisine avec quelques excellents
+cuisiniers : chacun peut préparer n'importe quel plat, vite, l'un après
+l'autre. Un GPU, c'est une cantine de mille cuisiniers moins habiles, mais qui
+suivent tous la même recette au même moment. Demandez à la cantine un seul
+plat gastronomique, et un seul cuisinier travaille, lentement. Demandez-lui
+mille plats identiques, et elle est imbattable.
+
+Les mesures disent exactement cela. Une réverbération Faust sur le GPU tourne
+**30 à 100 fois plus lentement** que sur un seul cœur de CPU :
+
+| programme | 1 copie sur 1 cœur CPU | 1 copie sur le GPU |
+|---|---|---|
+| `freeverb` | 14 µs | 0,56 à 1,5 ms |
+| `zita_rev1` | 30 µs | 1,0 à 2,6 ms |
+
+(temps de calcul d'un bloc de 256 échantillons, soit 5,3 ms de son à 48 kHz.)
+
+::: important [Le point à retenir]
+Le GPU n'est pas un processeur plus rapide pour un traitement du son. C'est
+un très grand nombre de processeurs lents. Il n'est rentable que lorsqu'il a
+des milliers de tâches identiques et indépendantes à faire en même temps.
+:::
+
+## 3. Pourquoi un programme Faust seul ne va pas plus vite
+
+La première idée consiste à découper un programme en morceaux et à confier
+chaque morceau à un groupe d'unités du GPU. La proposition C++ l'a tenté (son
+option `-gpu`) : elle tournait **270 à 2 600 fois plus lentement** que le CPU.
+
+La raison tient à la nature de l'audio. La plupart des traitements du son ont
+une **mémoire** : la sortie d'un filtre dépend de ses sorties précédentes, un
+écho des échantillons de la dernière seconde.
+
+```bda "Une récursion : chaque échantillon a besoin du précédent"
+_ : + ~ *(0.5)
+```
+
+On ne peut pas calculer l'échantillon `n` avant l'échantillon `n − 1`. Le
+temps impose un ordre, et cet ordre ne se partage pas entre mille cuisiniers.
+À l'intérieur d'un programme, il n'y a que quelques morceaux indépendants, et
+chacun coûte un lancement sur le GPU.
+
+## 4. L'idée qui marche : beaucoup de copies du même programme
+
+L'ouverture vient d'ailleurs : bien des musiques ont besoin de **milliers de
+copies du même petit programme**, chacune avec ses propres réglages, et ces
+copies ne dépendent pas les unes des autres.
+
+- **La synthèse additive** : un son construit à partir de milliers de
+  partiels, chacun un petit oscillateur avec sa fréquence et son amplitude.
+- **La synthèse modale** : une cloche, une plaque ou une salle décrite par
+  ses modes de résonance, chacun un petit résonateur.
+- **La polyphonie massive** : un nuage, un essaim, une foule de voix.
+- **La synthèse granulaire** : des milliers de grains à la fois.
+- **Le travail hors ligne** : rendre des milliers de variantes d'un son, ou
+  entraîner un modèle différentiable sur de nombreux exemples à la fois.
+
+Là, la cantine est dans son élément : chaque unité du GPU exécute **une
+copie** (une *instance*) du programme Faust, toutes les copies avancent
+ensemble, échantillon après échantillon, et l'ordre du temps est respecté à
+l'intérieur de chaque copie.
+
+::: definition [Instance]
+Une copie en cours d'exécution d'un programme Faust, avec sa propre mémoire
+(les états de ses filtres, ses lignes à retard) et ses propres contrôles. Le
+programme Faust décrit **une** instance ; le nombre d'instances lancées est
+choisi par le programme hôte à l'exécution, il n'est pas écrit dans le code
+Faust.
+:::
+
+Conséquence agréable : **aucun nouveau code DSP**. Un programme Faust écrit
+pour une voix tourne N fois tel quel. La fonction `compute` générée pour une
+instance devient, sans changement, le corps de chaque thread du GPU.
+
+## 5. Ce que fait le compilateur
+
+Si le code Faust ne change pas, que fait le compilateur ? Il change
+**l'endroit où vit la mémoire de chaque instance**.
+
+Par défaut, chaque instance garde sa mémoire dans sa propre structure, comme
+un classeur par musicien. Sur un GPU, c'est une mauvaise idée : à chaque
+instant, les mille unités lisent la même variable dans mille classeurs
+différents, éparpillés dans la mémoire, et la mémoire ne suit pas.
+
+`faust-rs` sait ranger la mémoire dans l'autre sens, un tiroir par variable,
+avec les valeurs de toutes les instances côte à côte (une « structure de
+tableaux »). Quand les mille unités lisent « leur » variable, elles lisent
+des valeurs voisines, d'un seul coup.
+
+```mermaid
+flowchart LR
+  subgraph AoS["Une structure par instance"]
+    direction TB
+    A0["voix 0 : état a, état b, état c"]
+    A1["voix 1 : état a, état b, état c"]
+    A2["voix 2 : état a, état b, état c"]
+  end
+  subgraph SoA["Structure de tableaux (pour le GPU)"]
+    direction TB
+    B0["état a : voix 0, voix 1, voix 2, ..."]
+    B1["état b : voix 0, voix 1, voix 2, ..."]
+    B2["état c : voix 0, voix 1, voix 2, ..."]
+  end
+```
+
+Pour les programmes qui ont beaucoup de mémoire, cela change tout. À
+4 096 voix :
+
+| programme | mémoire par voix | gain dû au rangement |
+|---|---|---|
+| `freeverb` | 150 Ko | ×31 |
+| `karplus32` (32 cordes) | 482 Ko | ×26 |
+| `zita_rev1` | 480 Ko | ×20 |
+
+Sans ce rangement, ces programmes ne battent jamais le CPU ; avec lui, ils le
+battent. Le rangement ne change aucun calcul : sur le CPU, chaque voix donne
+bit pour bit le même résultat qu'une copie ordinaire du programme, et un test
+de l'intégration continue le vérifie.
+
+## 6. Ce qui a été mesuré
+
+Tous les chiffres viennent d'une seule machine, un ordinateur portable
+Apple M5 (4 cœurs rapides, 6 cœurs économes, son GPU intégré), à 48 kHz, par
+blocs de 256 échantillons. Le budget d'un bloc est de **5,33 ms** : au-delà,
+le son se coupe.
+
+### 6.1 Le point de bascule
+
+En dessous d'un certain nombre de copies le CPU gagne, au-dessus le GPU
+gagne. Face au même programme exécuté une copie à la fois sur les threads du
+CPU :
+
+| programme | GPU plus rapide à partir de | gain à 4 096 copies |
+|---|---|---|
+| passe-tout biquad (`APF`) | 1 024 | ×3,6 |
+| oscillateur à table (`osc`) | 1 024 | ×4,8 |
+| `karplus32` (32 cordes) | 1 024 | ×4,8 |
+| `freeverb`, `zita_rev1` | 4 096 | ×2,2 |
+
+L'ordre de grandeur à retenir : **un millier de copies pour les petits
+programmes, quelques milliers pour les gros**. La polyphonie ordinaire (16 à
+128 voix) reste loin en dessous.
+
+### 6.2 Un carillon : une leçon d'honnêteté
+
+Un vrai modèle modal : la cloche d'église de `pm.standardBell`
+(physmodels.lib), 50 modes par cloche, chaque mode une instance GPU avec sa
+fréquence, sa décroissance et son gain. Une cloche sur le GPU reproduit
+l'original à 1,5e-4 près.
+
+La première mesure comparait le GPU à son propre code exécuté sur le CPU, et
+montrait ×5,7 à ×9,7. Mais ce code, rangé pour le GPU, est 4 à 5 fois plus
+lent sur un CPU que le programme qu'écrirait un utilisateur de CPU (une
+instance ordinaire par cloche, ses 50 modes dans une seule boucle). Face à ce
+programme :
+
+| cloches | modes | GPU | CPU, 4 threads |
+|---|---|---|---|
+| 37 | 1 850 | 0,64 ms | 0,15 ms |
+| 256 | 12 800 | 0,84 ms | 0,97 ms |
+| 1 024 | 51 200 | 2,0 ms | 3,9 ms |
+
+Le GPU ne gagne qu'à partir d'environ 220 cloches, d'un facteur 1,9 à 1 024.
+Une mélodie sur 37 cloches coûte 9 % d'un cœur de CPU. **La comparaison n'est
+juste que face à la meilleure version CPU**, et trouver cette version a divisé
+le gain par cinq.
+
+### 6.3 Un chœur que seul le GPU peut jouer
+
+Pour trouver un programme qui ait vraiment besoin du GPU, il faut que chaque
+copie fasse un vrai travail. C'est le cas du chœur : chaque **partiel**
+(`tests/corpus/gpu_choir_partial.dsp`) est une sinusoïde avec son propre
+vibrato, une respiration d'amplitude, et une bande de bruit filtrée autour du
+partiel, dont le centre suit le vibrato échantillon par échantillon. C'est ce
+qui donne son souffle à une voix, et ce qu'une méthode moins coûteuse (la
+resynthèse par FFT inverse) ne sait pas exprimer.
+
+La scène : 448 chanteurs en quatre pupitres, chaque harmonique jusqu'à
+20 kHz une copie du partiel, les formants de la voyelle « a », une suite de
+quatre accords. Cela fait **48 048 partiels**, donc 48 048 petits processeurs
+de signal qui tournent en même temps.
+
+- Le meilleur code CPU que Faust produit pour ce partiel (LLVM) coûte 7,4 ns
+  par partiel et par échantillon sur un cœur. Avec **les dix cœurs** occupés,
+  la machine calcule au plus environ **22 600 partiels** en temps réel, sans
+  même les mixer.
+- Le GPU calcule les 48 048 partiels, et les mixe, en **3,6 ms par bloc,
+  68 % du budget**. Le chœur demande **2,1 fois le CPU entier**.
+- Il joue en temps réel pendant 20 s sans coupure, de même que 576 chanteurs
+  (61 776 partiels, 84 % du budget).
+
+Sur cette machine, le GPU est le seul moyen de jouer ce chœur. En débit, pour
+cette voix, le GPU vaut environ **trente cœurs de CPU**.
+
+Le chœur existe en deux versions. La version **sèche** est celle mesurée
+ci-dessus : quatre accords en position serrée, 5 s chacun. La version **dans
+une salle** ajoute une réverbération qui tourne sur le CPU (section suivante)
+et une partition plus riche :
+
+- les quatre registres sont plus étalés, du do 2 des basses au sol 5 des
+  sopranos, et chaque pupitre a son propre vibrato (plus lent et plus étroit
+  dans le grave, plus rapide et plus large dans l'aigu), son propre souffle
+  et sa place sur scène (sopranos à gauche, puis altos, ténors, basses à
+  droite) ;
+- après les quatre premiers accords (ré mineur, si bémol, fa, do) viennent
+  quatre autres qui explorent davantage l'harmonie : sol mineur 7, mi bémol
+  (la sixte napolitaine de ré mineur), la 7 (la dominante, avec sa sensible
+  do dièse) et ré majeur (une tierce picarde), avant que la boucle revienne
+  à ré mineur ;
+- chaque accord est suivi de 3 s de silence, pour qu'on entende seule la
+  queue de la salle.
+
+Ses harmoniques s'arrêtent à 16 kHz au lieu de 20 kHz, pour que les basses
+plus graves n'augmentent pas le nombre de partiels : 448 chanteurs font
+46 592 partiels, calculés en environ 3,5 ms par bloc.
+
+## 7. CPU et GPU dans le même programme
+
+Rien n'oblige un programme à tourner entièrement sur le GPU, ou entièrement
+sur le CPU. Mojo compile **un seul** programme dont les fonctions s'exécutent
+sur l'un ou sur l'autre : certaines sont lancées sur le GPU (les *noyaux*),
+les autres sont du code CPU ordinaire. Du code Faust peut donc être placé des
+deux côtés d'un même programme, chaque morceau là où il est le mieux servi.
+
+Le chœur dans une salle le montre. Sa réverbération (`re.zita_rev1_stereo`,
+dans `tests/corpus/gpu_choir_reverb.dsp`) est **un seul** programme appliqué
+au mix stéréo : exactement ce que le GPU fait mal (§2). Le travail se partage
+donc, bloc après bloc :
+
+```mermaid
+flowchart LR
+  subgraph CPU1["CPU"]
+    S["partition : changements d'accord, contrôles des partiels"]
+  end
+  subgraph GPU["GPU"]
+    P["48 048 partiels (Faust, forme batch)"] --> M["mix : chaque chanteur, puis stéréo"]
+  end
+  subgraph CPU2["CPU"]
+    R["réverbération (Faust, forme ordinaire)"] --> A["carte son"]
+  end
+  S --> P
+  M -- "2 x 256 échantillons" --> R
+```
+
+- Le **CPU** déroule la partition : à un changement d'accord, il calcule la
+  nouvelle fréquence et le nouveau gain de chaque partiel et les envoie au
+  GPU.
+- Le **GPU** calcule les 48 048 partiels et les somme en deux canaux :
+  3,6 ms par bloc.
+- Seuls ces deux canaux, de 256 échantillons chacun, reviennent. Le **CPU**
+  les fait passer dans la réverbération et les confie à la carte son :
+  environ **50 µs par bloc**, 1 % du budget. La même réverbération sur le GPU
+  prendrait 1 à 2,6 ms.
+
+Les deux programmes Faust sont compilés dans le même programme Mojo, sous deux
+formes : le partiel sous la forme batch (une structure pour toutes les
+copies, sa mémoire rangée pour le GPU), la réverbération sous la forme
+ordinaire d'une instance. La version CPU du partiel est elle aussi dans le
+programme : c'est la référence contre laquelle on vérifie le GPU.
+
+La règle qui en découle : **mettre sur le GPU ce qui est nombreux, garder sur
+le CPU ce qui est unique**. Une réverbération générale, un égaliseur ou un
+limiteur sur le mix, un séquenceur, l'entrée MIDI, l'interface : tout cela
+reste sur le CPU, à côté de milliers de voix calculées sur le GPU.
+
+Les deux côtés travaillent pour l'instant l'un après l'autre dans chaque bloc
+(le CPU attend le mix du GPU, puis applique la réverbération). Ils pourraient
+se chevaucher, le CPU traitant un bloc pendant que le GPU calcule le suivant ;
+ce n'était pas nécessaire ici.
+
+## 8. Essayer
+
+La voie GPU est une piste de test expérimentale, pas encore un produit. Elle
+demande une chaîne Mojo (Mojo 1.3 et le paquet `modular`) et, pour écouter,
+PortAudio. Les commandes sont dans
+[`tests/impulse-tests/README.md`](../tests/impulse-tests/README.md) :
+
+Le chœur, sec :
+
+```bash
+make -C tests/impulse-tests mojo-gpu-choir MOJO=<commande mojo> PORTAUDIO_LIB=<rép> POLY_AUDIBLE=audible
+```
+
+Le chœur dans la salle, la réverbération sur le CPU :
+
+```bash
+make -C tests/impulse-tests mojo-gpu-choir-reverb MOJO=<commande mojo> PORTAUDIO_LIB=<rép> POLY_AUDIBLE=audible
+```
+
+Une fois construit, le programme se joue directement, et la salle se règle :
+`dry` et `wet` sont les niveaux du son direct et du son réverbéré (0,4 et 2
+par défaut, la salle environ 3 dB au-dessus du chœur), `t60` le temps de
+décroissance en secondes (5 par défaut), `gap` le silence après chaque accord
+(3 s par défaut) :
+
+```bash
+tests/impulse-tests/build/mojo-gpu-choir/choir play 448 30 audible
+```
+
+```bash
+tests/impulse-tests/build/mojo-gpu-choir/choir play 448 64 audible reverb wet=3 t60=7 gap=4
+```
+
+Un cycle complet de la version dans la salle (huit accords et leurs
+silences) dure 64 s. Mesurez ou écoutez un seul chœur à la fois : deux chœurs
+lancés ensemble se partagent le GPU, chacun met environ deux fois plus de
+temps par bloc, et les deux se coupent.
+
+Le carillon :
+
+```bash
+make -C tests/impulse-tests mojo-gpu-bells MOJO=<commande mojo> PORTAUDIO_LIB=<rép> BELLS=37 BELLS_SCORE=chime POLY_AUDIBLE=audible
+```
+
+Chaque piste vérifie le GPU contre le CPU, chronomètre les deux, puis joue.
+
+Côté Faust, c'est du Faust ordinaire. Le partiel du chœur commence ainsi :
+
+```faust
+freq = hslider("freq", 440, 1, 20000, 0.001);
+gain = hslider("gain", 0.01, 0, 1, 0.0001);
+vrate = hslider("vrate", 5.5, 0, 20, 0.001);
+...
+process = gaing * swell * ((1 - noisiness) * partial + noisiness * nscale * bandpass(noise));
+```
+
+Rien n'y dit « 48 048 » : c'est le programme hôte qui crée autant de copies
+et règle les contrôles de chacune.
+
+## 9. Les limites actuelles
+
+L'approche est réelle, mesurée et validée, mais étroite. Ses limites comptent
+autant que ses gains.
+
+**Elle ne convient qu'à une forme de problème.** Des milliers de copies
+indépendantes du même programme. Un programme lourd et unique (une grande
+réverbération, un gros modèle physique) tourne plus lentement sur le GPU, et
+la polyphonie ordinaire est sous le point de bascule. Un grand maillage (une
+membrane, une plaque simulée point par point), une convolution par FFT ou une
+matrice de mixage sont parallèles *à l'intérieur* d'un programme : Faust les
+écrit comme un seul programme, et cette approche ne les aide pas.
+
+**Latence et taille de bloc.** Chaque bloc paie un coût fixe de 0,2 à 0,6 ms
+(lancer le travail sur le GPU et l'attendre). Les blocs de 64 échantillons
+échouent ; il en faut 128 à 256, et le lecteur temps réel a eu besoin de 30 à
+43 ms de latence de sortie. Cela convient à une installation, à une pièce de
+masse sonore ou au rendu hors ligne, pas au retour direct d'un instrument
+joué en direct.
+
+**Précision.** Les GPU grand public calculent en virgule flottante 32 bits
+(`f32`), pas en 64 bits. Les filtres à fort facteur de qualité, les très
+basses fréquences, les réseaux à rétroaction sensibles aux arrondis
+s'écartent du résultat CPU. La construction du chœur est tombée sur un piège
+classique : un glissement de fréquence calculé en `f32` s'arrête avant sa
+cible (d'environ 0,4 cent), en un point légèrement différent sur GPU et sur
+CPU, et les phases dérivent ensuite. La voix ne fait plus glisser que son
+gain.
+
+**Tout le monde doit faire la même chose.** Les unités d'un groupe exécutent
+la même instruction. Si des voix prennent des chemins différents (une cadence
+différente par voix, des itérations qui varient), elles s'attendent : le
+résultat reste juste, la vitesse baisse.
+
+**Mémoire.** Chaque copie a sa propre mémoire : 4 096 copies de `zita_rev1`
+demandent 2 Go.
+
+**Le programme hôte est écrit à la main.** Faust décrit une copie. Nourrir
+les copies, les relier (la frappe d'une cloche nourrit ses 50 modes), les
+sommer en un mix stéréo et piloter la carte son s'écrivent aujourd'hui dans
+des harnais de test Mojo. La sortie « batch » (une structure pour N voix)
+n'a pas encore d'option en ligne de commande ; on y accède par l'API Rust du
+compilateur.
+
+**Mojo n'est pas plus rapide que le C++ sur le CPU.** Sur le partiel du
+chœur, le code Mojo généré tournait cinq fois plus lentement sur le CPU que
+le même programme compilé par LLVM depuis le C++. L'intérêt de Mojo, ici,
+c'est le GPU ; les comparaisons CPU de ce document utilisent le code LLVM.
+
+**Une chaîne d'outils jeune.** Mojo change d'une version à l'autre, et ce
+travail a rencontré trois défaillances dans sa voie GPU, dont deux
+silencieuses. Les pistes sont hors de l'intégration continue (qui n'a pas
+Mojo), et le backend Mojo C++ dont `faust-rs` suit le contrat n'est pas
+encore fusionné, si bien que ce contrat peut encore bouger.
+
+**La comparaison dépend du côté CPU.** Les chiffres comparent le GPU au
+meilleur code CPU que Faust produit aujourd'hui. Une version CPU vectorisée à
+la main entre les voix (quatre ou huit voix par instruction) n'a pas été
+mesurée, et elle pourrait réduire l'écart, peut-être le combler pour les
+petits programmes. Le carillon a montré combien une base CPU plus juste peut
+changer une conclusion.
+
+**Une seule machine.** Tout a été mesuré sur un Apple M5 avec son GPU
+intégré. Non mesuré : la consommation et la chaleur, un GPU partagé avec
+l'affichage (dans une station audionumérique), les GPU séparés où les données
+traversent un bus.
+
+## 10. À retenir
+
+| question | le GPU vaut l'essai | rester sur le CPU |
+|---|---|---|
+| Combien de copies indépendantes ? | des milliers ou plus | une, ou quelques centaines |
+| Où est le parallélisme ? | entre les copies | à l'intérieur d'un programme |
+| Travail par copie | un vrai travail par échantillon | quelques opérations (les regrouper sur le CPU) |
+| Latence | 30 à 45 ms acceptables, ou hors ligne | retour direct en jeu live |
+| Précision | `f32` suffit | besoin de `f64`, rétroaction sensible aux arrondis |
+
+- `faust-rs -lang mojo` écrit du code Mojo pour n'importe quel programme
+  Faust, avec les mêmes résultats que le C++ sur le CPU.
+- Des milliers de copies d'un programme Faust peuvent tourner sur le GPU,
+  sans changement ; le compilateur range leur mémoire pour lui.
+- Dans ce régime, le GPU apporte de ×2 à ×5 par rapport aux threads du CPU
+  pour des programmes d'un vrai poids, et il joue au moins un programme, un
+  chœur de 48 000 partiels riches, que le CPU entier ne peut pas jouer.
+- Le code CPU et le code GPU se mélangent dans le même programme Mojo : les
+  milliers de copies sur le GPU, les programmes uniques (une réverbération
+  sur le mix, un séquenceur) sur le CPU.
+- Pour tout le reste (un programme unique, la polyphonie ordinaire, les
+  petits blocs, le `f64`), le CPU reste la bonne place.
+
+## Voir aussi
+
+- [`vector-scheduling-synthesis-fr.md`](vector-scheduling-synthesis-fr.md) :
+  l'autre direction du parallélisme, à l'intérieur du processeur (SIMD), y
+  compris des instances qui avancent au même pas.
+- [`fad-rad-synthesis-fr.md`](fad-rad-synthesis-fr.md) : la différentiation
+  automatique, qui rejoint le GPU dans l'entraînement hors ligne.
+- [`user-cli-guide-en.md`](user-cli-guide-en.md) : l'option `-lang mojo`.

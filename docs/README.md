@@ -92,6 +92,14 @@ alongside it.
   — compact summary of Signal → FIR fast-lane work (placement, CSE, delays,
   recursion extraction).
 
+## The GPU and the Mojo backend
+
+- [`mojo-gpu-synthesis-en.md`](mojo-gpu-synthesis-en.md) /
+  [`-fr.md`](mojo-gpu-synthesis-fr.md) — gentle synthesis: what `-lang mojo`
+  makes possible on a GPU (thousands of copies of one Faust program), the
+  computing power measured against the CPU, from the carillon to a choir only
+  the GPU can play, and the current limits of the approach.
+
 ## Formal methods
 
 - [`lean-usage-methodology-en.md`](lean-usage-methodology-en.md) — using
