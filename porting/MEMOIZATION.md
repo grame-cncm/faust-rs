@@ -1504,7 +1504,8 @@ Validation:
 
 Status: implemented 2026-07-10 (`e4181cc6`), extended 2026-09-05 (`adaca773`),
 rescoped 2026-09-05 (`93f00111`), extended 2026-09-19 (`9e5d9320`, recorded
-2026-10-18), extended 2026-10-18 (`zero_folder`)
+2026-10-18), extended 2026-10-18 (`zero_folder`), dual cache rescoped by binder
+frame 2026-11-08
 
 Location:
 
@@ -1512,11 +1513,17 @@ Location:
 
 Caches, all one `fad(expr, seeds)` lowering long:
 
-- `cache: AHashMap<SigId, Dual>`, the dual `{ primal, tangents }` of each
-  rewritten node. It does two jobs: it keeps the rewrite linear on shared
-  subgraphs, and it breaks cycles, since the recursion arm inserts a
-  self-referential placeholder before descending so back edges resolve while the
-  group is still being built,
+- `frames: Vec<AHashMap<(SigId, i64), Dual>>` (named `cache` until
+  2026-11-08), the dual `{ primal, tangents }` of each rewritten node, one map
+  per binder frame: `frames[0]` for the whole lowering, `frames[f]` for the body
+  of the `f`-th recursion on the descent path, pushed on entering it and popped
+  on leaving it. An entry goes to the frame of the innermost binder its term
+  references (`memo_slot`, from `min_free_level`), keyed by the node and the
+  depth it was met at (a closed term under `CLOSED_DEPTH`, since it means the
+  same thing at every depth). The recursion arm still inserts a placeholder for
+  the group being built, in the body's frame,
+- `min_free_memo: AHashMap<(TreeId, i64), i64>`: the smallest free reference
+  level of a node above a threshold, which places its entry,
 - `dependency_memo: AHashMap<(SigId, usize, usize), bool>`: can the subtree
   rooted here depend on a seed? The tuple is the node, the number of binders the
   **transform** has entered, and the number this dependency walk has itself
@@ -1525,7 +1532,8 @@ Caches, all one `fad(expr, seeds)` lowering long:
   answer to a transform already inside the recursion, which broke every
   recursive FAD test,
 - `aperture_memo: AHashMap<TreeId, i64>`: the de Bruijn aperture, same shape as
-  §2.8 and §2.14 but a distinct instance with a narrower life,
+  §2.8 and §2.14 but a distinct instance with a narrower life (removed
+  2026-11-08 with the closed-entry filter it served),
 - `od_aug_cache: AHashMap<SigId, SigId>`: the augmented twin of a clocked
   wrapper. This one is a sharing invariant rather than a speed memo: every
   consumer must route through the *same* augmented block, or a stateful body
@@ -1578,6 +1586,48 @@ The lifetime lesson (`93f00111`) — worth reading next to §2.5's:
   together,
 - a wider scope gives an inner recursion the seed's tangent; a narrower one
   (clearing at each binder) would be correct but lose the sharing.
+
+The binder-frame rescoping (2026-11-08) — the narrower scope above did lose the
+sharing, exponentially:
+
+- the 2026-09-05 scope kept closed outer entries on entering a body, but
+  dropped everything the body added on leaving it, closed terms and terms that
+  only read outer binders included. Two recursions reading the same input `x`
+  (each body reads `x` lifted, one node for both) differentiated `x` under each
+  of them; when `x` is itself the output of such a stage, the work doubles per
+  stage,
+- faustlibraries `37ac4eec` (2026-10-05) gave `fi.filterbank` exactly that
+  shape, a TPT section and a direct-form section behind every crossover, picked
+  by `select2` on a constant that folds only after propagation. `fdn_online` of
+  faust-diff-fdn, an `fad` through its band analysis inside the optimiser's
+  recursion, went from 3.6 s to beyond the 120 s compilation limit, as did
+  `fdn_online_gated`, `_gated_hoist`, `_hoist_learn`, `_p25`, `_p28` and
+  `_p40`. A three-line reproducer (`select2(1>0)` over two one-pole
+  recursions, cascaded) took 0.2 s at 16 stages and 14.4 s at 22,
+- an entry is valid exactly as long as the binders its term reads are those it
+  was computed under: the frame of its innermost free reference. Below that
+  frame the spelling and the meaning are those of any sibling body at the same
+  depth (the seeds are lifted by depth alone), so the entry is shared there;
+  popping that binder's frame drops it,
+- the value also depends on the clock-domain renames of `augment_block`, which
+  are not in the key: a subtree carrying a token of a domain being twinned is
+  rebuilt as the twin's (`needs_rebuild`). Keeping entries longer exposed this:
+  `fdn_online_hoist_learn` with the September libraries changed its error.
+  `invalidate_twinned_entries` now drops the entries `needs_rebuild` selects
+  when a rename is added; the old scope had the same latent dependency within
+  one body,
+- measured: the reproducer at 200 stages in 0.7 s (closed seed) and 0.1 s
+  (seed inside a loop); `fdn_online` 1.1 s, `_p40` 3 s (10 s before, with the
+  September libraries). Every `.dsp` under `tests/` and `examples/` and in the
+  faust-diff-* projects (1,063 programs) compiles to identical C++ or to the
+  identical error, except the seven `fdn_online*` programs that timed out
+  before; with the September libraries, where the base compiled them, their
+  C++ is identical byte for byte.
+
+Validation for the rescoping: `fad_sweep_is_linear_in_a_cascade_of_twin_recursions`
+counts `transform_uncached` calls for 10 and 20 stages, with a closed seed and
+with the seed of an enclosing loop; the per-body scope (mutation: every entry
+in the innermost frame) fails it with 21,484 → 22,020,076 visits.
 
 Validation:
 

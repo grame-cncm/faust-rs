@@ -486,9 +486,6 @@ struct ForwardADTransform<'a> {
     arena: &'a mut TreeArena,
     diff_seeds: Vec<SigId>,
     diff_seed_index: AHashMap<SigId, SmallVec<[usize; 2]>>,
-    /// Memo for `de_bruijn_aperture`, consulted when a recursion body is
-    /// entered to decide which cache entries are closed terms.
-    aperture_memo: AHashMap<TreeId, i64>,
     /// The seeds as given, before any lifting; `seed_sets[k]` is that set
     /// lifted `k` times, built on demand by `depends_on_seed`.
     original_seeds: Vec<SigId>,
@@ -497,7 +494,28 @@ struct ForwardADTransform<'a> {
     /// depth)`: a reference's meaning depends on how many binders the walk
     /// itself entered, the seeds' spelling on the total depth.
     dependency_memo: AHashMap<(SigId, usize, usize), bool>,
-    cache: AHashMap<SigId, Dual>,
+    /// Memo of `transform`, one map per binder frame. `frames[0]` lives for
+    /// the whole sweep; `frames[f]`, `f >= 1`, for the body of the `f`-th
+    /// `DEBRUIJNREC` entered on the current descent path, pushed on entering
+    /// it and popped on leaving it. An entry goes to the frame of the
+    /// innermost binder its term references (`frame_of`), keyed by the term
+    /// and the depth it was met at (`CLOSED_DEPTH` for a closed term, which
+    /// means the same thing at every depth): it stays valid exactly as long
+    /// as the binders it reads are those it was computed under.
+    ///
+    /// Scoping every entry to the innermost body instead (one map per body,
+    /// emptied on entry, restored on exit) re-differentiated the shared input
+    /// of two sibling recursions under each of them, which doubled the work
+    /// at every stage of a cascade: `fi.filterbank` since faustlibraries
+    /// `37ac4eec` puts two recursive sections behind every crossover, and an
+    /// `fad` through it went from seconds to beyond the 120 s limit
+    /// (porting/MEMOIZATION.md, `forward_ad` binder-frame memo).
+    frames: Vec<AHashMap<(SigId, i64), Dual>>,
+    /// Memo of `min_free_level`, keyed by `(term, threshold)`.
+    min_free_memo: AHashMap<(TreeId, i64), i64>,
+    /// Number of `transform_uncached` calls: the work of the sweep, read by
+    /// the tests that pin its linearity.
+    uncached_visits: usize,
     debruijn_depth: i64,
     /// First clock-boundary violation encountered during the sweep, if any.
     ///
@@ -552,11 +570,12 @@ impl<'a> ForwardADTransform<'a> {
             zero_folder: DerivativeZeroFolder::new(),
             diff_seed_index: Self::build_seed_index(diff_seeds),
             diff_seeds: diff_seeds.to_vec(),
-            aperture_memo: AHashMap::new(),
             original_seeds: diff_seeds.to_vec(),
             seed_sets: Vec::new(),
             dependency_memo: AHashMap::new(),
-            cache: AHashMap::new(),
+            frames: vec![AHashMap::new()],
+            min_free_memo: AHashMap::new(),
+            uncached_visits: 0,
             debruijn_depth: 0,
             boundary_error: None,
             od_aug_cache: AHashMap::new(),
@@ -734,7 +753,8 @@ impl<'a> ForwardADTransform<'a> {
     /// descending into the body, so back-edges resolve to a valid `Dual` while
     /// the final interleaved node is still being built (see module docs).
     fn transform(&mut self, sig: SigId) -> Dual {
-        if let Some(dual) = self.cache.get(&sig).cloned() {
+        let (frame, key) = self.memo_slot(sig);
+        if let Some(dual) = self.frames[frame].get(&key).cloned() {
             debug_assert_eq!(
                 dual.tangents.len(),
                 self.seed_count(),
@@ -763,8 +783,41 @@ impl<'a> ForwardADTransform<'a> {
             self.seed_count(),
             "transform_uncached produced wrong tangent lane count"
         );
-        self.cache.insert(sig, dual.clone());
+        self.frames[frame].insert(key, dual.clone());
         dual
+    }
+
+    /// Drops the `transform` memo entries a new twin makes stale: a subtree
+    /// that carries a token of a domain now being twinned is rebuilt as the
+    /// twin's (`needs_rebuild`), where it was kept as it is, or rebuilt under
+    /// the original token, before the rename existed. The renames are not
+    /// part of the memo key, so these entries are removed when a rename is
+    /// added; every other entry is unaffected by it.
+    fn invalidate_twinned_entries(&mut self) {
+        for f in 0..self.frames.len() {
+            let keys: Vec<(SigId, i64)> = self.frames[f].keys().copied().collect();
+            for key in keys {
+                if self.needs_rebuild(key.0) {
+                    self.frames[f].remove(&key);
+                }
+            }
+        }
+    }
+
+    /// The frame and key of `sig`'s entry in the `transform` memo, read at
+    /// the current depth `D`. A closed term goes to frame 0 under
+    /// `CLOSED_DEPTH`. An open term whose innermost free reference has level
+    /// `m` reads the binder of frame `D - m + 1`; when that binder is outside
+    /// the `fad` (`D - m + 1 <= 0`) it never changes during the sweep, and
+    /// the entry goes to frame 0 under `D`.
+    fn memo_slot(&mut self, sig: SigId) -> (usize, (SigId, i64)) {
+        let depth = self.debruijn_depth;
+        let m = min_free_level(self.arena, sig, 0, &mut self.min_free_memo);
+        if m == i64::MAX {
+            return (0, (sig, CLOSED_DEPTH));
+        }
+        let frame = usize::try_from(depth - m + 1).unwrap_or(0);
+        (frame, (sig, depth))
     }
 
     /// Differentiates each element of a signal cons-list and returns them as a
@@ -779,6 +832,7 @@ impl<'a> ForwardADTransform<'a> {
     }
 
     fn transform_uncached(&mut self, sig: SigId) -> Dual {
+        self.uncached_visits += 1;
         if let Some(seed_slots) = self.diff_seed_index.get(&sig).cloned() {
             let one = SigBuilder::new(self.arena).real(1.0);
             let mut tangents = self.zero_tangent_lanes_real();
@@ -823,20 +877,13 @@ impl<'a> ForwardADTransform<'a> {
             //   context and is wrong one level up (it would shadow the seed
             //   check and yield `delay1(proj(1, ref))` instead of `1.0`).
             //
-            // Closed terms (no free `DEBRUIJNREF`) mean the same thing at
-            // every depth, so their entries are kept for sharing; the rest of
-            // the outer cache is stashed and restored on exit, which also
-            // discards everything the body traversal added.
-            let outer_cache = std::mem::replace(&mut self.cache, AHashMap::new());
-            {
-                let arena: &TreeArena = self.arena;
-                let memo = &mut self.aperture_memo;
-                self.cache = outer_cache
-                    .iter()
-                    .filter(|(key, _)| de_bruijn_aperture_with_memo(arena, **key, memo) == 0)
-                    .map(|(key, dual)| (*key, dual.clone()))
-                    .collect();
-            }
+            // The memo is split by binder frame (`frames`): an entry is kept
+            // exactly as long as the binders its term reads. Entering the
+            // body pushes its frame, leaving it pops the frame, which
+            // discards the entries that read this binder and keeps every
+            // other one, closed terms and terms that only read outer binders
+            // (the shared input of sibling recursions) included.
+            self.frames.push(AHashMap::new());
 
             // Pre-seed the cache with a self-referential placeholder so any
             // `DEBRUIJNREF(1)` back-edge discovered while differentiating the
@@ -845,15 +892,13 @@ impl<'a> ForwardADTransform<'a> {
             // point back at the original (un-rewritten) group; they are never
             // observed externally because the entry below is overwritten once
             // the rebuilt interleaved group is available.
-            self.cache.insert(
-                sig,
-                Dual {
-                    primal: sig,
-                    tangents: self.repeated_lane_sig(sig),
-                },
-            );
-
+            let placeholder = Dual {
+                primal: sig,
+                tangents: self.repeated_lane_sig(sig),
+            };
             self.debruijn_depth += 1;
+            let body_frame = self.frames.len() - 1;
+            self.frames[body_frame].insert((sig, self.debruijn_depth), placeholder);
 
             // Crossing a new `DEBRUIJNREC` binder shifts every free
             // `DEBRUIJNREF` in the seed expressions by one level so that
@@ -876,11 +921,11 @@ impl<'a> ForwardADTransform<'a> {
             self.diff_seed_index = old_seed_index;
             self.debruijn_depth -= 1;
 
-            // Back to the outer cache: the body entries used the lifted-seed
-            // index and are invalid at this scope. `sig` itself (the current
+            // Back to the outer frames: the entries that read this binder used
+            // the lifted-seed index and are invalid at this scope. `sig` itself (the current
             // `DEBRUIJNREC` node) gets its final dual from `transform` once
             // the expanded group is built.
-            self.cache = outer_cache;
+            self.frames.pop();
 
             // Interleave `[primal, tangent_s0, …, tangent_s{N-1}]` for every
             // original slot in source order. Downstream `Proj` nodes rely on
@@ -1915,6 +1960,7 @@ impl<'a> ForwardADTransform<'a> {
             let twin_token = SigBuilder::new(self.arena).clock_env_token(twin.as_u32());
             self.env_rename.insert(token, twin_token);
             self.domain_rename.insert(id, twin);
+            self.invalidate_twinned_entries();
         }
         // The clock is opaque to the derivative (an iteration count, a
         // comparison), but it is a signal of the transformed program: a
@@ -2147,6 +2193,41 @@ pub(crate) fn check_ad_outputs_coherent(
     Ok(())
 }
 
+/// Key depth of a closed term in the `transform` memo: it means the same
+/// thing at every depth.
+const CLOSED_DEPTH: i64 = -1;
+
+/// The smallest level above `threshold` among the free `DEBRUIJNREF`s of
+/// `root`, relative to `root` (`DEBRUIJNREF(n)` reads the `n`-th binder
+/// around it), or `i64::MAX` when there is none. Under a `DEBRUIJNREC` the
+/// threshold rises by one, since `DEBRUIJNREF(1)` in its body is bound.
+fn min_free_level(
+    arena: &TreeArena,
+    root: TreeId,
+    threshold: i64,
+    memo: &mut AHashMap<(TreeId, i64), i64>,
+) -> i64 {
+    if let Some(&known) = memo.get(&(root, threshold)) {
+        return known;
+    }
+    let result = if let Some(level) = match_de_bruijn_ref(arena, root) {
+        if level > threshold { level } else { i64::MAX }
+    } else if let Some(body) = match_de_bruijn_rec(arena, root) {
+        let inner = min_free_level(arena, body, threshold + 1, memo);
+        if inner == i64::MAX { inner } else { inner - 1 }
+    } else {
+        let mut best = i64::MAX;
+        if let Some(children) = arena.children(root) {
+            for &child in children {
+                best = best.min(min_free_level(arena, child, threshold, memo));
+            }
+        }
+        best
+    };
+    memo.insert((root, threshold), result);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     //! Randomized structural invariants on the FAD rewriter.
@@ -2165,7 +2246,75 @@ mod tests {
     //! generator deterministically.
     use super::*;
     use signals::SigBuilder;
-    use tlib::{TreeArena, de_bruijn_rec, de_bruijn_ref, vec_to_list};
+    use tlib::{TreeArena, de_bruijn_rec, de_bruijn_ref, lift_de_bruijn, vec_to_list};
+
+    /// One stage of a cascade whose two branches are recursions reading the
+    /// same input `x`: `select2(1, rec(x + g·y'), rec(x + (g/2)·y'))`, the
+    /// shape `fi.filterbank` has had since faustlibraries `37ac4eec` (a TPT
+    /// and a direct-form section behind every crossover). `x` and `g` are
+    /// spelled at the stage's own depth; inside each body they are lifted.
+    fn twin_rec_stage(arena: &mut TreeArena, x: SigId, g: SigId) -> SigId {
+        let half = SigBuilder::new(arena).real(0.5);
+        let g_half = SigBuilder::new(arena).mul(g, half);
+        let mut outs = Vec::new();
+        for coef in [g, g_half] {
+            let x_in = lift_de_bruijn(arena, x);
+            let c_in = lift_de_bruijn(arena, coef);
+            let back = de_bruijn_ref(arena, 1);
+            let back = SigBuilder::new(arena).proj(0, back);
+            let back = SigBuilder::new(arena).delay1(back);
+            let fb = SigBuilder::new(arena).mul(c_in, back);
+            let elem = SigBuilder::new(arena).add(x_in, fb);
+            let body = vec_to_list(arena, &[elem]);
+            let rec = de_bruijn_rec(arena, body);
+            outs.push(SigBuilder::new(arena).proj(0, rec));
+        }
+        let one = SigBuilder::new(arena).int(1);
+        SigBuilder::new(arena).select2(one, outs[0], outs[1])
+    }
+
+    /// The `transform_uncached` calls of `fad(cascade of n stages, g)`; with
+    /// `inside_rec`, the cascade is the body of an outer recursion and the
+    /// seed is that recursion's own state, `delay1(proj(0, ref(1)))`, as in
+    /// `op.descend_N_fad_clocked`, so every term of the cascade is open.
+    fn cascade_visits(n: usize, inside_rec: bool) -> usize {
+        let mut arena = TreeArena::new();
+        let g = if inside_rec {
+            let r = de_bruijn_ref(&mut arena, 1);
+            let p = SigBuilder::new(&mut arena).proj(0, r);
+            SigBuilder::new(&mut arena).delay1(p)
+        } else {
+            SigBuilder::new(&mut arena).input(1)
+        };
+        let mut x = SigBuilder::new(&mut arena).input(0);
+        for _ in 0..n {
+            x = twin_rec_stage(&mut arena, x, g);
+        }
+        let mut domains = ClockDomainTable::new();
+        let mut fad = ForwardADTransform::new(&mut arena, &mut domains, &[g]);
+        let _ = fad.transform(x);
+        assert!(fad.boundary_error.is_none());
+        fad.uncached_visits
+    }
+
+    /// Regression (2026-11-08): the sweep is linear in a cascade whose
+    /// stages read a shared input through two recursions. With the memo
+    /// scoped to each recursion body, the input was re-differentiated under
+    /// both, and the work doubled per stage: `fdn_online` of faust-diff-fdn
+    /// went past the 120 s compilation limit once `fi.filterbank` took this
+    /// shape. Doubling the stages must double the work, not square it, for
+    /// a closed seed and for a seed that is the state of an enclosing loop.
+    #[test]
+    fn fad_sweep_is_linear_in_a_cascade_of_twin_recursions() {
+        for inside_rec in [false, true] {
+            let small = cascade_visits(10, inside_rec);
+            let large = cascade_visits(20, inside_rec);
+            assert!(
+                large <= 2 * small + 16,
+                "inside_rec = {inside_rec}: 10 stages {small} visits, 20 stages {large}"
+            );
+        }
+    }
 
     /// Tiny linear-congruential PRNG for deterministic generation.
     struct Lcg(u64);
