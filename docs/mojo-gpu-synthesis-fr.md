@@ -44,6 +44,7 @@ apporte par rapport au processeur, et où l'approche s'arrête.
 - **Ce que fait le compilateur** — la mémoire rangée pour le GPU.
 - **Ce qui a été mesuré** — d'un GPU plus lent à un programme que seul le GPU peut jouer.
 - **CPU et GPU dans le même programme** — le chœur dans une salle.
+- **Latence : le plus petit buffer audio** — pourquoi le GPU demande des blocs plus grands que le CPU, et comment PortAudio est piloté.
 - **Essayer** — les commandes, avec et sans la salle.
 - **Les limites actuelles** — ce que l'approche ne fait pas, ou pas encore.
 - **À retenir** — la carte en une page.
@@ -348,7 +349,135 @@ Les deux côtés travaillent pour l'instant l'un après l'autre dans chaque bloc
 se chevaucher, le CPU traitant un bloc pendant que le GPU calcule le suivant ;
 ce n'était pas nécessaire ici.
 
-## 8. Essayer
+## 8. Latence : le plus petit buffer audio
+
+Un programme audio ne calcule pas échantillon par échantillon pour la carte
+son : il calcule des **blocs** (des buffers) de N échantillons, et la carte
+joue un bloc pendant que le suivant se calcule. Un bloc de N échantillons dure
+N / 48 000 s : c'est son **budget**. Si un bloc met plus longtemps que son
+budget à se calculer, la carte manque d'échantillons et le son **craque**
+(un *underrun*, une coupure). Des petits blocs donnent une petite latence, le
+délai entre un geste et le son, qui compte pour un instrument joué en direct.
+
+Sur un CPU, le coût d'un bloc est presque entièrement le calcul de ses
+échantillons : appeler la fonction `compute` du programme coûte quelques
+microsecondes. Les logiciels audio tournent couramment avec des blocs de 32 à
+64 échantillons (0,7 à 1,3 ms), et la latence est fixée par le pilote de la
+carte son, quelques millisecondes.
+
+Sur un GPU, chaque bloc paie un **coût fixe** avant le premier échantillon :
+le CPU prépare le travail, le lance sur le GPU, attend que le GPU ait fini et
+recopie le résultat. Ce coût ne diminue pas avec le bloc, et plus le bloc est
+petit, plus sa part du budget est grande.
+
+### 8.1 Ce qui a été mesuré
+
+Le coût fixe seul, mesuré avec un chœur de 4 chanteurs (429 partiels, presque
+aucun travail), blocs enchaînés sans pause : **0,34 ms** par bloc à 32 ou 64
+échantillons, 0,41 ms à 128, 0,55 ms à 256.
+
+En temps réel, c'est pire. Entre deux blocs, le GPU attend la carte son, se
+met au repos et baisse son horloge ; chaque bloc paie alors de nouveau le
+réveil et la soumission. À 64 échantillons, un bloc coûte environ **1 ms**
+quelle que soit la taille du chœur, trois fois le chiffre sans pause, et
+certains blocs prennent 3 à 5 ms (la *gigue*). Le chœur en temps réel
+(PortAudio, 8 s, en muet) :
+
+| bloc | budget | résultat | bloc médian | pire bloc | latence accordée |
+|---|---|---|---|---|---|
+| 256 échantillons | 5,33 ms | 448 chanteurs (48 048 partiels) : aucune coupure | 3,6 ms | 10 à 17 ms | 43 ms |
+| 128 échantillons | 2,67 ms | 448 chanteurs : aucune coupure | 1,98 ms | 4,9 ms | 30 ms |
+| 64 échantillons | 1,33 ms | coupures, même avec 32 chanteurs (3 432 partiels) | 1,0 ms | 3,0 à 3,4 ms | 23 ms |
+| 32 échantillons | 0,67 ms | coupures, même avec 8 chanteurs (858 partiels) | 0,57 ms | 2,2 à 3,2 ms | 20 ms |
+
+**Sur cette machine, le plus petit bloc qui joue sans craquer est de 128
+échantillons (2,7 ms), avec une latence de sortie d'environ 30 ms.** À 64
+échantillons, le bloc médian tient dans son budget, mais le coût fixe ne
+laisse aucune marge pour la gigue, et les blocs hors budget s'accumulent plus
+vite que le buffer ne peut les absorber. Un chœur plus petit n'y change rien :
+en dessous de quelques milliers de partiels, le bloc coûte le coût fixe, pas
+le travail.
+
+C'est la principale contrainte pratique du GPU par rapport au CPU. Un CPU
+joue un programme léger à 32 échantillons avec quelques millisecondes de
+latence ; un GPU, même avec presque rien à calculer, a besoin de 128
+échantillons et, avec le lecteur utilisé ici, d'environ 30 ms.
+
+### 8.2 Comment le lecteur pilote PortAudio
+
+Le harnais parle à la carte son par l'API **bloquante** de PortAudio
+(`Pa_WriteStream`), depuis le même thread que celui qui pilote le GPU. À
+chaque exécution :
+
+1. `Pa_OpenStream` ouvre la sortie par défaut : 2 canaux, flottants 32 bits,
+   48 kHz, N échantillons par buffer, une latence *suggérée* de deux blocs,
+   et pas de callback (ce qui choisit le mode bloquant). `Pa_GetStreamInfo`
+   renvoie la latence réellement accordée.
+2. Avant le démarrage du flux, 20 blocs sont calculés et jetés, pour que le
+   GPU atteigne son horloge et que les premiers blocs ne soient pas lents.
+3. Puis, pour chaque bloc :
+   - le CPU applique la partition (à un changement d'accord, il envoie les
+     nouveaux contrôles de chaque partiel) ;
+   - le CPU lance le travail du GPU (les partiels, puis les deux étages du
+     mix) et une copie des 2 x N échantillons mixés en retour, puis **attend**
+     le GPU ;
+   - avec la salle, le CPU applique la réverbération à ces échantillons ;
+   - `Pa_WriteStream` confie les N échantillons à PortAudio. PortAudio les
+     garde dans son buffer ; si le buffer est plein, l'appel **attend** que
+     la carte en ait joué assez. C'est cette attente qui cale la boucle sur
+     la vitesse de la carte son.
+   - Si la carte a manqué d'échantillons depuis l'écriture précédente,
+     `Pa_WriteStream` renvoie `paOutputUnderflowed` : le harnais compte une
+     coupure.
+
+```mermaid
+sequenceDiagram
+  participant CPU as CPU (thread du harnais)
+  participant GPU
+  participant PA as buffer PortAudio
+  participant Card as carte son
+  loop à chaque bloc de N échantillons
+    CPU->>GPU: contrôles (à un changement d'accord), lancement des partiels et du mix
+    GPU-->>CPU: 2 x N échantillons mixés (le CPU les attend)
+    CPU->>CPU: réverbération (version dans la salle)
+    CPU->>PA: Pa_WriteStream (attend tant que le buffer est plein)
+    PA->>Card: joue en continu
+  end
+```
+
+La latence accordée (43 ms à 256 échantillons, 30 ms à 128) est ce buffer :
+c'est lui qui permet à un bloc lent (un changement d'accord prend 10 à 17 ms,
+trois blocs de 256 échantillons) de passer sans coupure, pourvu que les blocs
+suivants soient assez rapides pour le remplir de nouveau. Avec l'API
+bloquante, PortAudio ajoute sa propre mise en tampon à celle du pilote, si
+bien que la latence dépasse les deux blocs demandés.
+
+### 8.3 Ce qui pourrait la réduire
+
+- **Un lecteur piloté par le callback audio** (l'API à callback de
+  PortAudio, ou Core Audio directement) ramènerait la mise en tampon vers le
+  minimum du pilote. Mais le callback tourne sur un thread temps réel, qui ne
+  doit jamais attendre le GPU : l'attente à la fin de chaque bloc est un appel
+  système bloquant, dont la durée n'est pas garantie. La bonne architecture
+  est un thread de calcul séparé qui garde quelques blocs d'avance, et une
+  file sans verrou entre lui et le callback. La latence est alors la
+  profondeur de cette file, que la gigue impose : avec 3 à 5 ms de gigue à 128
+  échantillons, deux ou trois blocs, soit environ 6 à 8 ms de file plus le
+  buffer propre du pilote. Ni écrit ni mesuré.
+- **Recouvrir les blocs** : lancer le bloc k + 1 sur le GPU pendant que le
+  bloc k passe par la réverbération et part vers PortAudio masque une partie
+  du coût fixe.
+- **Garder le GPU éveillé** entre les blocs supprimerait la pénalité du temps
+  réel (1 ms au lieu de 0,34 ms à 64 échantillons), au prix de la
+  consommation.
+
+Rien de cela ne supprime le coût fixe d'un aller-retour vers le GPU : le GPU
+restera derrière le CPU pour les plus petits buffers. Son domaine est le son
+qui peut se permettre quelques dizaines de millisecondes : installations,
+masses sonores, scènes spatiales, rendu hors ligne, entraînement ; pas le
+retour direct d'un instrument joué.
+
+## 9. Essayer
 
 La voie GPU est une piste de test expérimentale, pas encore un produit. Elle
 demande une chaîne Mojo (Mojo 1.3 et le paquet `modular`) et, pour écouter,
@@ -412,7 +541,7 @@ process = gaing * swell * ((1 - noisiness) * partial + noisiness * nscale * band
 Rien n'y dit « 48 048 » : c'est le programme hôte qui crée autant de copies
 et règle les contrôles de chacune.
 
-## 9. Les limites actuelles
+## 10. Les limites actuelles
 
 L'approche est réelle, mesurée et validée, mais étroite. Ses limites comptent
 autant que ses gains.
@@ -425,12 +554,14 @@ membrane, une plaque simulée point par point), une convolution par FFT ou une
 matrice de mixage sont parallèles *à l'intérieur* d'un programme : Faust les
 écrit comme un seul programme, et cette approche ne les aide pas.
 
-**Latence et taille de bloc.** Chaque bloc paie un coût fixe de 0,2 à 0,6 ms
-(lancer le travail sur le GPU et l'attendre). Les blocs de 64 échantillons
-échouent ; il en faut 128 à 256, et le lecteur temps réel a eu besoin de 30 à
-43 ms de latence de sortie. Cela convient à une installation, à une pièce de
-masse sonore ou au rendu hors ligne, pas au retour direct d'un instrument
-joué en direct.
+**Latence et taille de bloc** (§8). Chaque bloc paie un coût fixe (0,34 ms
+sans pause, environ 1 ms en temps réel à 64 échantillons) avant le moindre
+calcul de son, plus plusieurs millisecondes de gigue. Le plus petit bloc qui a
+joué sans craquer est de 128 échantillons, avec environ 30 ms de latence de
+sortie par l'API bloquante de PortAudio ; un CPU joue les programmes légers à
+32 ou 64 échantillons avec quelques millisecondes. Cela convient à une
+installation, à une pièce de masse sonore ou au rendu hors ligne, pas au
+retour direct d'un instrument joué en direct.
 
 **Précision.** Les GPU grand public calculent en virgule flottante 32 bits
 (`f32`), pas en 64 bits. Les filtres à fort facteur de qualité, les très
@@ -479,14 +610,14 @@ intégré. Non mesuré : la consommation et la chaleur, un GPU partagé avec
 l'affichage (dans une station audionumérique), les GPU séparés où les données
 traversent un bus.
 
-## 10. À retenir
+## 11. À retenir
 
 | question | le GPU vaut l'essai | rester sur le CPU |
 |---|---|---|
 | Combien de copies indépendantes ? | des milliers ou plus | une, ou quelques centaines |
 | Où est le parallélisme ? | entre les copies | à l'intérieur d'un programme |
 | Travail par copie | un vrai travail par échantillon | quelques opérations (les regrouper sur le CPU) |
-| Latence | 30 à 45 ms acceptables, ou hors ligne | retour direct en jeu live |
+| Latence | blocs de 128 échantillons ou plus, 30 à 45 ms acceptables, ou hors ligne | blocs de 32 à 64 échantillons, retour direct en jeu live |
 | Précision | `f32` suffit | besoin de `f64`, rétroaction sensible aux arrondis |
 
 - `faust-rs -lang mojo` écrit du code Mojo pour n'importe quel programme

@@ -43,6 +43,7 @@ processor, and where the approach stops.
 - **What the compiler does** — the state laid out for the GPU.
 - **What was measured** — from a slower GPU to a GPU-only program.
 - **CPU and GPU in the same program** — the choir in a hall.
+- **Latency: the smallest audio buffer** — why the GPU needs larger blocks than the CPU, and how PortAudio is driven.
 - **Trying it** — the commands, with and without the hall.
 - **The current limits** — what the approach does not do, or not yet.
 - **Takeaways** — the one-page map.
@@ -328,7 +329,127 @@ The two sides currently work one after the other within each block (the CPU
 waits for the GPU's mix, then runs the reverb). They could overlap, the CPU
 treating one block while the GPU computes the next; that was not needed here.
 
-## 8. Trying it
+## 8. Latency: the smallest audio buffer
+
+An audio program does not compute sample by sample for the sound card: it
+computes **blocks** (buffers) of N samples, and the sound card plays one block
+while the next is computed. A block of N samples lasts N / 48,000 s: that is
+its **budget**. If a block takes longer than its budget to compute, the card
+runs out of samples and the sound **crackles** (an underrun, or dropout).
+Small blocks give a small latency, the delay between a gesture and the sound,
+which matters for an instrument played live.
+
+On a CPU, the cost of a block is almost entirely the computation of its
+samples: calling the program's `compute` costs microseconds. Audio software
+commonly runs with blocks of 32 to 64 samples (0.7 to 1.3 ms), and the
+latency is set by the sound card's driver, a few milliseconds.
+
+On a GPU, every block pays a **fixed cost** before the first sample: the CPU
+prepares the work, launches it on the GPU, waits for the GPU to finish, and
+copies the result back. That cost does not shrink with the block, and the
+smaller the block, the larger its share of the budget.
+
+### 8.1 What was measured
+
+The fixed cost alone, measured with a choir of 4 singers (429 partials,
+almost no work), blocks computed back to back: **0.34 ms** per block at 32 or
+64 samples, 0.41 ms at 128, 0.55 ms at 256.
+
+In real time it is worse. Between two blocks the GPU waits for the sound
+card, goes idle, and lowers its clock; each block then pays the wake-up and
+the submission again. At 64 samples, a block costs about **1 ms** whatever the
+size of the choir, three times the back-to-back figure, and some blocks take
+3 to 5 ms (the *jitter*). The choir in real time (PortAudio, 8 s, muted):
+
+| block | budget | result | median block | worst block | latency granted |
+|---|---|---|---|---|---|
+| 256 samples | 5.33 ms | 448 singers (48,048 partials): no dropout | 3.6 ms | 10 to 17 ms | 43 ms |
+| 128 samples | 2.67 ms | 448 singers: no dropout | 1.98 ms | 4.9 ms | 30 ms |
+| 64 samples | 1.33 ms | dropouts, even with 32 singers (3,432 partials) | 1.0 ms | 3.0 to 3.4 ms | 23 ms |
+| 32 samples | 0.67 ms | dropouts, even with 8 singers (858 partials) | 0.57 ms | 2.2 to 3.2 ms | 20 ms |
+
+**On this machine, the smallest block that plays without crackling is 128
+samples (2.7 ms), with an output latency of about 30 ms.** At 64 samples the
+median block fits in its budget, but the fixed cost leaves no room for the
+jitter, and the blocks over budget accumulate faster than the buffer can
+absorb them. A smaller choir does not help: below a few thousand partials the
+block costs the fixed cost, not the work.
+
+This is the main practical constraint of the GPU compared with the CPU. A
+CPU plays a light program at 32 samples with a few milliseconds of latency; a
+GPU, even with almost nothing to compute, needs 128 samples and, with the
+player used here, about 30 ms.
+
+### 8.2 How the player drives PortAudio
+
+The harness talks to the sound card through PortAudio's **blocking** API
+(`Pa_WriteStream`), from the same thread that drives the GPU. Per run:
+
+1. `Pa_OpenStream` opens the default output: 2 channels, 32-bit floats,
+   48 kHz, N frames per buffer, a *suggested* latency of two blocks, and no
+   callback (which selects the blocking mode). `Pa_GetStreamInfo` returns the
+   latency actually granted.
+2. Before the stream starts, 20 blocks are computed and thrown away, so that
+   the GPU reaches its clock and the first blocks are not slow.
+3. Then, for every block:
+   - the CPU applies the score (at a chord change it uploads the new
+     controls of every partial);
+   - the CPU launches the GPU work (the partials, then the two mix stages)
+     and a copy of the 2 x N mixed samples back, then **waits** for the GPU;
+   - with the hall, the CPU runs the reverb on those samples;
+   - `Pa_WriteStream` hands the N frames to PortAudio. PortAudio keeps them
+     in its buffer; if the buffer is full, the call **waits** until the card
+     has played enough. This wait is what paces the loop at the speed of the
+     sound card.
+   - If the card ran dry since the previous write, `Pa_WriteStream` returns
+     `paOutputUnderflowed`: the harness counts a dropout.
+
+```mermaid
+sequenceDiagram
+  participant CPU as CPU (harness thread)
+  participant GPU
+  participant PA as PortAudio buffer
+  participant Card as sound card
+  loop every block of N samples
+    CPU->>GPU: controls (at a chord change), launch partials and mix
+    GPU-->>CPU: 2 x N mixed samples (the CPU waits for them)
+    CPU->>CPU: reverb (version in the hall)
+    CPU->>PA: Pa_WriteStream (waits while the buffer is full)
+    PA->>Card: plays continuously
+  end
+```
+
+The latency granted (43 ms at 256 samples, 30 ms at 128) is that buffer: it
+is what lets a slow block (a chord change takes 10 to 17 ms, three blocks of
+256 samples) pass without a dropout, as long as the following blocks are fast
+enough to refill it. With the blocking API, PortAudio adds its own buffering
+on top of the driver's, so the latency is larger than the two blocks asked
+for.
+
+### 8.3 What could lower it
+
+- **A player driven by the audio callback** (PortAudio's callback API, or
+  Core Audio directly) would bring the buffering down towards the driver's
+  minimum. But the callback runs on a real-time thread, which must never
+  wait for the GPU: the wait at the end of every block is a blocking system
+  call, and its duration is not guaranteed. The sound design is a separate
+  computing thread that keeps a few blocks ahead, and a lock-free queue
+  between it and the callback. The latency is then the depth of that queue,
+  which the jitter dictates: with 3 to 5 ms of jitter at 128 samples, two or
+  three blocks, about 6 to 8 ms of queue plus the driver's own buffer. Not
+  written or measured.
+- **Overlapping blocks**: launching block k + 1 on the GPU while block k
+  goes through the reverb and to PortAudio hides part of the fixed cost.
+- **Keeping the GPU awake** between blocks would remove the real-time
+  penalty (1 ms instead of 0.34 ms at 64 samples), at the price of power.
+
+None of this removes the fixed cost of a round trip to the GPU, so the GPU
+will stay behind the CPU for the smallest buffers. Its domain is the sound
+that can afford a few tens of milliseconds: installations, sound masses,
+spatial scenes, offline rendering, training; not the monitoring of a played
+instrument.
+
+## 9. Trying it
 
 The GPU path is an experimental test lane, not yet a product. It needs a Mojo
 toolchain (Mojo 1.3 and the `modular` package) and, to listen, PortAudio. The
@@ -389,7 +510,7 @@ process = gaing * swell * ((1 - noisiness) * partial + noisiness * nscale * band
 Nothing in it says "48,048": the host program creates that many copies and
 sets each one's controls.
 
-## 9. The current limits
+## 10. The current limits
 
 The approach is real, measured and validated, but narrow. Its limits are as
 important as its gains.
@@ -401,11 +522,13 @@ large mesh (a membrane, a plate simulated point by point), an FFT convolution
 or a mixing matrix are parallel *inside* one program: Faust writes them as
 one program, and this approach does not help them.
 
-**Latency and block size.** Each block pays a fixed cost of 0.2 to 0.6 ms
-(launching the GPU work and waiting for it). Blocks of 64 samples fail; 128 to
-256 are needed, and the real-time player needed 30 to 43 ms of output
-latency. That suits an installation, a sound-mass piece or offline rendering,
-not live monitoring of an instrument.
+**Latency and block size** (§8). Each block pays a fixed cost (0.34 ms back
+to back, about 1 ms in real time at 64 samples) before any sound is
+computed, plus several milliseconds of jitter. The smallest block that played
+without crackling is 128 samples, with about 30 ms of output latency through
+PortAudio's blocking API; a CPU plays light programs at 32 to 64 samples with
+a few milliseconds. That suits an installation, a sound-mass piece or offline
+rendering, not live monitoring of an instrument.
 
 **Precision.** Consumer GPUs compute in 32-bit floating point (`f32`), not in
 64-bit. High-Q filters, very low frequencies, feedback networks sensitive to
@@ -449,14 +572,14 @@ showed how much a fairer CPU baseline can change a conclusion.
 GPU. Not measured: power and heat, a GPU shared with graphics (inside a DAW),
 discrete GPUs where data crosses a bus.
 
-## 10. Takeaways
+## 11. Takeaways
 
 | question | GPU worth trying | stay on the CPU |
 |---|---|---|
 | How many independent copies? | thousands or more | one, or a few hundred |
 | Where is the parallelism? | across copies | inside one program |
 | Work per copy | real work per sample | a few operations (group them on the CPU) |
-| Latency | 30 to 45 ms acceptable, or offline | live monitoring |
+| Latency | blocks of 128 samples or more, 30 to 45 ms acceptable, or offline | blocks of 32 to 64 samples, live monitoring |
 | Precision | `f32` is enough | needs `f64`, rounding-sensitive feedback |
 
 - `faust-rs -lang mojo` writes Mojo code for any Faust program, with the same
