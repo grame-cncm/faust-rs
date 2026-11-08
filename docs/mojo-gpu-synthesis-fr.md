@@ -1,12 +1,6 @@
 ---
 title: "Faust sur le GPU avec le backend Mojo : une synthèse accessible"
 date: 2026-11-08
-page-size: A4
-margins: 20 22
-page-numbers: true
-font-body: Roboto
-font-heading: Roboto Condensed
-font-mono: Roboto Mono
 ---
 
 **Date :** 2026-11-08
@@ -36,19 +30,19 @@ contenu ; garder les deux versions synchronisées).
 certains programmes Faust sur un GPU), la puissance de calcul que cela
 apporte par rapport au processeur, et où l'approche s'arrête.
 
-::: toc+
-- **De quoi s'agit-il ?** — un nouveau langage de sortie pour Faust.
-- **Un CPU et un GPU** — quelques cuisiniers rapides ou mille cuisiniers lents.
-- **Pourquoi un programme Faust seul ne va pas plus vite** — l'ordre du temps dans les récursions.
-- **L'idée qui marche : beaucoup de copies du même programme** — voix, partiels, modes.
-- **Ce que fait le compilateur** — la mémoire rangée pour le GPU.
-- **Ce qui a été mesuré** — d'un GPU plus lent à un programme que seul le GPU peut jouer.
-- **CPU et GPU dans le même programme** — le chœur dans une salle.
-- **Latence : le plus petit buffer audio** — pourquoi le GPU demande des blocs plus grands que le CPU, et comment PortAudio est piloté.
-- **Essayer** — installer la chaîne d'outils, les commandes, et écrire son propre programme GPU.
-- **Les limites actuelles** — ce que l'approche ne fait pas, ou pas encore.
-- **À retenir** — la carte en une page.
-:::
+**Sommaire**
+
+1. [De quoi s'agit-il ?](#1-de-quoi-sagit-il-) — un nouveau langage de sortie pour Faust.
+2. [Un CPU et un GPU](#2-un-cpu-et-un-gpu) — quelques cuisiniers rapides ou mille cuisiniers lents.
+3. [Pourquoi un programme Faust seul ne va pas plus vite](#3-pourquoi-un-programme-faust-seul-ne-va-pas-plus-vite) — l'ordre du temps dans les récursions.
+4. [L'idée qui marche : beaucoup de copies du même programme](#4-lidée-qui-marche--beaucoup-de-copies-du-même-programme) — voix, partiels, modes.
+5. [Ce que fait le compilateur](#5-ce-que-fait-le-compilateur) — la mémoire rangée pour le GPU.
+6. [Ce qui a été mesuré](#6-ce-qui-a-été-mesuré) — d'un GPU plus lent à un programme que seul le GPU peut jouer.
+7. [CPU et GPU dans le même programme](#7-cpu-et-gpu-dans-le-même-programme) — le chœur dans une salle.
+8. [Latence : le plus petit buffer audio](#8-latence--le-plus-petit-buffer-audio) — pourquoi le GPU demande des blocs plus grands que le CPU, et comment PortAudio est piloté.
+9. [Essayer](#9-essayer) — installer la chaîne d'outils, les commandes, et écrire son propre programme GPU.
+10. [Les limites actuelles](#10-les-limites-actuelles) — ce que l'approche ne fait pas, ou pas encore.
+11. [À retenir](#11-à-retenir) — la carte en une page.
 
 ## 1. De quoi s'agit-il ?
 
@@ -72,12 +66,10 @@ impulsionnelle. La nouveauté, c'est que le même code généré peut tourner
 
 ## 2. Un CPU et un GPU
 
-::: definition [CPU et GPU]
-Un **CPU** a quelques cœurs (10 sur la machine mesurée ici, un Apple M5),
-chacun très rapide et très polyvalent. Un **GPU** a des milliers de petites
-unités de calcul, chacune plus lente, groupées pour exécuter la même
-instruction au même moment sur des données différentes.
-:::
+> **Définition : CPU et GPU.** Un **CPU** a quelques cœurs (10 sur la machine mesurée ici, un Apple M5),
+> chacun très rapide et très polyvalent. Un **GPU** a des milliers de petites
+> unités de calcul, chacune plus lente, groupées pour exécuter la même
+> instruction au même moment sur des données différentes.
 
 Une image aide. Un CPU, c'est une cuisine avec quelques excellents
 cuisiniers : chacun peut préparer n'importe quel plat, vite, l'un après
@@ -96,11 +88,9 @@ Les mesures disent exactement cela. Une réverbération Faust sur le GPU tourne
 
 (temps de calcul d'un bloc de 256 échantillons, soit 5,3 ms de son à 48 kHz.)
 
-::: important [Le point à retenir]
-Le GPU n'est pas un processeur plus rapide pour un traitement du son. C'est
-un très grand nombre de processeurs lents. Il n'est rentable que lorsqu'il a
-des milliers de tâches identiques et indépendantes à faire en même temps.
-:::
+> **Le point à retenir.** Le GPU n'est pas un processeur plus rapide pour un traitement du son. C'est
+> un très grand nombre de processeurs lents. Il n'est rentable que lorsqu'il a
+> des milliers de tâches identiques et indépendantes à faire en même temps.
 
 ## 3. Pourquoi un programme Faust seul ne va pas plus vite
 
@@ -112,7 +102,9 @@ La raison tient à la nature de l'audio. La plupart des traitements du son ont
 une **mémoire** : la sortie d'un filtre dépend de ses sorties précédentes, un
 écho des échantillons de la dernière seconde.
 
-```bda "Une récursion : chaque échantillon a besoin du précédent"
+*Une récursion : chaque échantillon a besoin du précédent*
+
+```faust
 _ : + ~ *(0.5)
 ```
 
@@ -141,13 +133,11 @@ copie** (une *instance*) du programme Faust, toutes les copies avancent
 ensemble, échantillon après échantillon, et l'ordre du temps est respecté à
 l'intérieur de chaque copie.
 
-::: definition [Instance]
-Une copie en cours d'exécution d'un programme Faust, avec sa propre mémoire
-(les états de ses filtres, ses lignes à retard) et ses propres contrôles. Le
-programme Faust décrit **une** instance ; le nombre d'instances lancées est
-choisi par le programme hôte à l'exécution, il n'est pas écrit dans le code
-Faust.
-:::
+> **Définition : Instance.** Une copie en cours d'exécution d'un programme Faust, avec sa propre mémoire
+> (les états de ses filtres, ses lignes à retard) et ses propres contrôles. Le
+> programme Faust décrit **une** instance ; le nombre d'instances lancées est
+> choisi par le programme hôte à l'exécution, il n'est pas écrit dans le code
+> Faust.
 
 Conséquence agréable : **aucun nouveau code DSP**. Un programme Faust écrit
 pour une voix tourne N fois tel quel. La fonction `compute` générée pour une
@@ -168,20 +158,12 @@ avec les valeurs de toutes les instances côte à côte (une « structure de
 tableaux »). Quand les mille unités lisent « leur » variable, elles lisent
 des valeurs voisines, d'un seul coup.
 
-```mermaid
-flowchart LR
-  subgraph AoS["Une structure par instance"]
-    direction TB
-    A0["voix 0 : état a, état b, état c"]
-    A1["voix 1 : état a, état b, état c"]
-    A2["voix 2 : état a, état b, état c"]
-  end
-  subgraph SoA["Structure de tableaux (pour le GPU)"]
-    direction TB
-    B0["état a : voix 0, voix 1, voix 2, ..."]
-    B1["état b : voix 0, voix 1, voix 2, ..."]
-    B2["état c : voix 0, voix 1, voix 2, ..."]
-  end
+```text
+Une structure par instance              Structure de tableaux (pour le GPU)
+
+voix 0 : état a, état b, état c         état a : voix 0, voix 1, voix 2, ...
+voix 1 : état a, état b, état c         état b : voix 0, voix 1, voix 2, ...
+voix 2 : état a, état b, état c         état c : voix 0, voix 1, voix 2, ...
 ```
 
 Pour les programmes qui ont beaucoup de mémoire, cela change tout. À
@@ -308,19 +290,17 @@ dans `tests/corpus/gpu_choir_reverb.dsp`) est **un seul** programme appliqué
 au mix stéréo : exactement ce que le GPU fait mal (§2). Le travail se partage
 donc, bloc après bloc :
 
-```mermaid
-flowchart LR
-  subgraph CPU1["CPU"]
-    S["partition : changements d'accord, contrôles des partiels"]
-  end
-  subgraph GPU["GPU"]
-    P["48 048 partiels (Faust, forme batch)"] --> M["mix : chaque chanteur, puis stéréo"]
-  end
-  subgraph CPU2["CPU"]
-    R["réverbération (Faust, forme ordinaire)"] --> A["carte son"]
-  end
-  S --> P
-  M -- "2 x 256 échantillons" --> R
+```text
+   CPU                         GPU                               CPU
++-----------------+    +---------------------------+    +---------------------+
+| partition :     |    | 48 048 partiels           |    | réverbération       |
+| changements     |--->| (Faust, forme batch)      |    | (Faust, forme       |
+| d'accord,       |    |            |              |    |  ordinaire)         |
+| contrôles des   |    |            v              |    |         |           |
+| partiels        |    | mix : chaque chanteur,    |--->|         v           |
++-----------------+    | puis stéréo               |    | carte son           |
+                       +---------------------------+    +---------------------+
+                                     2 x 256 échantillons
 ```
 
 - Le **CPU** déroule la partition : à un changement d'accord, il calcule la
@@ -430,19 +410,24 @@ chaque exécution :
      `Pa_WriteStream` renvoie `paOutputUnderflowed` : le harnais compte une
      coupure.
 
-```mermaid
-sequenceDiagram
-  participant CPU as CPU (thread du harnais)
-  participant GPU
-  participant PA as buffer PortAudio
-  participant Card as carte son
-  loop à chaque bloc de N échantillons
-    CPU->>GPU: contrôles (à un changement d'accord), lancement des partiels et du mix
-    GPU-->>CPU: 2 x N échantillons mixés (le CPU les attend)
-    CPU->>CPU: réverbération (version dans la salle)
-    CPU->>PA: Pa_WriteStream (attend tant que le buffer est plein)
-    PA->>Card: joue en continu
-  end
+```text
+à chaque bloc de N échantillons :
+
+  CPU (thread du harnais)     GPU                buffer PortAudio    carte son
+      |                        |                       |                 |
+      |-- contrôles (à un ---->|                       |                 |
+      |   changement d'accord),|                       |                 |
+      |   lancement des        |                       |                 |
+      |   partiels et du mix   |                       |                 |
+      |<-- 2 x N échantillons -|                       |                 |
+      |    mixés (le CPU les   |                       |                 |
+      |    attend)             |                       |                 |
+      |                        |                       |                 |
+      |-- réverbération (version dans la salle)        |                 |
+      |                                                |                 |
+      |-- Pa_WriteStream (attend tant que le --------->|                 |
+      |   buffer est plein)                            |-- joue -------->|
+      |                                                |   en continu    |
 ```
 
 La latence accordée (43 ms à 256 échantillons, 30 ms à 128) est ce buffer :

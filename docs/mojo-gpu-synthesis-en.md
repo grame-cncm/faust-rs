@@ -1,12 +1,6 @@
 ---
 title: "Faust on the GPU with the Mojo backend: a gentle synthesis"
 date: 2026-11-08
-page-size: A4
-margins: 20 22
-page-numbers: true
-font-body: Roboto
-font-heading: Roboto Condensed
-font-mono: Roboto Mono
 ---
 
 **Date:** 2026-11-08
@@ -35,19 +29,19 @@ content; keep both versions synchronized).
 programs on a GPU), how much computing power that brings compared with the
 processor, and where the approach stops.
 
-::: toc+
-- **What is this about?** — a new output language for Faust.
-- **A CPU and a GPU** — a few fast cooks or a thousand slow ones.
-- **Why one Faust program does not speed up** — the time order of recursion.
-- **The idea that works: many copies of the same program** — voices, partials, modes.
-- **What the compiler does** — the state laid out for the GPU.
-- **What was measured** — from a slower GPU to a GPU-only program.
-- **CPU and GPU in the same program** — the choir in a hall.
-- **Latency: the smallest audio buffer** — why the GPU needs larger blocks than the CPU, and how PortAudio is driven.
-- **Trying it** — installing the toolchain, the commands, and writing your own GPU program.
-- **The current limits** — what the approach does not do, or not yet.
-- **Takeaways** — the one-page map.
-:::
+**Contents**
+
+1. [What is this about?](#1-what-is-this-about) — a new output language for Faust.
+2. [A CPU and a GPU](#2-a-cpu-and-a-gpu) — a few fast cooks or a thousand slow ones.
+3. [Why one Faust program does not speed up](#3-why-one-faust-program-does-not-speed-up) — the time order of recursion.
+4. [The idea that works: many copies of the same program](#4-the-idea-that-works-many-copies-of-the-same-program) — voices, partials, modes.
+5. [What the compiler does](#5-what-the-compiler-does) — the state laid out for the GPU.
+6. [What was measured](#6-what-was-measured) — from a slower GPU to a GPU-only program.
+7. [CPU and GPU in the same program](#7-cpu-and-gpu-in-the-same-program) — the choir in a hall.
+8. [Latency: the smallest audio buffer](#8-latency-the-smallest-audio-buffer) — why the GPU needs larger blocks than the CPU, and how PortAudio is driven.
+9. [Trying it](#9-trying-it) — installing the toolchain, the commands, and writing your own GPU program.
+10. [The current limits](#10-the-current-limits) — what the approach does not do, or not yet.
+11. [Takeaways](#11-takeaways) — the one-page map.
 
 ## 1. What is this about?
 
@@ -69,12 +63,10 @@ the GPU for the right thing.
 
 ## 2. A CPU and a GPU
 
-::: definition [CPU and GPU]
-A **CPU** has a few cores (10 on the machine measured here, an Apple M5),
-each very fast and very flexible. A **GPU** has thousands of small arithmetic
-units, each slower, grouped so that they execute the same instruction at the
-same time on different data.
-:::
+> **Definition: CPU and GPU.** A **CPU** has a few cores (10 on the machine measured here, an Apple M5),
+> each very fast and very flexible. A **GPU** has thousands of small arithmetic
+> units, each slower, grouped so that they execute the same instruction at the
+> same time on different data.
 
 An image helps. A CPU is a kitchen with a few excellent cooks: each one can
 prepare any dish quickly, one after another. A GPU is a canteen with a
@@ -92,11 +84,9 @@ The measurements say exactly this. One Faust reverb on the GPU runs **30 to
 
 (times to compute a block of 256 samples, 5.3 ms of sound at 48 kHz.)
 
-::: important [The point to remember]
-The GPU is not a faster processor for one sound process. It is a very large
-number of slow ones. It only pays off when it has thousands of identical,
-independent tasks to do at once.
-:::
+> **The point to remember.** The GPU is not a faster processor for one sound process. It is a very large
+> number of slow ones. It only pays off when it has thousands of identical,
+> independent tasks to do at once.
 
 ## 3. Why one Faust program does not speed up
 
@@ -108,7 +98,9 @@ The reason is in the nature of audio. Most sound processes have **memory**:
 the output of a filter depends on its previous outputs, an echo on the
 samples of the last second.
 
-```bda "A recursion: each sample needs the previous one"
+*A recursion: each sample needs the previous one*
+
+```faust
 _ : + ~ *(0.5)
 ```
 
@@ -135,12 +127,10 @@ Here the canteen is in its element: each GPU unit runs **one copy** (an
 *instance*) of the Faust program, all copies advance together, sample after
 sample, and the time order is respected inside each copy.
 
-::: definition [Instance]
-One running copy of a Faust program, with its own memory (its filter states,
-its delay lines) and its own controls. The Faust program describes **one**
-instance; how many instances run is chosen by the host program at run time,
-not written in the Faust code.
-:::
+> **Definition: Instance.** One running copy of a Faust program, with its own memory (its filter states,
+> its delay lines) and its own controls. The Faust program describes **one**
+> instance; how many instances run is chosen by the host program at run time,
+> not written in the Faust code.
 
 This has a pleasant consequence: **no new DSP code**. A Faust program written
 for one voice runs N times as it is. The generated `compute` function of one
@@ -161,20 +151,12 @@ with the values of all the instances side by side (a "structure of arrays").
 When the thousand units read "their" variable, they read neighbouring values,
 in one go.
 
-```mermaid
-flowchart LR
-  subgraph AoS["One structure per instance"]
-    direction TB
-    A0["voice 0: state a, state b, state c"]
-    A1["voice 1: state a, state b, state c"]
-    A2["voice 2: state a, state b, state c"]
-  end
-  subgraph SoA["Structure of arrays (for the GPU)"]
-    direction TB
-    B0["state a: voice 0, voice 1, voice 2, ..."]
-    B1["state b: voice 0, voice 1, voice 2, ..."]
-    B2["state c: voice 0, voice 1, voice 2, ..."]
-  end
+```text
+One structure per instance            Structure of arrays (for the GPU)
+
+voice 0: state a, state b, state c    state a: voice 0, voice 1, voice 2, ...
+voice 1: state a, state b, state c    state b: voice 0, voice 1, voice 2, ...
+voice 2: state a, state b, state c    state c: voice 0, voice 1, voice 2, ...
 ```
 
 For programs with a lot of memory, this changes everything. At 4,096 voices:
@@ -290,19 +272,17 @@ The choir in a hall shows it. Its reverb (`re.zita_rev1_stereo`, in
 mix: exactly what the GPU does badly (§2). So the work is split, block after
 block:
 
-```mermaid
-flowchart LR
-  subgraph CPU1["CPU"]
-    S["score: chord changes, controls of the partials"]
-  end
-  subgraph GPU["GPU"]
-    P["48,048 partials (Faust, batch form)"] --> M["mix: each singer, then stereo"]
-  end
-  subgraph CPU2["CPU"]
-    R["reverb (Faust, ordinary form)"] --> A["sound card"]
-  end
-  S --> P
-  M -- "2 x 256 samples" --> R
+```text
+   CPU                         GPU                               CPU
++-----------------+    +---------------------------+    +---------------------+
+| score: chord    |    | 48,048 partials           |    | reverb              |
+| changes, the    |--->| (Faust, batch form)       |    | (Faust, ordinary    |
+| controls of the |    |            |              |    |  form)              |
+| partials        |    |            v              |    |         |           |
++-----------------+    | mix: each singer,         |--->|         v           |
+                       | then stereo               |    | sound card          |
+                       +---------------------------+    +---------------------+
+                                        2 x 256 samples
 ```
 
 - The **CPU** runs the score: at a chord change, it computes the new
@@ -404,19 +384,24 @@ The harness talks to the sound card through PortAudio's **blocking** API
    - If the card ran dry since the previous write, `Pa_WriteStream` returns
      `paOutputUnderflowed`: the harness counts a dropout.
 
-```mermaid
-sequenceDiagram
-  participant CPU as CPU (harness thread)
-  participant GPU
-  participant PA as PortAudio buffer
-  participant Card as sound card
-  loop every block of N samples
-    CPU->>GPU: controls (at a chord change), launch partials and mix
-    GPU-->>CPU: 2 x N mixed samples (the CPU waits for them)
-    CPU->>CPU: reverb (version in the hall)
-    CPU->>PA: Pa_WriteStream (waits while the buffer is full)
-    PA->>Card: plays continuously
-  end
+```text
+every block of N samples:
+
+  CPU (harness thread)        GPU                PortAudio buffer    sound card
+      |                        |                       |                 |
+      |-- controls (at a ----->|                       |                 |
+      |   chord change),       |                       |                 |
+      |   launch partials      |                       |                 |
+      |   and mix              |                       |                 |
+      |<-- 2 x N mixed --------|                       |                 |
+      |    samples (the CPU    |                       |                 |
+      |    waits for them)     |                       |                 |
+      |                        |                       |                 |
+      |-- reverb (version in the hall)                 |                 |
+      |                                                |                 |
+      |-- Pa_WriteStream (waits while the buffer ----->|                 |
+      |   is full)                                     |-- plays ------->|
+      |                                                |   continuously  |
 ```
 
 The latency granted (43 ms at 256 samples, 30 ms at 128) is that buffer: it
