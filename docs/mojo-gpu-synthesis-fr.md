@@ -45,7 +45,7 @@ apporte par rapport au processeur, et où l'approche s'arrête.
 - **Ce qui a été mesuré** — d'un GPU plus lent à un programme que seul le GPU peut jouer.
 - **CPU et GPU dans le même programme** — le chœur dans une salle.
 - **Latence : le plus petit buffer audio** — pourquoi le GPU demande des blocs plus grands que le CPU, et comment PortAudio est piloté.
-- **Essayer** — les commandes, avec et sans la salle.
+- **Essayer** — installer la chaîne d'outils, les commandes, et écrire son propre programme GPU.
 - **Les limites actuelles** — ce que l'approche ne fait pas, ou pas encore.
 - **À retenir** — la carte en une page.
 :::
@@ -482,7 +482,45 @@ retour direct d'un instrument joué.
 La voie GPU est une piste de test expérimentale, pas encore un produit. Elle
 demande une chaîne Mojo (Mojo 1.3 et le paquet `modular`) et, pour écouter,
 PortAudio. Les commandes sont dans
-[`tests/impulse-tests/README.md`](../tests/impulse-tests/README.md) :
+[`tests/impulse-tests/README.md`](../tests/impulse-tests/README.md).
+
+### 9.1 Installer la chaîne d'outils
+
+Les mesures ont utilisé une version nocturne de Mojo 1.3
+(`1.3.0.dev2026110705`, avec `modular` `26.8.0.dev2026110705`) et PortAudio
+de conda-forge, installés avec [pixi](https://pixi.sh) dans un environnement
+dédié. Un fichier `pixi.toml` dans un répertoire vide :
+
+```toml
+[workspace]
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+name = "mojo-gpu"
+platforms = ["osx-arm64"]
+
+[dependencies]
+mojo = "*"
+modular = "*"
+portaudio = ">=19.7.0,<20"
+```
+
+Puis `pixi install` dans ce répertoire. Les deux valeurs dont les commandes
+ci-dessous ont besoin sont la commande Mojo et le répertoire de la
+bibliothèque PortAudio :
+
+```bash
+MOJO="pixi run --manifest-path <env>/pixi.toml -q mojo"
+```
+
+```bash
+PORTAUDIO_LIB=<env>/.pixi/envs/default/lib
+```
+
+Les versions nocturnes de Mojo changent souvent ; fixer `modular` à la
+version ci-dessus reproduit la chaîne mesurée. La première construction d'une
+piste prend environ une minute (la compilation Mojo du harnais et des
+programmes générés).
+
+### 9.2 Jouer et rendre en fichier
 
 Le chœur, sec :
 
@@ -541,6 +579,48 @@ process = gaing * swell * ((1 - noisiness) * partial + noisiness * nscale * band
 Rien n'y dit « 48 048 » : c'est le programme hôte qui crée autant de copies
 et règle les contrôles de chacune.
 
+### 9.3 Écrire son propre programme GPU
+
+Pour un développeur qui veut faire tourner un autre programme Faust sur le
+GPU, voici les pièces.
+
+- **La forme batch du programme.** `faust-rs -lang mojo` écrit la forme
+  ordinaire, une structure par instance. La forme batch, une structure pour N
+  instances, n'a pas encore d'option en ligne de commande ; l'exemple du
+  compilateur l'écrit :
+
+  ```bash
+  cargo run --release -p compiler --example mojo_batch -- voice.dsp --cn voicedsp -o voice.mojo
+  ```
+
+- **Ce qu'offre la structure batch.** Elle est construite sur un seul buffer
+  d'état, alloué par l'hôte sur le GPU : `state_bytes(voices)` donne sa
+  taille, et `voicedsp(voices, state)` construit la structure dessus.
+  `class_init(rate)` s'exécute une seule fois pour toutes les instances ;
+  toutes les autres méthodes prennent l'instance en premier :
+  `instance_init(voice, rate)`, `set_control(voice, index, value)`,
+  `get_control(voice, index)`, `compute(voice, count, inputs, outputs)`.
+  L'indice d'un contrôle est sa position dans `build_user_interface`, que
+  l'hôte lit une fois pour associer les noms aux indices.
+- **Ce qu'écrit l'hôte.** Les *noyaux* GPU, chacun exécutant une instance
+  par thread du GPU : l'un appelle `instance_init`, un autre `set_control`
+  avec une valeur par instance, un autre `compute`. Les tables de pointeurs
+  d'entrée et de sortie de chaque instance (un mode y lit la frappe de sa
+  cloche). Le mix, de préférence en deux étages : un thread GPU par
+  échantillon sommant tous les modes rendait le carillon plus lent que le
+  CPU ; un par cloche, puis un par échantillon sur les cloches, l'a rendu
+  plus rapide. Et la boucle du §8.2 autour de PortAudio.
+- **Trois règles apprises sur Metal**, chacune un échec silencieux quand on
+  l'enfreint : tout buffer qu'un noyau atteint doit être l'un de ses
+  arguments ; les tables de pointeurs doivent vivre dans la mémoire du GPU ;
+  les arguments des noyaux doivent être de taille fixe.
+- **Des modèles pour commencer**, dans `tests/impulse-tests/archs/` :
+  `choirmojogpubatch.mojo` (un programme, des milliers d'instances avec leurs
+  propres contrôles, une réverbération sur CPU, PortAudio, rendu en fichier),
+  `bellsmojogpubatch.mojo` (deux programmes enchaînés sur le GPU, la frappe
+  nourrissant ses modes) et `polymojogpubatch.mojo` (une polyphonie pilotée
+  par des notes écrites d'avance).
+
 ## 10. Les limites actuelles
 
 L'approche est réelle, mesurée et validée, mais étroite. Ses limites comptent
@@ -572,6 +652,19 @@ cible (d'environ 0,4 cent), en un point légèrement différent sur GPU et sur
 CPU, et les phases dérivent ensuite. La voix ne fait plus glisser que son
 gain.
 
+**Tous les programmes Faust ne peuvent pas aller sur le GPU.** Sur les 133
+programmes de la suite de tests de réponse impulsionnelle, 131 y tournent.
+Les deux autres demandent ce que le GPU Apple ne peut pas donner : `sound`
+lit un soundfile, que le backend Mojo refuse (comme celui du C++), et `math`
+calcule une puissance entière en 64 bits, que le GPU n'a pas. `-double` y est
+impossible pour la même raison, et le backend Mojo refuse les modes
+`-ec`/`-os`. Sur les 131, environ 120 donnent le résultat du CPU à 1e-5 près.
+Huit s'en écartent par leur rétroaction, de 0,08 % (`thru_zero_flanger`) à
+45 % (`phaser_flanger`) de leur crête sur 15 000 échantillons : l'écart
+commence au dernier chiffre (les deux compilateurs produisent un code flottant
+différent, et le GPU met à zéro les très petits nombres), et la rétroaction
+l'amplifie.
+
 **Tout le monde doit faire la même chose.** Les unités d'un groupe exécutent
 la même instruction. Si des voix prennent des chemins différents (une cadence
 différente par voix, des itérations qui varient), elles s'attendent : le
@@ -585,7 +678,7 @@ les copies, les relier (la frappe d'une cloche nourrit ses 50 modes), les
 sommer en un mix stéréo et piloter la carte son s'écrivent aujourd'hui dans
 des harnais de test Mojo. La sortie « batch » (une structure pour N voix)
 n'a pas encore d'option en ligne de commande ; on y accède par l'API Rust du
-compilateur.
+compilateur (§9.3).
 
 **Mojo n'est pas plus rapide que le C++ sur le CPU.** Sur le partiel du
 chœur, le code Mojo généré tournait cinq fois plus lentement sur le CPU que
@@ -605,10 +698,17 @@ mesurée, et elle pourrait réduire l'écart, peut-être le combler pour les
 petits programmes. Le carillon a montré combien une base CPU plus juste peut
 changer une conclusion.
 
+**Un GPU partagé avec d'autres travaux.** Le GPU n'est pas réservé au son.
+Pendant ces mesures, deux chœurs lancés en même temps l'ont partagé : chacun
+mettait environ deux fois plus de temps par bloc (5,5 à 6,1 ms au lieu de
+3,6) et les deux craquaient. Tout ce qui utilise le GPU (un autre programme
+audio, une vidéo, l'affichage d'une application) prend sa part du même
+budget, et un programme audio n'a aucun moyen de se réserver le GPU.
+
 **Une seule machine.** Tout a été mesuré sur un Apple M5 avec son GPU
-intégré. Non mesuré : la consommation et la chaleur, un GPU partagé avec
-l'affichage (dans une station audionumérique), les GPU séparés où les données
-traversent un bus.
+intégré. Non mesuré : la consommation et la chaleur, un GPU chargé par un
+affichage lourd (dans une station audionumérique, sous une interface 3D), les
+GPU séparés où les données traversent un bus.
 
 ## 11. À retenir
 
