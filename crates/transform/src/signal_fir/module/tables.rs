@@ -312,11 +312,15 @@ impl<'a> SignalToFirLower<'a> {
         Ok(name)
     }
 
-    /// Ensures one read-only `rdtable`-style declaration is emitted exactly once.
+    /// Ensures one read-only `rdtable`-style declaration is emitted exactly
+    /// once per content.
     ///
-    /// Unlike `ensure_waveform_table` (literal constant values), this expands
-    /// the generator at compile-time via `expand_generator_values`.  The
-    /// resulting array is declared `Static` — no per-instance write is needed.
+    /// Under `--table-init runtime` the generator is compiled into a filling
+    /// sub-module; under `const` it is expanded at compile time via
+    /// `expand_generator_values`. Either way the array is declared `Static` —
+    /// no per-instance write is needed. A node whose content an earlier node
+    /// already declared reads that declaration
+    /// ([`crate::signal_fir::table_content`]).
     pub(super) fn ensure_readonly_table(
         &mut self,
         sig: SigId,
@@ -325,6 +329,22 @@ impl<'a> SignalToFirLower<'a> {
     ) -> Result<(String, usize), SignalFirError> {
         let size = self.table_size_from_sig(size_sig)?;
         let elem_ty = self.signal_fir_type(sig)?;
+        // One table per content: a table node that differs from an earlier
+        // one only by the clock annotations of its generator (the same
+        // `rdtable` read from several clock domains) reads that table, whose
+        // sub-module, literal and fill are emitted once (`DIFF-BEH-029`).
+        let owner = self
+            .ui
+            .table_contents
+            .owner(self.arena, sig, size, &elem_ty, generator_sig);
+        if owner != sig
+            && let Some(name) = self.ui.waveform_tables.get(&owner).cloned()
+        {
+            self.ui.waveform_tables.insert(sig, name.clone());
+            self.ui.waveform_table_len.insert(sig, size);
+            self.ui.table_access_by_sig.insert(sig, AccessType::Static);
+            return Ok((name, size));
+        }
         let name = match self.table_init_mode {
             TableInitMode::Runtime => {
                 // The table lives at file scope, uninitialized, and is filled

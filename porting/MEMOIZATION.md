@@ -79,7 +79,7 @@ updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 and §2.4b updated the same day when pattern matchers became persistent, and
 §2.4b again for the size of its entries and the pinning of its stores; §2.24
 was added and §2.11 and §2.20 updated on 2026-10-16 too; §2.27 was added on
-2026-10-24.
+2026-10-24; §2.30 on 2026-11-09.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -2165,6 +2165,72 @@ Validation:
 - two mutations the checker rejects: a dropped term, and an ignored common
   factor;
 - the base-vs-new codegen differential over `tests/` and `examples/`.
+
+### 2.30 `transform`: read-only table declarations keyed by content modulo clock annotations
+
+Status: implemented 2026-11-09 (`DIFF-BEH-029`).
+
+Location: `crates/transform/src/signal_fir/table_content.rs`,
+`TableContentKeys`, held by the scalar lowerer
+(`UiLoweringState::table_contents`, consulted by `ensure_readonly_table` in
+`module/tables.rs`) and by the checked vector lowerer (`table_contents` in
+`vector/lower/signal.rs`, consulted by its `ensure_readonly_table`).
+
+Cache:
+- `owners: HashMap<(size, element kind, declocked generator), SigId>`: the
+  first read-only table node declared with that content; the lowerers already
+  memoize declarations per table node (`ui.waveform_tables`,
+  `readonly_tables`), and a later node of the same content is registered under
+  the owner's declaration;
+- `copies: HashMap<SigId, SigId>` with a private `TreeArena`: each generator
+  node copied once, without its `Clocked(env, x)` wrappers. The private arena's
+  hash-consing decides equality exactly, with no fingerprint and no collision.
+
+Key (rule 6): a table's content depends on its size, its element type and its
+generator without the clock annotations, which both fill paths drop before
+computing it (the sub-module is prepared with `drop_clock_annotations`, the
+`const` interpreter likewise). The table node itself also names the domains
+of those annotations, which the content does not depend on: that key was
+finer than its value and duplicated the table once per domain. Writable tables
+are not keyed: their write port is per-instance state.
+
+Lifetime: one compiled module (one lowerer); a nested generator sub-module has
+its own. Nothing to invalidate: the prepared arena is immutable during
+lowering.
+
+Cost of the key (rule 7): one copy of each read-only generator, shared nodes
+copied once across tables. The domain copies of a waveform share every element
+but the annotated first one, so the coopiano voice copies the elements of its
+admittance tables once and re-interns one 12001-child node per domain (one
+hash of its child list, against one compiled sub-module before); programs
+without tables pay nothing.
+
+Measured (rule 5): the faust-coopiano voice, `cp.voice(60, v, gate)`, has 4
+distinct tables behind 73 read-only table nodes (two 12001-point admittance
+tables from 24 domains each, a 264-point table from 24 domains, a 2200-point
+table once): 73 sub-modules became 4, the C++ 18.5 MB → 4.35 MB, the Mojo
+batch output 16.9 MB → 6.06 MB, compiler peak memory 2.8 GB → 2.0 GB,
+compile time 9.9 s → 7.9 s. The compile-budget baskets are unchanged within
+noise (±5 %, hand-timed: the gate cannot run on the development Mac).
+
+Rejected first: dropping the annotations inside the generator payloads in
+`signal_prepare` (a step 2.1c), so hash-consing would merge the table nodes.
+It merged them, but it also detached each generator from the stateful nodes it
+shared with the body it is written in: `os.osc` in one `ondemand`
+(`ondemand_01_basic`, a single table) gained a dead delay line `iVec11_d0` in
+the domain and renamed its state. Keying the declaration leaves the forest, and
+every program without a duplicated table, unchanged.
+
+Validation:
+- `crates/compiler/tests/ondemand_table_sharing.rs`: one sub-module on six text
+  backends and one wasm data segment, `-vec` and const modes, two contents and
+  two writable tables kept apart, and the per-domain reads checked sample by
+  sample (interp, scalar and `-vec`, `opt_level` 0 and max), which passes with
+  and without the keying;
+- the unit tests of `table_content.rs` (domain-only differences share an
+  owner; content, size and element type keep tables apart);
+- the base-vs-new codegen differential over `tests/` and `examples/`
+  (scalar, `-vec`, `-double`).
 
 ## 3. Planned Additions
 

@@ -92,6 +92,8 @@ struct PureVectorLowerer<'a> {
     static_declarations: Vec<FirId>,
     waveform_tables: BTreeMap<u64, String>,
     readonly_tables: BTreeMap<u64, (String, usize, FirType)>,
+    /// Read-only tables by content, modulo clock annotations (`DIFF-BEH-029`).
+    table_contents: crate::signal_fir::table_content::TableContentKeys,
     mutable_tables: BTreeMap<u64, (String, usize, FirType)>,
     table_declarations: Vec<FirId>,
     table_init_statements: Vec<FirId>,
@@ -276,6 +278,7 @@ pub(super) fn lower_vector_program_impl<'a>(
         static_declarations: Vec::new(),
         waveform_tables: BTreeMap::new(),
         readonly_tables: BTreeMap::new(),
+        table_contents: crate::signal_fir::table_content::TableContentKeys::default(),
         mutable_tables: BTreeMap::new(),
         table_declarations: Vec::new(),
         table_init_statements: Vec::new(),
@@ -1620,6 +1623,29 @@ impl PureVectorLowerer<'_> {
     ) -> Result<(String, usize, FirType), PureVectorLowerError> {
         if let Some(table) = self.readonly_tables.get(&signal_id) {
             return Ok(table.clone());
+        }
+        // One table per content, as in the scalar lowerer: a table node that
+        // differs from an earlier one only by the clock annotations of its
+        // generator reads that table (`DIFF-BEH-029`).
+        // A table whose shape is rejected keeps the error of its own path.
+        if let Ok((length, elem_type)) = self.table_shape(signal_id, size) {
+            let table_sig = self.sig(signal_id)?;
+            let owner = self.table_contents.owner(
+                self.prepared.arena(),
+                table_sig,
+                length,
+                &elem_type,
+                generator,
+            );
+            if owner != table_sig
+                && let Some(table) = self
+                    .readonly_tables
+                    .get(&u64::from(owner.as_u32()))
+                    .cloned()
+            {
+                self.readonly_tables.insert(signal_id, table.clone());
+                return Ok(table);
+            }
         }
         let prefix = if self.table_element_type(signal_id)? == FirType::Int32 {
             "iVecTbl"

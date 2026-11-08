@@ -190,5 +190,9 @@ For each day file, entries are ordered from most recent commit to oldest using G
 - [`porting/journal/2026-10-31.md`](porting/journal/2026-10-31.md)
 - [`porting/journal/2026-11-01.md`](porting/journal/2026-11-01.md)
 - [`porting/journal/2026-11-02.md`](porting/journal/2026-11-02.md)
+- [`porting/journal/2026-11-06.md`](porting/journal/2026-11-06.md)
+- [`porting/journal/2026-11-07.md`](porting/journal/2026-11-07.md)
+- [`porting/journal/2026-11-08.md`](porting/journal/2026-11-08.md)
+- [`porting/journal/2026-11-09.md`](porting/journal/2026-11-09.md)
 
 See [`porting/journal/README.md`](porting/journal/README.md).

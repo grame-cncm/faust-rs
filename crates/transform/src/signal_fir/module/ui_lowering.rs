@@ -46,6 +46,9 @@ pub(super) struct UiLoweringState {
     pub(super) waveform_table_len: HashMap<SigId, usize>,
     /// Maps each waveform/table signal to the FIR storage class used for access.
     pub(super) table_access_by_sig: HashMap<SigId, AccessType>,
+    /// Read-only generated tables by content, modulo clock annotations: the
+    /// first table node of a content owns its declaration (`DIFF-BEH-029`).
+    pub(super) table_contents: crate::signal_fir::table_content::TableContentKeys,
     /// `buildUserInterface` body: open/close box and add-control calls.
     pub(super) ui_statements: Vec<FirId>,
 }

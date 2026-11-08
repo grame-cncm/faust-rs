@@ -1250,6 +1250,52 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   backends; two C++ classes with a C++ Faust copy of the helpers, and two C
   DSPs, built at `-O0` and run in one translation unit).
 
+### DIFF-BEH-029 — one generated table read from several clock domains is generated once
+
+- Status: `adapted` (generated code; outputs unchanged), implemented
+  2026-11-09.
+- Propagation annotates the first element of a `waveform` written in a clock
+  domain with that domain (C++ `boxWaveform`), and the stateful primitives of
+  any table generator written there. The same `rdtable` read from two
+  `ondemand` bodies is therefore two table nodes. The pinned C++ (2.84.3) emits
+  one generator sub-container, one waveform literal and one static table per
+  domain: `mydspSIG0` and `mydspSIG1` for `rd(i) = waveform{…}, int(i) :
+  rdtable;` read in two `ondemand` bodies.
+- faust-rs declares a read-only table once per content: a table node whose
+  size, element type and generator equal an earlier node's once the
+  `Clocked(env, x)` annotations of the generator are dropped reads the earlier
+  node's table (`crates/transform/src/signal_fir/table_content.rs`, used by
+  `ensure_readonly_table` in the scalar lowerer and in the checked vector
+  lowerer). Both fill paths drop those annotations anyway (the sub-module is
+  prepared with `drop_clock_annotations`, the `const` interpreter likewise),
+  so the content is the same. The table is filled once in `classInit` and read
+  by every domain, each in its own fire time. The signal forest is not
+  rewritten, so nothing else changes, and a writable table (`rwtable`), being
+  per-instance state with its own write port, is never shared. The rule holds
+  on every backend and under `--table-init const`. The checked vector lowerer
+  applies it too, but today no program reading one table from two domains is
+  admitted by the vector pipeline (they fall back to scalar on "loop belongs to
+  more than one clock island" or `FIR-SC01`, before and after this change).
+- Compatibility impact:
+  - The samples are those of C++: the shared table has the same content.
+  - Fewer sub-containers and tables than C++, and the later ones renumbered: a
+    program whose domains read one table twice names it `mydspSIG0` where C++
+    also emits `mydspSIG1`. Generated names are not a contract
+    (`DIFF-BACK-004`).
+  - The faust-coopiano voice (`cp.voice(60, v, gate)`) went from 73 table
+    sub-modules to its 4 distinct tables: 18.5 MB of C++ to 4.35 MB, 16.9 MB of
+    Mojo batch code to 6.06 MB, compiler peak memory 2.8 GB to 2.0 GB, compile
+    time 9.9 s to 7.9 s.
+  - Programs without such a duplicated table are byte-identical (base-vs-new
+    codegen differential over `tests/` and `examples/`, scalar, `-vec`,
+    `-double`).
+- Evidence: `crates/compiler/tests/ondemand_table_sharing.rs` (one sub-module
+  on the C++, C, Rust, Julia, Mojo and Cmajor backends, one wasm data segment,
+  `-vec` and const modes, different contents and writable tables kept apart,
+  per-domain reads checked sample by sample in the interpreter, scalar and
+  `-vec`, `opt_level` 0 and max), the unit tests of `table_content.rs`, and the
+  [journal entry](journal/2026-11-09.md).
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-006 — headers and libraries of foreign functions in C and C++

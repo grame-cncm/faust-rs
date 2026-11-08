@@ -92,6 +92,7 @@ mod placement;
 mod planner;
 mod recursion;
 mod siggen;
+mod table_content;
 mod ui_macros;
 pub mod vector;
 pub use diagnostics::{pv_slice, shadow};
