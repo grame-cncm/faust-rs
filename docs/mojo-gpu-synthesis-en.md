@@ -21,6 +21,8 @@ content; keep both versions synchronized).
   and
   [`mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`](../porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md),
   the GPU work;
+- [`batch-state-register-promotion-plan-2026-11-08-en.md`](../porting/batch-state-register-promotion-plan-2026-11-08-en.md),
+  the state of the copies kept in local variables (§5);
 - DIFF-BACK-010 in
   [`faust-rs-vs-faust-cpp-differences-en.md`](../porting/faust-rs-vs-faust-cpp-differences-en.md),
   what differs from C++ Faust.
@@ -36,7 +38,7 @@ processor, and where the approach stops.
 3. [Why one Faust program does not speed up](#3-why-one-faust-program-does-not-speed-up) — the time order of recursion.
 4. [The idea that works: many copies of the same program](#4-the-idea-that-works-many-copies-of-the-same-program) — voices, partials, modes.
 5. [What the compiler does](#5-what-the-compiler-does) — the state laid out for the GPU.
-6. [What was measured](#6-what-was-measured) — from a slower GPU to a GPU-only program.
+6. [What was measured](#6-what-was-measured) — from a slower GPU to a GPU-only program, then learning: finding the modes of a sound.
 7. [CPU and GPU in the same program](#7-cpu-and-gpu-in-the-same-program) — the choir in a hall.
 8. [Latency: the smallest audio buffer](#8-latency-the-smallest-audio-buffer) — why the GPU needs larger blocks than the CPU, and how PortAudio is driven.
 9. [Trying it](#9-trying-it) — installing the toolchain, the commands, and writing your own GPU program.
@@ -121,7 +123,7 @@ copies do not depend on each other.
 - **Massive polyphony**: a cloud, a swarm, a crowd of voices.
 - **Granular synthesis**: thousands of grains at once.
 - **Offline work**: rendering thousands of variants of a sound, or training a
-  differentiable model on many examples at once.
+  differentiable model on many examples at once (§6.4 measures one case).
 
 Here the canteen is in its element: each GPU unit runs **one copy** (an
 *instance*) of the Faust program, all copies advance together, sample after
@@ -172,11 +174,36 @@ The layout changes no arithmetic: on the CPU, every voice gives bit for bit
 the same result as an ordinary copy of the program, and a test in the
 continuous integration checks it.
 
+**Keeping the state at hand.** With the memory well laid out, the generated
+code still went to fetch it at every sample: read a filter's state, compute,
+write it back, 48,000 times per second for each copy. That is a cook walking
+back to the pantry for the salt at every move. A CPU keeps such values in
+its registers without being asked. Mojo, on the GPU, does not, because it
+cannot prove that the state memory and the output buffers do not overlap.
+
+Since 8 November 2026 the compiler does it itself. `compute` reads the state
+at the start of the block, keeps it in local variables for the whole loop,
+and writes it back only at the end. Delay lines read at a varying position
+stay in memory, because a circular buffer does not fit in registers. Again
+no arithmetic changes: every voice stays bit for bit identical to an
+ordinary copy, and an independent checker verifies each rewrite. The gain is
+a factor of 2 to 5:
+
+| program | state re-read at every sample | state kept local |
+|---|---|---|
+| carillon, 256 bells, one block | 0.84 ms | 0.46 ms |
+| modal learning (§6.4), 1,024 modes, one epoch | 75 ms | 14.8 ms |
+| modal learning, 16,384 modes, one epoch | 659 ms | 292 ms |
+
 ## 6. What was measured
 
 All the figures come from one machine, an Apple M5 laptop (4 fast cores,
 6 efficient cores, its integrated GPU), at 48 kHz, in blocks of 256 samples.
 The budget of a block is **5.33 ms**: past it, the sound breaks up.
+
+Sections 6.1 to 6.3 were measured before the compiler kept the state local
+(§5). Their crossovers are therefore pessimistic: the GPU now wins earlier,
+by how much has not been re-measured yet. Section 6.4 was measured after.
 
 ### 6.1 The crossover
 
@@ -214,6 +241,11 @@ instance per bell, its 50 modes in one loop). Against that program:
 The GPU only wins from about 220 bells, by ×1.9 at 1,024. A melody on 37
 bells costs 9 % of one CPU core. **The comparison is only fair against the
 best CPU version**, and getting that version right divided the gain by five.
+
+This table predates the state kept local (§5). Re-measured once since, 256
+bells take 0.46 ms on the GPU, against 1.14 ms for the CPU threads measured
+in the same process: ×2.5 instead of ×1.15. The carillon therefore wins well
+before 220 bells, but the new crossover has not been measured.
 
 ### 6.3 A choir only the GPU can play
 
@@ -258,6 +290,104 @@ adds a reverb that runs on the CPU (next section) and a richer score:
 Its harmonics stop at 16 kHz instead of 20 kHz, so that the deeper basses do
 not raise the count: 448 singers make 46,592 partials, computed in about
 3.5 ms per block.
+
+### 6.4 Finding the modes of a sound: learning on the GPU
+
+The previous sections play modes whose settings are already known. The
+inverse problem is more common: one has a recording (a bell, a gong, a
+struck plate) and looks for the modes that reproduce it, that is the
+frequency, decay and gain of each. A real object has hundreds or thousands
+of them. The work is done offline, on long blocks, with no latency
+constraint: the ground where the GPU is most at ease.
+
+**Each mode is a copy that knows how to correct its error.** The voice
+(`tests/corpus/gpu_modal_fad_voice.dsp`) is a resonator struck by an
+impulse, with three controls: `freq`, `t60` and `gain`. Thanks to `fad`, the
+automatic differentiation of `faust-rs`, it outputs not only its sound but
+also how that sound would change if each of its three settings were moved:
+
+```faust
+process = fad(gain * resonator(freq, t60), (freq, t60, gain));
+```
+
+The host adds the thousands of modes and compares the result with the
+target. The gap, sample by sample, is called the *error*. Each mode
+multiplies that error by its three derivatives and sums the product over the
+signal: it then knows which way to move its settings. Such a pass over the
+whole signal is called an *epoch*, and epochs repeat until the error stops
+falling.
+
+```text
+target ─────────────────────┐
+                            ▼
+mode 1 ─┐                ┌───────┐
+mode 2 ─┼── sum ────────▶│  gap  │── error e ──┐
+  ...   │                └───────┘             │
+mode N ─┘                                      ▼
+   ▲          each mode: sum of e × its 3 derivatives
+   └────────── new settings (one GPU thread per mode)
+```
+
+Two choices make this fast on the GPU:
+
+- **One pass per epoch.** The error at one instant depends only on the mix
+  at that instant. So the work can move block by block: every mode computes
+  a block, the mix gives that block's error, and each mode confronts its
+  derivatives with it before moving to the next block. No derivative is kept
+  beyond one block.
+- **Each mode solves its own small problem.** The usual method (Adam) takes
+  small steps in the right direction. Here each mode also works out how its
+  three derivatives resemble one another, and solves a system of three
+  equations to jump straight to its best setting (Gauss-Newton). It
+  converges in about fifteen epochs where Adam needs about 150. When two
+  neighbouring modes correct the same error at once, both can overshoot; a
+  safeguard then undoes the step and shortens it.
+
+**The cost of one epoch**, for one second of sound. On the CPU, one copy per
+mode is limited by the chain of its recursion. Four modes in one Faust
+program (`tests/corpus/gpu_modal_fad_group.dsp`), compiled by LLVM, go twice
+as fast: that is the fair baseline.
+
+| modes | GPU | CPU, 10 threads | GPU gain |
+|---|---|---|---|
+| 1,024 | 14.8 ms | 42 to 49 ms | ×2.8 |
+| 4,096 | 68 ms | 162 to 172 ms | ×2.4 |
+| 16,384 | 292 ms | 622 to 680 ms | ×2.1 |
+
+Before the compiler kept the state local (§5), the same learning took 75 ms
+at 1,024 modes on the GPU and lost to the CPU.
+
+**What the learning recovers.** To check the result mode by mode, the target
+is first synthetic: a hidden bank of modes, rendered by the same voice. The
+start is σ bandwidths away from the truth. A mode's bandwidth is the width
+of its spectral line, narrower the longer the mode rings. A mode counts as
+recovered when its frequency is right to within 1 % of its bandwidth, and
+its decay and gain to within 1 %.
+
+| start | modes recovered out of 1,024, after 300 epochs (Gauss-Newton) |
+|---|---|
+| σ = 0.25 | 1,021 |
+| σ = 0.5 | 1,001 |
+| σ = 1 | 914 |
+| σ = 2 | 268 |
+
+At σ = 0.5 the error is close to its minimum by the fifteenth epoch, 0.2 s
+of GPU time.
+
+Two limits, more important than the speed:
+
+- **The learning refines; it does not search.** Beyond about one bandwidth
+  away, a mode no longer "sees" the line it should reach. A real tool would
+  start with an analysis of the sound (finding the peaks of the spectrum)
+  that places each mode close enough, then let the learning finish the job.
+- **Too many modes for the signal, and the answer is no longer unique.** At
+  4,096 modes between 100 Hz and 16 kHz, the modes are closer to each other
+  than their bandwidths. Over one second of sound, several sets of modes
+  then explain the same signal: the error falls, but the settings do not
+  reach those of the hidden bank. A longer signal, or a constraint on the
+  number of modes, would be needed.
+
+A real recording has not been tried yet.
 
 ## 7. CPU and GPU in the same program
 
@@ -518,6 +648,17 @@ make -C tests/impulse-tests mojo-gpu-bells MOJO=<mojo command> PORTAUDIO_LIB=<di
 
 Each lane checks the GPU against the CPU, times both, then plays.
 
+The learning of the modes (§6.4), without PortAudio:
+
+```bash
+make -C tests/impulse-tests mojo-gpu-modal-fad MOJO=<mojo command> MODAL=4096
+```
+
+It checks the derivatives and the GPU code, times one epoch on the GPU (with
+the state kept local, then without) and on the CPU, then runs a learning of
+`MODAL_EPOCHS` epochs from a start `MODAL_SIGMA` bandwidths away, with
+`MODAL_UPDATE` (`gn` or `adam`).
+
 The Faust side is ordinary Faust. The partial of the choir starts like this:
 
 ```faust
@@ -545,6 +686,9 @@ pieces are these.
   cargo run --release -p compiler --example mojo_batch -- voice.dsp --cn voicedsp -o voice.mojo
   ```
 
+  Its state is kept local during the loop (§5); `--no-registers` writes the
+  earlier form, for comparison.
+
 - **What the batch structure offers.** It is built over one buffer of state,
   allocated by the host on the GPU: `state_bytes(voices)` gives its size, and
   `voicedsp(voices, state)` builds the structure over it. `class_init(rate)`
@@ -567,8 +711,9 @@ pieces are these.
   `choirmojogpubatch.mojo` (one program, thousands of instances with their
   own controls, a CPU reverb, PortAudio, offline render),
   `bellsmojogpubatch.mojo` (two programs chained on the GPU, the strike
-  feeding its modes) and `polymojogpubatch.mojo` (polyphony driven by
-  scripted notes).
+  feeding its modes), `polymojogpubatch.mojo` (polyphony driven by
+  scripted notes) and `modalfadmojogpubatch.mojo` (thousands of instances
+  with their derivatives, the sums and every instance's update on the GPU).
 
 ## 10. The current limits
 
@@ -669,6 +814,9 @@ DAW, under a 3D interface), discrete GPUs where data crosses a bus.
 - In that regime the GPU brings from ×2 to ×5 over the CPU threads for
   programs of real weight, and it plays at least one program, a choir of
   48,000 rich partials, that the whole CPU cannot.
+- For offline learning, such as finding thousands of modes with `fad`, the
+  GPU brings ×2 to ×3 over the ten CPU cores. It refines a good starting
+  point; it does not replace the analysis that provides it.
 - CPU and GPU code mix in the same Mojo program: the thousands of copies on
   the GPU, the single programs (a reverb on the mix, a sequencer) on the CPU.
 - For everything else (one program, ordinary polyphony, small blocks, `f64`)
@@ -680,5 +828,5 @@ DAW, under a 3D interface), discrete GPUs where data crosses a bus.
   the other direction of parallelism, inside the processor (SIMD), including
   instances advancing in lockstep.
 - [`fad-rad-synthesis-en.md`](fad-rad-synthesis-en.md): automatic
-  differentiation, which meets the GPU in offline training.
+  differentiation, which meets the GPU in offline training (§6.4).
 - [`user-cli-guide-en.md`](user-cli-guide-en.md): the `-lang mojo` option.
