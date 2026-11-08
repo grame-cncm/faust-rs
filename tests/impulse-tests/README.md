@@ -91,6 +91,15 @@ See the design write-up in
      staggered; the default), `melody` (Beethoven's "Ode to Joy") or `chime`
      (the Westminster Quarters), the two tunes with `BELLS=37`, one bell per
      semitone (`archs/bellsmojogpubatch.mojo`; PortAudio).
+   - `make mojo-gpu-choir` — an additive choir: `CHOIR` (448) singers in four
+     parts, every harmonic up to 20 kHz one GPU instance of
+     `../corpus/gpu_choir_partial.dsp` (a sine with vibrato, a breath swell
+     and a resonant noise band that follows the vibrato), 48,048 partials at
+     448 singers, a four-chord progression with the vowel "a". It checks 8
+     singers against the same choir of scalar instances on the CPU, times the
+     choir on the GPU against the generated code on 1, 4 and 10 CPU threads,
+     and plays it for `CHOIR_SECONDS`, muted unless `POLY_AUDIBLE=audible`
+     (`archs/choirmojogpubatch.mojo`; PortAudio).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

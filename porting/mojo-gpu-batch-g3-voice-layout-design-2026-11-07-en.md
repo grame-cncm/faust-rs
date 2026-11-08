@@ -389,6 +389,23 @@ No registry entry yet: the layout is reachable only through the Rust API
 of the tests; the entry comes with the generated Mojo batch contract
 (G3.5), as D3 says.
 
+**Defect found 2026-11-08: the sample rate.** None of the seven programs
+read the sample rate, and neither did the three corpus voices added later
+(they hard-code 48000). `gpu_choir_partial.dsp` does, and the differential
+failed on it. The layout moves `fSampleRate` into the int arena, so the
+module has no `fSampleRate` field. The interpreter compiles the `sample_rate`
+argument to a slot it reserves when no rate field exists, but the factory
+resolved the slot the host writes from `fSamplingFreq` or `fSampleRate`
+only, and reserved a second one. Every voice read 0 and ran at a rate of 1
+(`max(1, 0)`). Voice 0 of a test can hide it: its control sits at the bottom
+of its range, which for a gain is 0. The factory now falls back to the
+`sample_rate` slot (`crates/codegen/src/backends/interp/mod.rs`, step 6). A
+scalar module always has `fSampleRate`, so it is unaffected. The differential
+gains `samplerate`, a program reading the rate in `instanceConstants` with a
+control range that starts above 0, and the corpus voice; both fail without
+the fix. The generated Mojo batch code was never affected, since it stores
+the `sample_rate` argument directly.
+
 ## 10. G3.5 outcome (2026-11-07)
 
 Mojo `1.3.0.dev2026110705`, `modular` `26.8.0.dev2026110705`, Apple M5.

@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_choir_partial.dsp
+bytes=3635
+lines=79
+fnv1a64=b4ef24f254c1c89d

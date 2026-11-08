@@ -485,9 +485,18 @@ fn generate_interp_module_step<R: real::FbcReal>(
     let arena = arena;
 
     // 6. Resolve well-known heap offsets from the field table.
+    //
+    // The last fallback is the slot the compiler reserved for the
+    // `sample_rate` argument when no rate field exists: a batch module
+    // (`fir::batch::layout_voices`) moves `fSampleRate` into an arena, so the
+    // argument reads its own slot, and the host must write the rate there.
+    // Without it the host wrote a fresh slot nobody read, and every voice ran
+    // at a rate of 1 (`max(1, 0)`). A scalar module has `fSampleRate`, so the
+    // fallback never applies to it.
     let sr_offset_existing = field_table
         .get("fSamplingFreq")
         .or_else(|| field_table.get("fSampleRate"))
+        .or_else(|| field_table.get("sample_rate"))
         .map(|d| d.offset);
     let count_offset_existing = field_table.get("count").map(|d| d.offset);
     // C++ interpreter runtime writes sample-rate/count unconditionally, so the

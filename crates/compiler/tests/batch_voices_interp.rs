@@ -55,6 +55,16 @@ process = tbl * (_ + 1);"#,
         r#"process = (_ : + ~ *(hslider("g", 0.5, 0, 0.9, 0.01))), (_ : @(3));"#,
     ),
     ("button", r#"process = button("gate") : + ~ *(0.9);"#),
+    // The sample rate, read in `instanceConstants` through the `sample_rate`
+    // argument: in a batch module `fSampleRate` is an arena element, not a
+    // field, and the argument once read a heap slot the host never wrote, so
+    // every voice ran at a rate of 1 (`max(1, 0)`). The control's range starts
+    // above 0 so that voice 0 does not hide it behind a zero gain.
+    (
+        "samplerate",
+        r#"SR = min(192000.0, max(1.0, fconstant(int fSamplingFreq, <math.h>)));
+process = _ * hslider("g", 0.5, 0.1, 1, 0.01) * SR / 48000 : + ~ *(exp(-1 / (0.01 * SR)));"#,
+    ),
 ];
 
 /// The flattened module of `source`, as `-lang mojo` and the interpreter see
@@ -249,7 +259,12 @@ fn every_voice_of_a_batch_matches_an_independent_scalar_instance() {
 #[test]
 fn the_corpus_gpu_voices_match_their_scalar_instances() {
     let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus");
-    for name in ["gpu_voice_saw", "gpu_partial_sine", "gpu_mode_resonator"] {
+    for name in [
+        "gpu_voice_saw",
+        "gpu_partial_sine",
+        "gpu_mode_resonator",
+        "gpu_choir_partial",
+    ] {
         let path = corpus.join(format!("{name}.dsp"));
         let source =
             std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

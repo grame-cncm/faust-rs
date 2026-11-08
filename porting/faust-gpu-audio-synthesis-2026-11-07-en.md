@@ -33,6 +33,11 @@ are:
 - **×2 to ×5 against the 4 to 10 CPU threads;**
 - **×7 to ×18 against one core.**
 
+One program was found that only the GPU can play on this machine: an
+additive choir of 48,000 partials, each a sine with vibrato, breath and a
+resonant noise band. It needs 2.1 times the whole CPU (LLVM code on all ten
+cores) and runs on the GPU at two thirds of its real-time budget (§5).
+
 These gains are against the same program run one instance per voice on the
 CPU. For voices as small as one mode, a CPU program would rather group them
 (50 modes in one bell, a bank of modes in one program), and that is a much
@@ -258,6 +263,104 @@ Two qualifications:
   oscillator-bank GPU path wins when each partial is a real signal processor
   (its own envelope, noise, filter, nonlinearity), which the FFT method cannot
   express.
+
+### A case only the GPU can play: an additive choir (measured, 2026-11-08)
+
+This is the shape the qualification above points to, measured end to end:
+every partial is a real signal processor, and there are tens of thousands of
+them.
+
+- **One partial** (`tests/corpus/gpu_choir_partial.dsp`, self-contained):
+  - a sine with its own vibrato;
+  - a slow amplitude swell (breath);
+  - a band of noise centred on the partial, through a TPT state-variable
+    band-pass whose centre follows the vibrato sample by sample.
+
+  Per sample that is three sines, a tangent, a linear congruential noise and
+  the filter. An inverse-FFT resynthesis cannot express a resonant noise band
+  per partial that moves with a per-sample vibrato.
+- **The scene** (`tests/impulse-tests/archs/choirmojogpubatch.mojo`):
+  - S singers in four parts, each singer the harmonics of its part's lowest
+    note up to 20 kHz, every harmonic one instance;
+  - every singer with its own detuning (up to 15 cents), vibrato, breath and
+    place in the stereo field;
+  - the gains shaped by the five formants of the vowel "a" for the part (the
+    Csound formant table) over a source tilt, with a noise share that rises
+    with frequency;
+  - four chords (D minor, B flat, F, C), 5 s each, looped; a chord change
+    moves every partial's frequency and gain, and the program glides the
+    gains.
+
+  448 singers give **48,048 partials**.
+- **Validation.** 8 singers (858 partials) for 12 s, across two chord
+  changes: the GPU mix equals the same choir of ordinary scalar instances on
+  the CPU to **1.2e-4 relative**, sample by sample.
+
+The CPU baseline is the best code Faust produces for this voice on this
+machine: one LLVM-compiled program of 256 distinct partials, scalar (the
+vector modes are slower here, the recursions dominate), **7.4 ns per partial
+and per sample** on one core. Ten copies run at once, one per core, reach
+**1.09e9 partial-samples per second**. That is the whole machine's ceiling
+for this voice: about **22,600 partials in real time** at 48 kHz, with no mix,
+no operating system and no headroom.
+
+The GPU computes a partial in about 0.23 ns per sample, some 32 cores' worth.
+Measured at 256 frames and 48 kHz (median block, mix included):
+
+| singers | partials | GPU | GPU, % of budget | whole CPU (LLVM, 10 cores), % of real time |
+|---|---|---|---|---|
+| 32 | 3,432 | 0.81 ms | 15 % | 15 % |
+| 128 | 13,728 | 1.29 ms | 24 % | 61 % |
+| 256 | 27,456 | 2.22 ms | 42 % | 121 % |
+| 448 | 48,048 | 3.61 ms | 68 % | 212 % |
+| 640 | 68,640 | 4.93 ms | 93 % | 303 % |
+
+The CPU column is the measured throughput of the whole machine, so it is an
+upper bound for any real CPU player of the same code: it would add a mix and
+the scheduling of threads. In real time (PortAudio, 43 ms latency, muted):
+
+- **448 singers, 48,048 partials:** 20 s with no underrun; median block
+  3.66 ms. The worst blocks (13.6 ms) are the chord changes, where the host
+  recomputes and uploads three controls of every partial; the latency
+  absorbs them.
+- **576 singers, 61,776 partials:** 20 s with no underrun; median block
+  4.48 ms, 84 % of the budget.
+
+The 448-singer choir needs **2.1 times the whole CPU** and runs on the GPU at
+two thirds of its budget. On this machine it is a GPU-only program.
+
+The limits of that statement:
+
+- **A CPU version vectorized by hand across partials was not measured.** With
+  four `f32` lanes and vector sine and tangent approximations it might reach
+  three to four times the scalar throughput, close to the GPU's. Faust does
+  not emit such code (its `-vec` is vectorized over time, and slower here).
+- The harness's own CPU baseline, the generated Mojo scalar code on 1, 4 and
+  10 threads, runs this voice at about 38 ns per partial and per sample, five
+  times slower than LLVM, so it is not the reference. LLVM is.
+
+Two lessons from building it:
+
+- **A one-pole glide in `f32` stops short of its target.** `y = x(1 - c) +
+  c·y'` stalls once the step `x(1 - c)` is under an ulp, at up to an ulp over
+  `1 - c` from the target: 2.3e-4 relative with an 80 ms time constant at
+  48 kHz, about 0.4 cent. A device that fuses the multiply-add and one that
+  does not stall at different points, and a partial's phase then drifts apart
+  by about a radian per second. The first version glided `freq` and failed
+  validation that way. The voice now glides only `gain` and lets `freq` jump
+  with a continuous phase.
+- **The voice found a defect in the batch interpreter.** It is the first
+  corpus voice that reads the sample rate, and the CPU differential of the
+  batch layout (`crates/compiler/tests/batch_voices_interp.rs`) failed on it.
+  A batch module moves `fSampleRate` into an arena. The `sample_rate`
+  argument then read a heap slot the interpreter never wrote, so every voice
+  ran at a rate of 1. The Mojo output was not affected, since it reads the
+  argument directly. Fixed in `crates/codegen/src/backends/interp/mod.rs`,
+  with a sample-rate program added to the differential.
+
+The lane is `make -C tests/impulse-tests mojo-gpu-choir CHOIR=448`. It
+validates, times and plays muted; `POLY_AUDIBLE=audible` plays the choir
+aloud.
 
 ### Modal synthesis: a fit only at very large scale (measured)
 
@@ -543,6 +646,8 @@ which grows as N × block × tape width.
   - `make mojo-gpu` and `make mojo-gpu-batch` (correctness);
   - `make mojo-gpu-bench` and `make mojo-gpu-bench-batch` (cost);
   - `make mojo-gpu-poly` (real time).
+- The additive choir of §5: `tests/corpus/gpu_choir_partial.dsp`;
+  `make mojo-gpu-choir`.
 - The carillon of §5: `tests/corpus/gpu_bell_strike.dsp`,
   `gpu_bell_mode.dsp` and the reference `gpu_bell_reference.dsp` (the
   original `pm.standardBell`); `make mojo-gpu-bells`.
