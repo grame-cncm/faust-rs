@@ -760,8 +760,93 @@ grows with the signal length, where `fad` needs memory only for N × 4 × block.
 The lane is `make -C tests/impulse-tests mojo-gpu-modal-fad MOJO=<mojo>`
 (`MODAL`, `MODAL_EPOCHS`, `MODAL_SIGMA`, `MODAL_UPDATE`, `MODAL_THREADS`). It
 builds both GPU binaries and the CPU baseline, validates both GPU builds,
-times all three and runs one fit. A recorded or rendered bell as the target
-was not attempted.
+times all three and runs one fit.
+
+#### A recorded bell (measured, 2026-11-08)
+
+The same fit, against real recordings of bells from Wikimedia Commons. The
+recordings stay out of the repository.
+
+- **Model.** A recording does not start every mode on a sine, so the voice
+  gains a phase: `tests/corpus/gpu_modal_fad_voice_phase.dsp` is
+  r^n (gain sin wn + gainc cos wn). The two amplitudes are linear and have no
+  undefined phase at zero amplitude. The harness takes the parameter count at
+  build time (`-D NPARAM=4`). Its Gauss-Newton solves a 4×4 system by Cholesky,
+  and `validate` passes for this voice too (worst 1.3e-3).
+- **Start.** `tests/impulse-tests/tools/modal_init.py` (numpy) works from the
+  recording:
+  1. the strike, at the steepest rise of the energy (an earlier strike may
+     still ring);
+  2. the spectral peaks that stand out by at least 10 dB, refined by a
+     parabola;
+  3. each mode's decay, from its demodulated envelope;
+  4. all the sine and cosine amplitudes, solved jointly by least squares,
+     with the Gram matrix of the damped sinusoids in closed form.
+- **The fit.** `fit-file` refines that start on the GPU and writes the
+  modes, the model and the residual.
+
+**A handbell that is not modal.** "Striking a bell 15cm large" (public
+domain) failed for a reason the GPU cannot fix. Its partials glide, 375 → 383
+Hz and 1,103 → 1,111 Hz over the first second, and their envelopes rise
+again after 0.4 s: a bell held by hand or moving, not a sum of damped
+sinusoids of fixed frequencies. From the least-squares start (2.7 dB, the
+residual over the target), 200 epochs reached only 4.6 dB.
+
+**A church bell struck by its clock hammer.** The hour strike of St. Georgen
+in St. Gallen (Martin Thurnherr, CC BY-SA 4.0, 32 kHz WAV) is a fixed bell
+with a strong modal spectrum: a hum at 113.7 Hz, then 224.2, 274.9, 463.7,
+952.9 Hz. The strikes come 2.6 s apart and overlap, so the excerpt is the
+last strike, 3.8 s of free decay. The ringing of the strike before it is
+made of the same modes, so it fits the model. The attack rises over 200 ms in
+this distant recording, which an impulse start cannot follow, so the target
+starts after the peak (30.46 s).
+
+| modes | update | epochs | least-squares start | after the GPU fit | epoch |
+|---|---|---|---|---|---|
+| 100 | Gauss-Newton | 300 | 6.1 dB | 15.4 dB | 39 ms |
+| 100 | Gauss-Newton | 1,000 | 6.1 dB | 15.4 dB (stops at 500) | 39 ms |
+| 200 | Adam, 0.05 | 800 | 6.3 dB | 17.0 dB | 37 ms |
+| 300 | Gauss-Newton | 300 | 6.3 dB | 11.8 dB | 39 ms |
+| 300 | Adam, 0.05 | 1,500 | 6.3 dB | **17.9 dB** | 37 ms |
+| 600 | Adam, 0.05 | 800 | 7.3 dB | 10.7 dB | 44 ms |
+
+(dB: target energy over residual energy, over the 3.8 s.)
+
+- **The GPU fit adds 11.5 dB to the least-squares start.** It moves the
+  frequencies by a median of 0.7 bandwidths, which the spectrum's peaks could
+  not place. 300 modes explain 98.4 % of the energy.
+- **More modes is not better.** At 600 modes, peaks less than 0.2 Hz apart
+  and only 6 dB prominent, the fit falls to 10.7 dB, and its late decay
+  worsens. Modes closer than the signal resolves are not identifiable here
+  either.
+- **Adam beats Gauss-Newton on the recording.** The opposite holds on the
+  synthetic banks. The modes overlap in the recording, so the globalised
+  Gauss-Newton keeps halving its step (300 modes: the factor stays between
+  0.15 and 0.45). With 100 modes, Gauss-Newton converges to a local minimum
+  at 15.4 dB.
+- **What is left:**
+  - the late decay: 2 to 3.8 s is fitted only 10.6 dB below the target;
+  - around the long partials: the hum shows three residual peaks at 112.7,
+    113.5 and 114.0 Hz, a beating doublet that the start resolved as one
+    mode;
+  - everything above 2.2 kHz, where the start placed no mode (−27 dB of the
+    energy, mostly noise).
+- **Parameters at the edges.** In the 300-mode fit, some T60 reach the upper
+  clamp of 30 s and some fall to 20 ms. Those last absorb attack and noise
+  rather than describe the bell.
+- **The GPU is not the reason it runs.** 300 modes is far below the
+  crossover. An epoch of 3.8 s at 300 modes takes 37 ms, about what ten CPU
+  threads would take with the C++ baseline (0.8 ns per mode and sample). The
+  value here is the pipeline (start, `fad` tangents, per-mode updates), not
+  the device.
+
+The lane is `make -C tests/impulse-tests mojo-gpu-modal-fad-bell
+BELL_WAV=<recording> BELL_START=<s> BELL_SECONDS=<s> MOJO=<mojo>` (needs sox
+and numpy; `BELL_MODES`, `BELL_EPOCHS`, `BELL_UPDATE`, `BELL_LR`). It writes
+the fitted modes and `target.wav`, `model.wav` and `residual.wav` at the
+target's gain to `tests/impulse-tests/build/mojo-gpu-modal-fad-bell/`. A
+resynthesis from the fitted modes can run past the recording; that was
+rendered once for listening (10 s), but no lane does it.
 
 ## 6. A decision guide
 

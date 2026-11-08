@@ -128,6 +128,17 @@ See the design write-up in
      four modes per program from `../corpus/gpu_modal_fad_group.dsp`,
      compiled by clang, on `MODAL_THREADS` threads). Then it runs one fit
      (`archs/modalfadmojogpubatch.mojo`; no PortAudio).
+   - `make mojo-gpu-modal-fad-bell BELL_WAV=<recording>` — the same fit
+     against a recording of a struck object that the user provides (not in
+     the repository), from `BELL_START` seconds for `BELL_SECONDS` after the
+     strike. Each mode is an instance of
+     `../corpus/gpu_modal_fad_voice_phase.dsp` (a free phase per mode;
+     harness built with `-D NPARAM=4`). The starting modes come from the
+     spectrum (`tools/modal_init.py`, needs numpy and sox): `BELL_MODES`
+     peaks, decays from their envelopes, amplitudes by joint least squares.
+     Then `BELL_EPOCHS` epochs of `BELL_UPDATE` on the GPU (`fit-file`). It
+     writes the fitted modes and `target.wav`, `model.wav` and `residual.wav`
+     to `build/mojo-gpu-modal-fad-bell/`.
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

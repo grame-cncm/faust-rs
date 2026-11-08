@@ -414,7 +414,26 @@ Deux limites, plus importantes que la vitesse :
   réglages ne rejoignent pas ceux du banc caché. Un signal plus long, ou une
   contrainte sur le nombre de modes, serait nécessaire.
 
-Un enregistrement réel n'a pas encore été essayé.
+**Sur une vraie cloche.** Pour un enregistrement, chaque mode reçoit en plus
+sa propre phase (une seconde amplitude, celle du cosinus,
+`tests/corpus/gpu_modal_fad_voice_phase.dsp`). Le point de départ vient du son
+lui-même : les pics du spectre, la décroissance de chacun, et les amplitudes
+de tous les modes calculées ensemble (`tools/modal_init.py`). On a essayé
+deux cloches de Wikimedia Commons :
+
+- **une petite cloche tenue à la main** n'obéit pas au modèle : ses partiels
+  glissent de plusieurs hertz et leur volume remonte après coup.
+  L'apprentissage n'y gagne presque rien ;
+- **la sonnerie des heures de St. Georgen** (St-Gall), une cloche fixe
+  frappée par son marteau, s'y prête. Sur 3,8 s du dernier coup, 300 modes
+  passent de 6,3 dB (le rapport entre la cible et ce qui reste à expliquer, au
+  départ) à 17,9 dB après 1 500 époques, soit 98 % de l'énergie expliquée.
+  Ce qui reste : la fin de la décroissance, un doublet du bourdon qui bat, et
+  les aigus au-dessus de 2 kHz, où le départ n'avait placé aucun mode.
+
+Plus de modes n'aide pas : à 600, le résultat se dégrade. À 300 modes, le
+GPU est sous son point de bascule ; c'est la méthode qui sert ici, pas la
+vitesse. La commande est au §9.2.
 
 ## 7. CPU et GPU dans le même programme
 
@@ -700,6 +719,16 @@ Il vérifie les dérivées et le code GPU, chronomètre une époque sur le GPU
 (avec l'état gardé en local, puis sans) et sur le CPU, puis lance un
 apprentissage de `MODAL_EPOCHS` époques depuis un départ à `MODAL_SIGMA`
 largeurs de bande, avec `MODAL_UPDATE` (`gn` ou `adam`).
+
+Le même apprentissage sur un enregistrement que l'on fournit (il faut aussi
+sox et numpy) :
+
+```bash
+make -C tests/impulse-tests mojo-gpu-modal-fad-bell MOJO=<commande mojo> BELL_WAV=<fichier> BELL_START=<s> BELL_SECONDS=4
+```
+
+Il écrit les modes trouvés, et la cible, le modèle et le résidu en WAV au
+même gain, dans `tests/impulse-tests/build/mojo-gpu-modal-fad-bell/`.
 
 Côté Faust, c'est du Faust ordinaire. Le partiel du chœur commence ainsi :
 

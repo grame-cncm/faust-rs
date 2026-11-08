@@ -14,6 +14,21 @@
 #   <binary> validate                                     GPU against CPU and closed form
 #   <binary> bench <modes> [<block>] [adam|gn]            time per epoch
 #   <binary> fit <modes> <epochs> <sigma> [adam|gn] [<lr>] [<block>]
+#   <binary> fit-file <target.f32> <modes.txt> <epochs> <out> [adam|gn] [<lr>] [<block>]
+#
+# NPARAM (`-D NPARAM=3`, the default, or 4) is the number of controls the
+# voice differentiates. With 3 the voice is gpu_modal_fad_voice.dsp (freq,
+# t60, gain: every mode starts on a sine); with 4 it is
+# gpu_modal_fad_voice_phase.dsp, which adds `gainc`, the amplitude of the
+# cosine, so that each mode has its own phase (a recording). Everything below
+# that names "gain" applies to every amplitude: gain, and gainc with 4.
+#
+# `fit-file` fits a recording: the target is a raw native-endian f32 file at
+# 48 kHz, cut to a whole number of blocks; the starting modes are the lines
+# "freq t60 gain [gainc]" of a text file (tools/modal_init.py writes them
+# from the recording's spectrum). It writes the fitted modes to
+# <out>.modes.txt (same format), and the model and the residual as raw f32 to
+# <out>.model.f32 and <out>.residual.f32.
 #
 # The target is synthetic: a hidden bank of N modes (`make_bank`), rendered
 # by the same voice on the GPU, so that recovery is checked mode by mode.
@@ -79,6 +94,7 @@
 
 from max.gpu.host import DeviceContext, DeviceBuffer, HostBuffer
 from max.gpu import global_idx
+from std.ffi import external_call
 from std.sys import argv
 from std.time import perf_counter_ns
 
@@ -86,7 +102,12 @@ comptime GPU_BLOCK_DIM = 64
 comptime RATE = S32(48000)
 comptime SIGNAL_FRAMES = 49152
 comptime GROUP = 64
-comptime NACC = 9
+# The voice's differentiated controls, its outputs (y and one tangent per
+# control), the entries of a mode's Gram matrix, and the sums per mode.
+comptime NP = get_defined_int["NPARAM", 3]()
+comptime NOUT = NP + 1
+comptime NGRAM = NP * (NP + 1) // 2
+comptime NACC = NP + NGRAM
 comptime LN1000 = 6.907755278982137
 comptime TWO_PI = 6.283185307179586
 comptime FLO = 100.0
@@ -144,86 +165,67 @@ def init_kernel(
 
 
 # The start of an epoch: every mode's state cleared (the impulse at the next
-# first sample), its three controls set from `params` (freq, t60, gain, each
-# n long), its sums zeroed.
+# first sample), its NP controls set from `params` (freq, t60, gain[, gainc],
+# each n long; `index` holds their control indices), its sums zeroed.
 def reset_kernel(
     dsps: Ptr[UInt8, MutAnyOrigin], state: Ptr[UInt8, MutAnyOrigin],
     params: Ptr[FaustFloat, MutAnyOrigin], acc: Ptr[FaustFloat, MutAnyOrigin],
-    n: S32, ifreq: Int32, it60: Int32, igain: Int32,
+    index: Ptr[Int32, MutAnyOrigin], n: S32,
 ) -> None:
     var v = Int(global_idx.x)
     if v >= Int(n):
         return
     ref d = dsps.unsafe_bitcast[modaldsp]()[]
     d.instance_clear(S32(v))
-    d.set_control(S32(v), Int(ifreq), params[unsafe_offset=v])
-    d.set_control(S32(v), Int(it60), params[unsafe_offset=Int(n) + v])
-    d.set_control(S32(v), Int(igain), params[unsafe_offset=2 * Int(n) + v])
+    comptime for j in range(NP):
+        d.set_control(S32(v), Int(index[unsafe_offset=j]), params[unsafe_offset=j * Int(n) + v])
     for j in range(NACC):
         acc[unsafe_offset=j * Int(n) + v] = FaustFloat(0.0)
 
 
-# Mode v writes its four outputs at outs + (4 v + c) * block.
+# Mode v writes its NOUT outputs at outs + (NOUT v + c) * block.
 def channels_kernel(
     channels: Ptr[UInt64, MutAnyOrigin], outs: Ptr[FaustFloat, MutAnyOrigin],
     n: S32, block: S32,
 ) -> None:
     var v = Int(global_idx.x)
     if v < Int(n):
-        for c in range(4):
-            channels.unsafe_bitcast[Ptr[FaustFloat, MUT_NOTRK]]()[unsafe_offset=4 * v + c] = outs.unsafe_offset(
-                (4 * v + c) * Int(block)
+        for c in range(NOUT):
+            channels.unsafe_bitcast[Ptr[FaustFloat, MUT_NOTRK]]()[unsafe_offset=NOUT * v + c] = outs.unsafe_offset(
+                (NOUT * v + c) * Int(block)
             ).unsafe_origin_cast[MUT_NOTRK]()
 
 
-# Mode v's sums over one block: e . dy/dtheta_j (j = 0..2) and, with
-# nacc == 9, the six entries of its Gram matrix.
+# Mode v's sums over one block: e . dy/dtheta_j (j < NP) and, with
+# nacc == NACC, the NGRAM entries of its Gram matrix, (p, q) for p <= q in
+# row order after the NP gradient sums.
 @always_inline
 def accumulate(
     outs: Ptr[FaustFloat, MutAnyOrigin], e: Ptr[FaustFloat, MutAnyOrigin],
     acc: Ptr[FaustFloat, MutAnyOrigin], v: Int, n: Int, eoff: Int, count: Int, block: Int,
     nacc: Int,
 ):
-    var base = 4 * v * block
-    var a0 = FaustFloat(0.0)
-    var a1 = FaustFloat(0.0)
-    var a2 = FaustFloat(0.0)
-    if nacc == 3:
+    var base = NOUT * v * block
+    var a = Arr[FaustFloat, NACC](fill=FaustFloat(0.0))
+    if nacc == NP:
         for i in range(count):
             var ee = e[unsafe_offset=eoff + i]
-            a0 += ee * outs[unsafe_offset=base + block + i]
-            a1 += ee * outs[unsafe_offset=base + 2 * block + i]
-            a2 += ee * outs[unsafe_offset=base + 3 * block + i]
+            comptime for j in range(NP):
+                a[j] += ee * outs[unsafe_offset=base + (j + 1) * block + i]
     else:
-        var h00 = FaustFloat(0.0)
-        var h11 = FaustFloat(0.0)
-        var h22 = FaustFloat(0.0)
-        var h01 = FaustFloat(0.0)
-        var h02 = FaustFloat(0.0)
-        var h12 = FaustFloat(0.0)
         for i in range(count):
             var ee = e[unsafe_offset=eoff + i]
-            var d0 = outs[unsafe_offset=base + block + i]
-            var d1 = outs[unsafe_offset=base + 2 * block + i]
-            var d2 = outs[unsafe_offset=base + 3 * block + i]
-            a0 += ee * d0
-            a1 += ee * d1
-            a2 += ee * d2
-            h00 += d0 * d0
-            h11 += d1 * d1
-            h22 += d2 * d2
-            h01 += d0 * d1
-            h02 += d0 * d2
-            h12 += d1 * d2
-        acc[unsafe_offset=3 * n + v] += h00
-        acc[unsafe_offset=4 * n + v] += h11
-        acc[unsafe_offset=5 * n + v] += h22
-        acc[unsafe_offset=6 * n + v] += h01
-        acc[unsafe_offset=7 * n + v] += h02
-        acc[unsafe_offset=8 * n + v] += h12
-    acc[unsafe_offset=v] += a0
-    acc[unsafe_offset=n + v] += a1
-    acc[unsafe_offset=2 * n + v] += a2
+            var d = Arr[FaustFloat, NP](fill=FaustFloat(0.0))
+            comptime for j in range(NP):
+                d[j] = outs[unsafe_offset=base + (j + 1) * block + i]
+                a[j] += ee * d[j]
+            var g = NP
+            comptime for p in range(NP):
+                comptime for q in range(p, NP):
+                    a[g] += d[p] * d[q]
+                    g += 1
+    for j in range(nacc):
+        acc[unsafe_offset=j * n + v] += a[j]
 
 
 # Reduces the previous block (eprev >= 0, its offset in e), then computes the
@@ -239,7 +241,7 @@ def voice_kernel(
         return
     if eprev >= 0:
         accumulate(outs, e, acc, v, Int(n), Int(eprev), Int(count), Int(block), Int(nacc))
-    var heads = channels.unsafe_bitcast[Ptr[FaustFloat, MUT_NOTRK]]().unsafe_offset(4 * v).unsafe_origin_cast[MUT_NOTRK]()
+    var heads = channels.unsafe_bitcast[Ptr[FaustFloat, MUT_NOTRK]]().unsafe_offset(NOUT * v).unsafe_origin_cast[MUT_NOTRK]()
     dsps.unsafe_bitcast[modaldsp]()[].compute(
         S32(v), count,
         heads.unsafe_bitcast[Ptr[FaustFloat, IMM_NOTRK]]().unsafe_mut_cast[False]().unsafe_origin_cast[IMM_NOTRK](),
@@ -272,7 +274,7 @@ def group_mix_kernel(
         return
     var acc = FaustFloat(0.0)
     for v in range(g * GROUP, min(Int(n), (g + 1) * GROUP)):
-        acc += outs[unsafe_offset=4 * v * Int(block) + i]
+        acc += outs[unsafe_offset=NOUT * v * Int(block) + i]
     gsum[unsafe_offset=g * Int(block) + i] = acc
 
 
@@ -289,7 +291,8 @@ def residual_kernel(
     e[unsafe_offset=Int(toff) + i] = target[unsafe_offset=Int(toff) + i] - s
 
 
-# theta = (freq / bw0, log t60, gain / |gain0|); scale = (bw0, |gain0|).
+# theta = (freq / bw0, log t60, gain / |gain0|[, gainc / |gain0|]); scale =
+# (bw0, |gain0|), |gain0| the starting amplitude of the mode.
 @always_inline
 def store_params(
     params: Ptr[FaustFloat, MutAnyOrigin], theta: Ptr[FaustFloat, MutAnyOrigin],
@@ -302,7 +305,20 @@ def store_params(
     theta[unsafe_offset=n + v] = lt
     params[unsafe_offset=v] = f
     params[unsafe_offset=n + v] = FaustFloat(exp(F32(lt)))
-    params[unsafe_offset=2 * n + v] = theta[unsafe_offset=2 * n + v] * scale[unsafe_offset=n + v]
+    for j in range(2, NP):
+        params[unsafe_offset=j * n + v] = theta[unsafe_offset=j * n + v] * scale[unsafe_offset=n + v]
+
+
+# The scale of parameter j of mode v in theta coordinates.
+@always_inline
+def coord_scale(
+    params: Ptr[FaustFloat, MutAnyOrigin], scale: Ptr[FaustFloat, MutAnyOrigin], j: Int, v: Int, n: Int,
+) -> FaustFloat:
+    if j == 0:
+        return scale[unsafe_offset=v]
+    if j == 1:
+        return params[unsafe_offset=n + v]
+    return scale[unsafe_offset=n + v]
 
 
 # Adam on the loss gradient in theta coordinates; bc1, bc2 the bias
@@ -311,19 +327,14 @@ def adam_kernel(
     params: Ptr[FaustFloat, MutAnyOrigin], theta: Ptr[FaustFloat, MutAnyOrigin],
     m1: Ptr[FaustFloat, MutAnyOrigin], m2: Ptr[FaustFloat, MutAnyOrigin],
     scale: Ptr[FaustFloat, MutAnyOrigin], acc: Ptr[FaustFloat, MutAnyOrigin],
-    n: S32, lr_f: F32, lr_t: F32, lr_g: F32, bc1: F32, bc2: F32, gscale: F32,
+    n: S32, lr: F32, bc1: F32, bc2: F32, gscale: F32,
 ) -> None:
     var v = Int(global_idx.x)
     var nn = Int(n)
     if v >= nn:
         return
-    var c0 = scale[unsafe_offset=v]
-    var c1 = params[unsafe_offset=nn + v]
-    var c2 = scale[unsafe_offset=nn + v]
-    for j in range(3):
-        var c = c0 if j == 0 else (c1 if j == 1 else c2)
-        var lr = lr_f if j == 0 else (lr_t if j == 1 else lr_g)
-        var g = FaustFloat(gscale) * c * acc[unsafe_offset=j * nn + v]
+    for j in range(NP):
+        var g = FaustFloat(gscale) * coord_scale(params, scale, j, v, nn) * acc[unsafe_offset=j * nn + v]
         var k = j * nn + v
         var a = FaustFloat(BETA1) * m1[unsafe_offset=k] + FaustFloat(1.0 - BETA1) * g
         var b = FaustFloat(BETA2) * m2[unsafe_offset=k] + FaustFloat(1.0 - BETA2) * g * g
@@ -335,8 +346,9 @@ def adam_kernel(
     store_params(params, theta, scale, v, nn)
 
 
-# Damped Gauss-Newton on the mode's own three parameters, against the shared
-# residual: (A + lambda I) z = b in the Jacobi-normalised coordinates.
+# Damped Gauss-Newton on the mode's own NP parameters, against the shared
+# residual: (A + lambda I) z = b in the Jacobi-normalised coordinates, solved
+# by Cholesky (A + lambda I is symmetric positive definite).
 def gn_kernel(
     params: Ptr[FaustFloat, MutAnyOrigin], theta: Ptr[FaustFloat, MutAnyOrigin],
     scale: Ptr[FaustFloat, MutAnyOrigin], acc: Ptr[FaustFloat, MutAnyOrigin],
@@ -346,47 +358,57 @@ def gn_kernel(
     var nn = Int(n)
     if v >= nn:
         return
-    var c0 = scale[unsafe_offset=v]
-    var c1 = params[unsafe_offset=nn + v]
-    var c2 = scale[unsafe_offset=nn + v]
-    # J'e and J'J in theta coordinates.
-    var b0 = c0 * acc[unsafe_offset=v]
-    var b1 = c1 * acc[unsafe_offset=nn + v]
-    var b2 = c2 * acc[unsafe_offset=2 * nn + v]
-    var h00 = c0 * c0 * acc[unsafe_offset=3 * nn + v]
-    var h11 = c1 * c1 * acc[unsafe_offset=4 * nn + v]
-    var h22 = c2 * c2 * acc[unsafe_offset=5 * nn + v]
-    var h01 = c0 * c1 * acc[unsafe_offset=6 * nn + v]
-    var h02 = c0 * c2 * acc[unsafe_offset=7 * nn + v]
-    var h12 = c1 * c2 * acc[unsafe_offset=8 * nn + v]
-    if not (h00 > FaustFloat(0.0) and h11 > FaustFloat(0.0) and h22 > FaustFloat(0.0)):
-        return
-    var d0 = sqrt(h00)
-    var d1 = sqrt(h11)
-    var d2 = sqrt(h22)
-    var a00 = FaustFloat(1.0) + FaustFloat(lam)
-    var a01 = h01 / (d0 * d1)
-    var a02 = h02 / (d0 * d2)
-    var a12 = h12 / (d1 * d2)
-    var r0 = b0 / d0
-    var r1 = b1 / d1
-    var r2 = b2 / d2
-    # Cramer's rule on the symmetric 3x3 (A + lambda I), diagonal a00.
-    var m00 = a00 * a00 - a12 * a12
-    var m01 = a01 * a00 - a12 * a02
-    var m02 = a01 * a12 - a00 * a02
-    var det = a00 * m00 - a01 * m01 + a02 * m02
-    if not (abs(det) > FaustFloat(1e-12)):
-        return
-    var z0 = (r0 * m00 - a01 * (r1 * a00 - a12 * r2) + a02 * (r1 * a12 - a00 * r2)) / det
-    var z1 = (a00 * (r1 * a00 - a12 * r2) - r0 * m01 + a02 * (a01 * r2 - r1 * a02)) / det
-    var z2 = (a00 * (a00 * r2 - r1 * a12) - a01 * (a01 * r2 - r1 * a02) + r0 * m02) / det
-    var s0 = max(FaustFloat(-0.5), min(FaustFloat(0.5), FaustFloat(eta) * z0 / d0))
-    var s1 = max(FaustFloat(-0.2), min(FaustFloat(0.2), FaustFloat(eta) * z1 / d1))
-    var s2 = max(FaustFloat(-0.5), min(FaustFloat(0.5), FaustFloat(eta) * z2 / d2))
-    theta[unsafe_offset=v] += s0
-    theta[unsafe_offset=nn + v] += s1
-    theta[unsafe_offset=2 * nn + v] += s2
+    var c = Arr[FaustFloat, NP](fill=FaustFloat(0.0))
+    var d = Arr[FaustFloat, NP](fill=FaustFloat(0.0))
+    var r = Arr[FaustFloat, NP](fill=FaustFloat(0.0))
+    var m = Arr[FaustFloat, NP * NP](fill=FaustFloat(0.0))
+    for j in range(NP):
+        c[j] = coord_scale(params, scale, j, v, nn)
+    # J'J in theta coordinates, then its diagonal.
+    var g = NP
+    for p in range(NP):
+        for q in range(p, NP):
+            var h = c[p] * c[q] * acc[unsafe_offset=g * nn + v]
+            m[p * NP + q] = h
+            m[q * NP + p] = h
+            g += 1
+    for j in range(NP):
+        if not (m[j * NP + j] > FaustFloat(0.0)):
+            return
+        d[j] = sqrt(m[j * NP + j])
+    for p in range(NP):
+        r[p] = c[p] * acc[unsafe_offset=p * nn + v] / d[p]
+        for q in range(NP):
+            m[p * NP + q] = m[p * NP + q] / (d[p] * d[q])
+        m[p * NP + p] = FaustFloat(1.0) + FaustFloat(lam)
+    # Cholesky: m = L L' (L in the lower triangle of m), then the two
+    # triangular solves into r.
+    for p in range(NP):
+        for q in range(p + 1):
+            var s = m[p * NP + q]
+            for k in range(q):
+                s -= m[p * NP + k] * m[q * NP + k]
+            if p == q:
+                if not (s > FaustFloat(1e-12)):
+                    return
+                m[p * NP + p] = sqrt(s)
+            else:
+                m[p * NP + q] = s / m[q * NP + q]
+    for p in range(NP):
+        var s = r[p]
+        for k in range(p):
+            s -= m[p * NP + k] * r[k]
+        r[p] = s / m[p * NP + p]
+    for pp in range(NP):
+        var p = NP - 1 - pp
+        var s = r[p]
+        for k in range(p + 1, NP):
+            s -= m[k * NP + p] * r[k]
+        r[p] = s / m[p * NP + p]
+    for j in range(NP):
+        var bound = FaustFloat(0.2) if j == 1 else FaustFloat(0.5)
+        var step = max(-bound, min(bound, FaustFloat(eta) * r[j] / d[j]))
+        theta[unsafe_offset=j * nn + v] += step
     store_params(params, theta, scale, v, nn)
 
 
@@ -421,12 +443,19 @@ struct Bank(Copyable, Movable):
     var freq: List[F64]
     var t60: List[F64]
     var gain: List[F64]
+    # The cosine amplitudes (NP == 4); zeros otherwise.
+    var gainc: List[F64]
 
     def __init__(out b, n: Int):
         b.n = n
         b.freq = List[F64]()
         b.t60 = List[F64]()
         b.gain = List[F64]()
+        b.gainc = List[F64]()
+
+    # The amplitude of mode k.
+    def amplitude(self, k: Int) -> F64:
+        return sqrt(self.gain[k] * self.gain[k] + self.gainc[k] * self.gainc[k])
 
 
 # The hidden bank of n modes.
@@ -442,7 +471,14 @@ def make_bank(n: Int) -> Bank:
             g = -g
         b.freq.append(f)
         b.t60.append(t)
-        b.gain.append(g)
+        if NP == 4:
+            # A phase of its own: the amplitude split between sine and cosine.
+            var phi = TWO_PI * hash01(k, 5)
+            b.gain.append(g * cos(phi))
+            b.gainc.append(g * sin(phi))
+        else:
+            b.gain.append(g)
+            b.gainc.append(0.0)
     return b^
 
 
@@ -453,6 +489,7 @@ def perturbed(h: Bank, sigma: F64) -> Bank:
         b.freq.append(h.freq[k] + sigma * bandwidth(h.t60[k]) * gauss(k, 10))
         b.t60.append(h.t60[k] * exp(0.3 * sigma * gauss(k, 20)))
         b.gain.append(h.gain[k] * (1.0 + 0.3 * sigma * gauss(k, 30)))
+        b.gainc.append(h.gainc[k] * (1.0 + 0.3 * sigma * gauss(k, 40)))
     return b^
 
 
@@ -467,26 +504,143 @@ def median(mut xs: List[Int]) -> Int:
     return xs[len(xs) // 2]
 
 
-# The closed form of the voice in f64: y, dy/dfreq, dy/dt60, dy/dgain at
-# sample i (the impulse at i = 0).
-def closed_form(f: F64, t60: F64, g: F64, i: Int, c: Int) -> F64:
+# The closed form of the voice in f64: y, dy/dfreq, dy/dt60, dy/dgain and,
+# with NP == 4, dy/dgainc, at sample i (the impulse at i = 0).
+def closed_form(f: F64, t60: F64, g: F64, gc: F64, i: Int, c: Int) -> F64:
     var w = TWO_PI * f / F64(RATE)
     var lr = -LN1000 / (t60 * F64(RATE))
     var ni = F64(i)
     var env = exp(lr * ni)
     var s = env * sin(w * ni)
+    var co = env * cos(w * ni)
     if c == 0:
-        return g * s
+        return g * s + gc * co
     if c == 1:
-        return g * env * cos(w * ni) * ni * TWO_PI / F64(RATE)
+        return env * (g * cos(w * ni) - gc * sin(w * ni)) * ni * TWO_PI / F64(RATE)
     if c == 2:
-        return g * s * ni * LN1000 / (t60 * t60 * F64(RATE))
-    return s
+        return (g * s + gc * co) * ni * LN1000 / (t60 * t60 * F64(RATE))
+    if c == 3:
+        return s
+    return co
+
+
+# The control labels of the NP differentiated controls, in parameter order.
+def control_labels() -> List[String]:
+    var labels: List[String] = ["freq", "t60", "gain"]
+    if NP == 4:
+        labels.append("gainc")
+    return labels^
+
+
+# Raw file I/O through the C library.
+def address[T: AnyType](p: Ptr[T, MUT_NOTRK]) -> UInt64:
+    return UInt64(Int(p.__int__()))
+
+
+def c_string(s: String) -> Ptr[UInt8, MUT_NOTRK]:
+    var b = s.as_bytes()
+    var p = unsafe_alloc[UInt8](len(b) + 1).unsafe_origin_cast[MUT_NOTRK]()
+    for i in range(len(b)):
+        p[unsafe_offset=i] = b[i]
+    p[unsafe_offset=len(b)] = UInt8(0)
+    return p
+
+
+def read_bytes(path: String) raises -> List[UInt8]:
+    var cpath = c_string(path)
+    var cmode = c_string("rb")
+    var f = external_call["fopen", UInt64](address(cpath), address(cmode))
+    cpath.unsafe_free()
+    cmode.unsafe_free()
+    if f == 0:
+        raise Error(String("cannot open ") + path)
+    _ = external_call["fseek", Int32](f, Int64(0), Int32(2))
+    var size = Int(external_call["ftell", Int64](f))
+    _ = external_call["fseek", Int32](f, Int64(0), Int32(0))
+    var buf = unsafe_alloc[UInt8](max(size, 1)).unsafe_origin_cast[MUT_NOTRK]()
+    var got = Int(external_call["fread", UInt64](address(buf), UInt64(1), UInt64(size), f))
+    _ = external_call["fclose", Int32](f)
+    var out = List[UInt8](capacity=got)
+    for i in range(got):
+        out.append(buf[unsafe_offset=i])
+    buf.unsafe_free()
+    return out^
+
+
+def write_f32(path: String, xs: List[F32]) raises:
+    var cpath = c_string(path)
+    var cmode = c_string("wb")
+    var f = external_call["fopen", UInt64](address(cpath), address(cmode))
+    cpath.unsafe_free()
+    cmode.unsafe_free()
+    if f == 0:
+        raise Error(String("cannot open ") + path)
+    var buf = unsafe_alloc[F32](max(len(xs), 1)).unsafe_origin_cast[MUT_NOTRK]()
+    for i in range(len(xs)):
+        buf[unsafe_offset=i] = xs[i]
+    var written = external_call["fwrite", UInt64](address(buf), UInt64(4), UInt64(len(xs)), f)
+    _ = external_call["fclose", Int32](f)
+    buf.unsafe_free()
+    if Int(written) != len(xs):
+        raise Error(String("short write to ") + path)
+
+
+def write_text(path: String, text: String) raises:
+    var cpath = c_string(path)
+    var cmode = c_string("wb")
+    var f = external_call["fopen", UInt64](address(cpath), address(cmode))
+    cpath.unsafe_free()
+    cmode.unsafe_free()
+    if f == 0:
+        raise Error(String("cannot open ") + path)
+    var b = text.as_bytes()
+    var buf = unsafe_alloc[UInt8](max(len(b), 1)).unsafe_origin_cast[MUT_NOTRK]()
+    for i in range(len(b)):
+        buf[unsafe_offset=i] = b[i]
+    _ = external_call["fwrite", UInt64](address(buf), UInt64(1), UInt64(len(b)), f)
+    _ = external_call["fclose", Int32](f)
+    buf.unsafe_free()
+
+
+# A raw native-endian f32 file.
+def read_f32(path: String) raises -> List[F32]:
+    var bytes = read_bytes(path)
+    var n = len(bytes) // 4
+    var buf = unsafe_alloc[UInt8](max(4 * n, 4)).unsafe_origin_cast[MUT_NOTRK]()
+    for i in range(4 * n):
+        buf[unsafe_offset=i] = bytes[i]
+    var fp = buf.unsafe_bitcast[F32]()
+    var out = List[F32](capacity=n)
+    for i in range(n):
+        out.append(fp[unsafe_offset=i])
+    buf.unsafe_free()
+    return out^
+
+
+# The modes of a text file: one line "freq t60 gain [gainc]" per mode.
+def read_modes(path: String) raises -> Bank:
+    var bytes = read_bytes(path)
+    var text = String(unsafe_from_utf8=Span(bytes))
+    var b = Bank(0)
+    for line in text.split("\n"):
+        var fields = List[String]()
+        for w in String(line).split(" "):
+            if String(w).byte_length() > 0:
+                fields.append(String(w))
+        if len(fields) < 3 or fields[0].startswith("#"):
+            continue
+        b.freq.append(atof(fields[0]))
+        b.t60.append(atof(fields[1]))
+        b.gain.append(atof(fields[2]))
+        b.gainc.append(atof(fields[3]) if len(fields) > 3 and NP == 4 else 0.0)
+    b.n = len(b.freq)
+    return b^
 
 
 comptime MODE_VALIDATE = 0
 comptime MODE_BENCH = 1
 comptime MODE_FIT = 2
+comptime MODE_FILE = 3
 
 
 # One forward-and-gradient pass over the signal with the current params.
@@ -495,12 +649,12 @@ def epoch(
     ctx: DeviceContext, dsps: DeviceBuffer[DType.uint8], state: DeviceBuffer[DType.uint8],
     params: DeviceBuffer[dfaust], acc: DeviceBuffer[dfaust], outs: DeviceBuffer[dfaust],
     chan: DeviceBuffer[DType.uint64], gsum: DeviceBuffer[dfaust], target: DeviceBuffer[dfaust],
-    e: DeviceBuffer[dfaust], outs_host: HostBuffer[dfaust],
-    n: Int, block: Int, nblocks: Int, groups: Int, nacc: Int, ifreq: Int, it60: Int, igain: Int,
+    e: DeviceBuffer[dfaust], outs_host: HostBuffer[dfaust], index: DeviceBuffer[DType.int32],
+    n: Int, block: Int, nblocks: Int, groups: Int, nacc: Int,
     keep: Bool, mut kept: List[FaustFloat],
 ) raises:
     ctx.enqueue_function[reset_kernel](
-        dsps, state, params, acc, S32(n), Int32(ifreq), Int32(it60), Int32(igain),
+        dsps, state, params, acc, index, S32(n),
         grid_dim=grid(n), block_dim=GPU_BLOCK_DIM,
     )
     for b in range(nblocks):
@@ -520,7 +674,7 @@ def epoch(
         if keep:
             ctx.enqueue_copy(dst_buf=outs_host, src_buf=outs)
             ctx.synchronize()
-            for i in range(4 * n * block):
+            for i in range(NOUT * n * block):
                 kept.append(outs_host[i])
     ctx.enqueue_function[grad_kernel](
         outs, e, acc, S32(n), S32(block), S32(block), Int32((nblocks - 1) * block), Int32(nacc),
@@ -537,6 +691,8 @@ def upload(
         params_host[k] = FaustFloat(bank.freq[k])
         params_host[n + k] = FaustFloat(bank.t60[k])
         params_host[2 * n + k] = FaustFloat(bank.gain[k])
+        if NP == 4:
+            params_host[3 * n + k] = FaustFloat(bank.gainc[k])
     ctx.enqueue_copy(dst_buf=params, src_buf=params_host)
 
 
@@ -552,19 +708,33 @@ def loss_now(
 
 
 # Everything runs here: set up the bank on the device, render the target from
-# the hidden bank, then run `epochs` epochs from the perturbed start.
+# the hidden bank (or read it, MODE_FILE), then run `epochs` epochs from the
+# perturbed start (or the modes of `modes_path`).
 def session(
-    n: Int, block: Int, epochs: Int, sigma: F64, use_gn: Bool, lr: F64, mode: Int,
-    frames_arg: Int = SIGNAL_FRAMES,
+    n_arg: Int, block: Int, epochs: Int, sigma: F64, use_gn: Bool, lr: F64, mode: Int,
+    frames_arg: Int = SIGNAL_FRAMES, target_path: String = "", modes_path: String = "",
+    out_prefix: String = "",
 ) raises -> F64:
+    var n = n_arg
     var frames = frames_arg
+    var hidden = Bank(0)
+    var start: Bank
+    var recorded = List[F32]()
+    if mode == MODE_FILE:
+        recorded = read_f32(target_path)
+        frames = (len(recorded) // block) * block
+        start = read_modes(modes_path)
+        n = start.n
+        if n == 0 or frames == 0:
+            raise Error("no mode or no signal")
+    else:
+        hidden = make_bank(n)
+        start = perturbed(hidden, sigma)
     if frames % block != 0:
         raise Error("the block must divide the signal length")
     var nblocks = frames // block
     var groups = (n + GROUP - 1) // GROUP
-    var nacc = 9 if use_gn else 3
-    var hidden = make_bank(n)
-    var start = perturbed(hidden, sigma)
+    var nacc = NACC if use_gn else NP
 
     var ctx = DeviceContext()
     var state = ctx.enqueue_create_buffer[DType.uint8](max(modaldsp.state_bytes(n), 8))
@@ -574,67 +744,78 @@ def session(
     host[].class_init(RATE)
     var gui = LabelGui()
     host[].build_user_interface(gui)
-    var ifreq = index_of(gui.labels, "freq")
-    var it60 = index_of(gui.labels, "t60")
-    var igain = index_of(gui.labels, "gain")
+    var labels = control_labels()
+    var index = ctx.enqueue_create_buffer[DType.int32](NP)
+    var index_host = ctx.enqueue_create_host_buffer[DType.int32](NP)
     var dsps = ctx.enqueue_create_buffer[DType.uint8](size_of[modaldsp]())
     ctx.enqueue_copy(dst_buf=dsps, src_ptr=host.unsafe_bitcast[UInt8]())
     ctx.enqueue_function[init_kernel](dsps, state, S32(n), RATE, grid_dim=grid(n), block_dim=GPU_BLOCK_DIM)
-    var outs = ctx.enqueue_create_buffer[dfaust](4 * n * block)
-    var chan = ctx.enqueue_create_buffer[DType.uint64](4 * n)
+    var outs = ctx.enqueue_create_buffer[dfaust](NOUT * n * block)
+    var chan = ctx.enqueue_create_buffer[DType.uint64](NOUT * n)
     ctx.enqueue_function[channels_kernel](chan, outs, S32(n), S32(block), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM)
     var gsum = ctx.enqueue_create_buffer[dfaust](groups * block)
     var e = ctx.enqueue_create_buffer[dfaust](frames)
     var e_host = ctx.enqueue_create_host_buffer[dfaust](frames)
     var target = ctx.enqueue_create_buffer[dfaust](frames)
     var target_host = ctx.enqueue_create_host_buffer[dfaust](frames)
-    var params = ctx.enqueue_create_buffer[dfaust](3 * n)
-    var params_host = ctx.enqueue_create_host_buffer[dfaust](3 * n)
-    var theta = ctx.enqueue_create_buffer[dfaust](3 * n)
-    var theta_host = ctx.enqueue_create_host_buffer[dfaust](3 * n)
+    var params = ctx.enqueue_create_buffer[dfaust](NP * n)
+    var params_host = ctx.enqueue_create_host_buffer[dfaust](NP * n)
+    var theta = ctx.enqueue_create_buffer[dfaust](NP * n)
+    var theta_host = ctx.enqueue_create_host_buffer[dfaust](NP * n)
     var scale = ctx.enqueue_create_buffer[dfaust](2 * n)
     var scale_host = ctx.enqueue_create_host_buffer[dfaust](2 * n)
-    var m1 = ctx.enqueue_create_buffer[dfaust](3 * n)
-    var m2 = ctx.enqueue_create_buffer[dfaust](3 * n)
-    var theta_prev = ctx.enqueue_create_buffer[dfaust](3 * n)
-    var params_prev = ctx.enqueue_create_buffer[dfaust](3 * n)
+    var m1 = ctx.enqueue_create_buffer[dfaust](NP * n)
+    var m2 = ctx.enqueue_create_buffer[dfaust](NP * n)
+    var theta_prev = ctx.enqueue_create_buffer[dfaust](NP * n)
+    var params_prev = ctx.enqueue_create_buffer[dfaust](NP * n)
     var acc = ctx.enqueue_create_buffer[dfaust](NACC * n)
     var acc_host = ctx.enqueue_create_host_buffer[dfaust](NACC * n)
-    var outs_host = ctx.enqueue_create_host_buffer[dfaust](4 * n * block)
+    var outs_host = ctx.enqueue_create_host_buffer[dfaust](NOUT * n * block)
     ctx.synchronize()
+    for j in range(NP):
+        index_host[j] = Int32(index_of(gui.labels, labels[j]))
+    ctx.enqueue_copy(dst_buf=index, src_buf=index_host)
 
-    # The target: the hidden bank against a zero target gives e = -mix.
+    # The target: read, or the hidden bank against a zero target (e = -mix).
     var none = List[FaustFloat]()
     ctx.synchronize()
-    for i in range(frames):
-        target_host[i] = FaustFloat(0.0)
-    ctx.enqueue_copy(dst_buf=target, src_buf=target_host)
-    upload(ctx, params, params_host, hidden)
-    epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, n, block, nblocks, groups, nacc, ifreq, it60, igain, False, none)
-    ctx.enqueue_copy(dst_buf=e_host, src_buf=e)
-    ctx.synchronize()
     var energy = F64(0.0)
-    for i in range(frames):
-        target_host[i] = -e_host[i]
-        energy += F64(e_host[i]) * F64(e_host[i])
-    ctx.enqueue_copy(dst_buf=target, src_buf=target_host)
+    if mode == MODE_FILE:
+        for i in range(frames):
+            target_host[i] = FaustFloat(recorded[i])
+            energy += F64(recorded[i]) * F64(recorded[i])
+        ctx.enqueue_copy(dst_buf=target, src_buf=target_host)
+    else:
+        for i in range(frames):
+            target_host[i] = FaustFloat(0.0)
+        ctx.enqueue_copy(dst_buf=target, src_buf=target_host)
+        upload(ctx, params, params_host, hidden)
+        epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, index, n, block, nblocks, groups, nacc, False, none)
+        ctx.enqueue_copy(dst_buf=e_host, src_buf=e)
+        ctx.synchronize()
+        for i in range(frames):
+            target_host[i] = -e_host[i]
+            energy += F64(e_host[i]) * F64(e_host[i])
+        ctx.enqueue_copy(dst_buf=target, src_buf=target_host)
 
     # The start, and its coordinates.
     upload(ctx, params, params_host, start)
     ctx.synchronize()
     for k in range(n):
         var s_f = bandwidth(start.t60[k])
-        var s_g = max(abs(start.gain[k]), 1e-9)
+        var s_g = max(start.amplitude(k), 1e-9)
         scale_host[k] = FaustFloat(s_f)
         scale_host[n + k] = FaustFloat(s_g)
         theta_host[k] = FaustFloat(start.freq[k] / s_f)
         theta_host[n + k] = FaustFloat(log(start.t60[k]))
         theta_host[2 * n + k] = FaustFloat(start.gain[k] / s_g)
+        if NP == 4:
+            theta_host[3 * n + k] = FaustFloat(start.gainc[k] / s_g)
     ctx.enqueue_copy(dst_buf=scale, src_buf=scale_host)
     ctx.enqueue_copy(dst_buf=theta, src_buf=theta_host)
     # A host buffer is reused only once its copy has run.
     ctx.synchronize()
-    for k in range(3 * n):
+    for k in range(NP * n):
         theta_host[k] = FaustFloat(0.0)
     ctx.enqueue_copy(dst_buf=m1, src_buf=theta_host)
     ctx.enqueue_copy(dst_buf=m2, src_buf=theta_host)
@@ -645,17 +826,17 @@ def session(
 
     if mode == MODE_VALIDATE:
         var kept = List[FaustFloat]()
-        epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, n, block, nblocks, groups, nacc, ifreq, it60, igain, True, kept)
+        epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, index, n, block, nblocks, groups, nacc, True, kept)
         ctx.enqueue_copy(dst_buf=acc_host, src_buf=acc)
         ctx.enqueue_copy(dst_buf=e_host, src_buf=e)
         ctx.synchronize()
         # The CPU reference: one scalar instance per mode.
         var cpu = List[FaustFloat]()
-        for _ in range(4 * n * frames):
+        for _ in range(NOUT * n * frames):
             cpu.append(FaustFloat(0.0))
-        var buf = unsafe_alloc[FaustFloat](4 * block)
-        var heads = unsafe_alloc[Ptr[FaustFloat, MUT_NOTRK]](4)
-        for c in range(4):
+        var buf = unsafe_alloc[FaustFloat](NOUT * block)
+        var heads = unsafe_alloc[Ptr[FaustFloat, MUT_NOTRK]](NOUT)
+        for c in range(NOUT):
             heads.unsafe_offset(c).unsafe_write(buf.unsafe_offset(c * block).unsafe_origin_cast[MUT_NOTRK]())
         var inst = unsafe_alloc[refdsp](1)
         for k in range(n):
@@ -666,19 +847,21 @@ def session(
             zg.zones[index_of(zg.labels, "freq")][] = FaustFloat(start.freq[k])
             zg.zones[index_of(zg.labels, "t60")][] = FaustFloat(start.t60[k])
             zg.zones[index_of(zg.labels, "gain")][] = FaustFloat(start.gain[k])
+            if NP == 4:
+                zg.zones[index_of(zg.labels, "gainc")][] = FaustFloat(start.gainc[k])
             for b in range(nblocks):
                 inst[].compute(
                     S32(block),
                     heads.unsafe_origin_cast[MUT_NOTRK]().unsafe_bitcast[Ptr[FaustFloat, IMM_NOTRK]](),
                     heads.unsafe_origin_cast[MUT_NOTRK](),
                 )
-                for c in range(4):
+                for c in range(NOUT):
                     for i in range(block):
                         cpu[(c * n + k) * frames + b * block + i] = buf[unsafe_offset=c * block + i]
         # Outputs: GPU against CPU and against the closed form, per channel,
         # relative to the channel's peak over all modes.
         var worst = F64(0.0)
-        for c in range(4):
+        for c in range(NOUT):
             var peak = F64(0.0)
             var d_cpu = F64(0.0)
             var d_cf = F64(0.0)
@@ -686,9 +869,9 @@ def session(
                 for b in range(nblocks):
                     for i in range(block):
                         var t = b * block + i
-                        var got = F64(kept[b * 4 * n * block + (4 * k + c) * block + i])
+                        var got = F64(kept[b * NOUT * n * block + (NOUT * k + c) * block + i])
                         var want = F64(cpu[(c * n + k) * frames + t])
-                        var cf = closed_form(start.freq[k], start.t60[k], start.gain[k], t, c)
+                        var cf = closed_form(start.freq[k], start.t60[k], start.gain[k], start.gainc[k], t, c)
                         peak = max(peak, abs(cf))
                         d_cpu = max(d_cpu, abs(got - want))
                         d_cf = max(d_cf, abs(got - cf))
@@ -710,7 +893,7 @@ def session(
             d_e = max(d_e, abs(F64(e_host[t]) - x))
         print("residual peak", peak_e, "gpu_vs_cpu", d_e / peak_e)
         worst = max(worst, d_e / peak_e)
-        for j in range(3):
+        for j in range(NP):
             var d_g = F64(0.0)
             var peak_g = F64(0.0)
             for k in range(n):
@@ -735,15 +918,15 @@ def session(
         # The loss of the start (no step), and with `bench` the sum of the
         # gradient sums' magnitudes, which archs/modalfadcpu.cpp prints too.
         epoch(
-            ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host,
-            n, block, nblocks, groups, nacc, ifreq, it60, igain, False, none,
+            ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, index,
+            n, block, nblocks, groups, nacc, False, none,
         )
         var l0 = loss_now(ctx, e, e_host, frames, energy)
-        if mode != MODE_FIT:
+        if mode == MODE_BENCH:
             ctx.enqueue_copy(dst_buf=acc_host, src_buf=acc)
             ctx.synchronize()
             var gsum_abs = F64(0.0)
-            for i in range(3 * n):
+            for i in range(NP * n):
                 gsum_abs += abs(F64(acc_host[i]))
             print("loss_at_start", l0, "grad_abs_sum", gsum_abs)
         # With `fit`, the Gauss-Newton step is globalised: when the loss of
@@ -755,18 +938,22 @@ def session(
             var t0 = perf_counter_ns()
             # The pass at the parameters after `ep` steps.
             epoch(
-                ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host,
-                n, block, nblocks, groups, nacc, ifreq, it60, igain, False, none,
+                ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, index,
+                n, block, nblocks, groups, nacc, False, none,
             )
-            var logged = mode == MODE_FIT and ep % log_every == 0
+            var logged = (mode == MODE_FIT or mode == MODE_FILE) and ep % log_every == 0
             var lnow = F64(-1.0)
-            if mode == MODE_FIT and (use_gn or logged):
+            var fitting = mode == MODE_FIT or mode == MODE_FILE
+            if fitting and (use_gn or logged):
                 lnow = loss_now(ctx, e, e_host, frames, energy)
             if logged:
-                print("step", ep, "loss", lnow, "eta", eta_now if use_gn else F64(0.0))
+                print(
+                    "step", ep, "loss", lnow, "snr_db", -10.0 * log10(max(lnow, 1e-30)),
+                    "eta", eta_now if use_gn else F64(0.0),
+                )
             if use_gn:
                 var take = True
-                if mode == MODE_FIT:
+                if fitting:
                     if lnow > best * (1.0 + 1e-6):
                         take = False
                         ctx.enqueue_copy(dst_buf=theta, src_buf=theta_prev)
@@ -790,7 +977,7 @@ def session(
                 var bc2 = 1.0 - BETA2 ** F64(ep + 1)
                 ctx.enqueue_function[adam_kernel](
                     params, theta, m1, m2, scale, acc, S32(n),
-                    F32(lr_f * r), F32(lr_f * r), F32(lr_f * r), F32(bc1), F32(bc2), gscale,
+                    F32(lr_f * r), F32(bc1), F32(bc2), gscale,
                     grid_dim=grid(n), block_dim=GPU_BLOCK_DIM,
                 )
             ctx.synchronize()
@@ -804,17 +991,54 @@ def session(
             "epoch_ms", med, "ns_per_mode_sample", med * 1e6 / (F64(n) * F64(frames)),
         )
         result = med
-        if mode == MODE_FIT:
-            # A last pass for the loss after the last step, then recovery
-            # mode by mode.
-            epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, n, block, nblocks, groups, nacc, ifreq, it60, igain, False, none)
+        if mode == MODE_FIT or mode == MODE_FILE:
+            # A last pass for the loss after the last step (the best
+            # parameters again if that step was worse), then recovery mode by
+            # mode, or the files of `fit-file`.
+            epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, index, n, block, nblocks, groups, nacc, False, none)
             var lf = loss_now(ctx, e, e_host, frames, energy)
             if use_gn and lf > best:
                 ctx.enqueue_copy(dst_buf=params, src_buf=params_prev)
-                lf = best
-            print("step", epochs, "loss", lf)
+                epoch(ctx, dsps, state, params, acc, outs, chan, gsum, target, e, outs_host, index, n, block, nblocks, groups, nacc, False, none)
+                lf = loss_now(ctx, e, e_host, frames, energy)
+            print("step", epochs, "loss", lf, "snr_db", -10.0 * log10(max(lf, 1e-30)))
             ctx.enqueue_copy(dst_buf=params_host, src_buf=params)
             ctx.synchronize()
+            if mode == MODE_FILE:
+                var text = String("# freq t60 gain gainc\n")
+                var moved = List[F64]()
+                var silenced = 0
+                for k in range(n):
+                    var f = F64(params_host[k])
+                    var a = F64(params_host[2 * n + k])
+                    var ac = F64(params_host[3 * n + k]) if NP == 4 else 0.0
+                    text += String(f) + " " + String(F64(params_host[n + k])) + " " + String(a) + " " + String(ac) + "\n"
+                    moved.append(abs(f - start.freq[k]) / bandwidth(start.t60[k]))
+                    if sqrt(a * a + ac * ac) < 1e-3 * start.amplitude(k):
+                        silenced += 1
+                write_text(out_prefix + ".modes.txt", text)
+                var model = List[F32](capacity=frames)
+                var residual = List[F32](capacity=frames)
+                for i in range(frames):
+                    residual.append(F32(e_host[i]))
+                    model.append(F32(target_host[i]) - F32(e_host[i]))
+                write_f32(out_prefix + ".model.f32", model)
+                write_f32(out_prefix + ".residual.f32", residual)
+                # The median frequency move, in starting bandwidths.
+                for i in range(1, len(moved)):
+                    var x = moved[i]
+                    var jj = i - 1
+                    while jj >= 0 and moved[jj] > x:
+                        moved[jj + 1] = moved[jj]
+                        jj -= 1
+                    moved[jj + 1] = x
+                print(
+                    "modes", n, "frames", frames, "snr_db from", -10.0 * log10(max(l0, 1e-30)),
+                    "to", -10.0 * log10(max(lf, 1e-30)), "median freq move (bw)", moved[n // 2],
+                    "max", moved[n - 1], "silenced", silenced, "wrote", out_prefix + ".{modes.txt,model.f32,residual.f32}",
+                )
+                host.unsafe_free()
+                return lf
             # Recovered: frequency within 0.01 bandwidth, T60 and gain within
             # 1 % (strict), or within 0.1 bandwidth and 10 % (loose); the same
             # counts at the start, for reference.
@@ -831,7 +1055,9 @@ def session(
                 var bw = bandwidth(hidden.t60[k])
                 var ef = abs(F64(params_host[k]) - hidden.freq[k]) / bw
                 var et = abs(F64(params_host[n + k]) / hidden.t60[k] - 1.0)
-                var eg = abs(F64(params_host[2 * n + k]) / hidden.gain[k] - 1.0)
+                var dg = F64(params_host[2 * n + k]) - hidden.gain[k]
+                var dgc = F64(params_host[3 * n + k]) - hidden.gainc[k] if NP == 4 else 0.0
+                var eg = sqrt(dg * dg + dgc * dgc) / hidden.amplitude(k)
                 if ef < 0.01 and et < 0.01 and eg < 0.01:
                     strict += 1
                 var gap = F64(1e9)
@@ -847,7 +1073,9 @@ def session(
                     loose += 1
                 var sf = abs(start.freq[k] - hidden.freq[k]) / bw
                 var st = abs(start.t60[k] / hidden.t60[k] - 1.0)
-                var sg = abs(start.gain[k] / hidden.gain[k] - 1.0)
+                var sdg = start.gain[k] - hidden.gain[k]
+                var sdgc = start.gainc[k] - hidden.gainc[k]
+                var sg = sqrt(sdg * sdg + sdgc * sdgc) / hidden.amplitude(k)
                 if sf < 0.01 and st < 0.01 and sg < 0.01:
                     start_strict += 1
                 if sf < 0.1 and st < 0.1 and sg < 0.1:
@@ -869,6 +1097,7 @@ def main() raises -> None:
         raise Error(
             "usage: validate | bench <modes> [<block>] [adam|gn]"
             + " | fit <modes> <epochs> <sigma> [adam|gn] [<lr>] [<block>]"
+            + " | fit-file <target.f32> <modes.txt> <epochs> <out> [adam|gn] [<lr>] [<block>]"
         )
     if args[1] == "validate":
         var worst = session(48, 256, 1, 1.0, True, 0.0, MODE_VALIDATE, 24064)
@@ -883,5 +1112,15 @@ def main() raises -> None:
         var lr = atof(args[6]) if len(args) > 6 else 0.0
         var block = atol(args[7]) if len(args) > 7 else 1024
         _ = session(atol(args[2]), block, atol(args[3]), atof(args[4]), gn, lr, MODE_FIT)
+    elif args[1] == "fit-file":
+        if len(args) < 6:
+            raise Error("usage: fit-file <target.f32> <modes.txt> <epochs> <out> [adam|gn] [<lr>] [<block>]")
+        var gn = not (len(args) > 6 and args[6] == "adam")
+        var lr = atof(args[7]) if len(args) > 7 else 0.0
+        var block = atol(args[8]) if len(args) > 8 else 1024
+        _ = session(
+            0, block, atol(args[4]), 0.0, gn, lr, MODE_FILE, 0,
+            String(args[2]), String(args[3]), String(args[5]),
+        )
     else:
         raise Error("unknown mode")

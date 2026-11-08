@@ -387,7 +387,26 @@ Two limits, more important than the speed:
   reach those of the hidden bank. A longer signal, or a constraint on the
   number of modes, would be needed.
 
-A real recording has not been tried yet.
+**On a real bell.** For a recording, each mode also gets its own phase (a
+second amplitude, that of the cosine,
+`tests/corpus/gpu_modal_fad_voice_phase.dsp`). The starting point comes from
+the sound itself: the peaks of the spectrum, each one's decay, and the
+amplitudes of all the modes computed together (`tools/modal_init.py`). Two
+bells from Wikimedia Commons were tried:
+
+- **a small bell held by hand** does not obey the model: its partials glide
+  by several hertz and their level rises again afterwards. The learning
+  gains almost nothing there;
+- **the hour strike of St. Georgen** (St. Gallen), a fixed bell struck by its
+  hammer, suits it. Over 3.8 s of the last strike, 300 modes go from 6.3 dB
+  (the ratio of the target to what is left to explain, at the start) to
+  17.9 dB after 1,500 epochs, 98 % of the energy explained. What is left:
+  the end of the decay, a beating doublet of the hum, and the treble above
+  2 kHz, where the start placed no mode.
+
+More modes do not help: at 600 the result gets worse. At 300 modes the GPU
+is below its crossover; what serves here is the method, not the speed. The
+command is in §9.2.
 
 ## 7. CPU and GPU in the same program
 
@@ -658,6 +677,16 @@ It checks the derivatives and the GPU code, times one epoch on the GPU (with
 the state kept local, then without) and on the CPU, then runs a learning of
 `MODAL_EPOCHS` epochs from a start `MODAL_SIGMA` bandwidths away, with
 `MODAL_UPDATE` (`gn` or `adam`).
+
+The same learning on a recording one provides (sox and numpy are needed
+too):
+
+```bash
+make -C tests/impulse-tests mojo-gpu-modal-fad-bell MOJO=<mojo command> BELL_WAV=<file> BELL_START=<s> BELL_SECONDS=4
+```
+
+It writes the modes found, and the target, the model and the residual as WAV
+files at the same gain, to `tests/impulse-tests/build/mojo-gpu-modal-fad-bell/`.
 
 The Faust side is ordinary Faust. The partial of the choir starts like this:
 

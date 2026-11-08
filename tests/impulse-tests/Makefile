@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-modal-fad mojo-gpu-modal-fad-build mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-modal-fad mojo-gpu-modal-fad-build mojo-gpu-modal-fad-bell mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -451,6 +451,42 @@ mojo-gpu-modal-fad: mojo-gpu-modal-fad-build
 	build/mojo-gpu-modal-fad/modalfadcpu bench $(MODAL) $(MODAL_THREADS)
 	build/mojo-gpu-modal-fad/modalfad fit $(MODAL) $(MODAL_EPOCHS) $(MODAL_SIGMA) $(MODAL_UPDATE)
 
+# The same fit against a recording (`fit-file`, NPARAM=4): BELL_WAV, a struck
+# object recorded by the user (any format sox reads; not in the repository),
+# from BELL_START seconds, BELL_SECONDS after the strike. Starting modes from
+# the spectrum (tools/modal_init.py, needs numpy: BELL_MODES peaks), then
+# BELL_EPOCHS epochs of BELL_UPDATE at rate BELL_LR on the GPU, one instance
+# of ../corpus/gpu_modal_fad_voice_phase.dsp per mode. Writes the fitted modes
+# (fit.modes.txt) and target.wav, model.wav and residual.wav, all three at the
+# target's gain, to build/mojo-gpu-modal-fad-bell/.
+BELL_WAV ?=
+BELL_START ?= 0
+BELL_SECONDS ?= 4
+BELL_MODES ?= 300
+BELL_EPOCHS ?= 1500
+BELL_UPDATE ?= adam
+BELL_LR ?= 0.05
+BELL_DIR = build/mojo-gpu-modal-fad-bell
+mojo-gpu-modal-fad-bell:
+	@test -n "$(BELL_WAV)" || { echo "mojo-gpu-modal-fad-bell: name a recording with BELL_WAV=<file>" >&2; false; }
+	cargo build --release -p compiler --example mojo_batch
+	mkdir -p $(BELL_DIR)
+	../../target/release/examples/mojo_batch ../corpus/gpu_modal_fad_voice_phase.dsp --cn modaldsp -o $(BELL_DIR)/modal.mojo
+	$(FAUST_RS) -lang mojo -single -cn refdsp ../corpus/gpu_modal_fad_voice_phase.dsp -o $(BELL_DIR)/ref.mojo
+	cat archs/impulsemojo.mojo $(BELL_DIR)/modal.mojo $(BELL_DIR)/ref.mojo archs/modalfadmojogpubatch.mojo \
+	  > $(BELL_DIR)/modal_main.mojo
+	$(MOJO) build $(BELL_DIR)/modal_main.mojo -o $(BELL_DIR)/modalfad -O3 -D DFAUST=DType.float32 -D NPARAM=4
+	$(BELL_DIR)/modalfad validate
+	sox "$(BELL_WAV)" -r 48000 -c 1 -t f32 $(BELL_DIR)/recording.f32
+	python3 tools/modal_init.py $(BELL_DIR)/recording.f32 $(BELL_DIR)/bell \
+	  --start $(BELL_START) --seconds $(BELL_SECONDS) --modes $(BELL_MODES)
+	$(BELL_DIR)/modalfad fit-file $(BELL_DIR)/bell.target.f32 $(BELL_DIR)/bell.modes.txt $(BELL_EPOCHS) \
+	  $(BELL_DIR)/fit $(BELL_UPDATE) $(BELL_LR)
+	gain=`sox -t f32 -r 48000 -c 1 $(BELL_DIR)/bell.target.f32 -n stat -v 2>&1`; \
+	sox -t f32 -r 48000 -c 1 $(BELL_DIR)/bell.target.f32 -b 24 $(BELL_DIR)/target.wav vol $$gain; \
+	sox -t f32 -r 48000 -c 1 $(BELL_DIR)/fit.model.f32 -b 24 $(BELL_DIR)/model.wav vol $$gain; \
+	sox -t f32 -r 48000 -c 1 $(BELL_DIR)/fit.residual.f32 -b 24 $(BELL_DIR)/residual.wav vol $$gain
+
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).
 mojo-gpu-bench:
@@ -527,6 +563,7 @@ help:
 	@echo "  mojo-gpu-choir-reverb : the same choir in a hall, the reverb on the CPU (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-choir-render : both choir versions rendered offline to WAV files"
 	@echo "  mojo-gpu-modal-fad : fits thousands of modes to a target by fad on the GPU, against the CPU (needs MOJO)"
+	@echo "  mojo-gpu-modal-fad-bell : the same fit against a recording, BELL_WAV=<file> (needs MOJO, sox, numpy)"
 	@echo "  mojo-gpu-bench : GPU against CPU timings for many voices (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-bench-batch : the same with the batch layout (structure of arrays)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"

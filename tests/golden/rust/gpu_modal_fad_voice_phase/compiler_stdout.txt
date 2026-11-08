@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_modal_fad_voice_phase.dsp
+bytes=1168
+lines=25
+fnv1a64=b05f87963a50ac6a

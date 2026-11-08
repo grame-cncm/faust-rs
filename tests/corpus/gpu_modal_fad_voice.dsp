@@ -17,7 +17,8 @@
 //
 // `plain` is the same mode without tangents (`-pn plain`), the cheaper
 // forward pass a CPU fit uses to form the residual; `resonator` is shared
-// with gpu_modal_fad_group.dsp, the grouped program of that CPU fit.
+// with gpu_modal_fad_group.dsp, the grouped program of that CPU fit, and
+// `rotor` with gpu_modal_fad_voice_phase.dsp, the mode with a free phase.
 //
 // Self-contained (no library). Per sample: one complex multiply for the
 // primal, three for the tangents (augmented-state recursion).
@@ -30,13 +31,16 @@ t60 = hslider("t60", 1, 0.001, 60, 0.0001);
 gain = hslider("gain", 0.1, -10, 10, 0.000001);
 
 // The mode, struck at the first sample: the state (u, v) = r^n (cos wn, sin wn).
-resonator(freq, t60) = (rot ~ (_, _)) : (!, _)
+// `rotor` outputs both (gpu_modal_fad_voice_phase.dsp uses the pair),
+// `resonator` the sine.
+rotor(freq, t60) = rot ~ (_, _)
 with {
     w = 2 * PI * freq / SR;
     r = pow(0.001, 1 / (t60 * SR));
     imp = 1 - 1';
     rot(u, v) = r * (cos(w) * u - sin(w) * v) + imp, r * (sin(w) * u + cos(w) * v);
 };
+resonator(freq, t60) = rotor(freq, t60) : (!, _);
 
 plain = gain * resonator(freq, t60);
 process = fad(gain * resonator(freq, t60), (freq, t60, gain));
