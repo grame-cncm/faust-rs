@@ -671,6 +671,52 @@ fn batch_mode_emits_the_batch_contract() {
     );
 }
 
+/// With `batch_registers` (the default), `compute` reads the arenas only to
+/// initialise its `_reg` locals and writes them only as stores: no
+/// expression reads state from memory, except a delay line at a dynamic
+/// index (`fir::batch::promote_state`). Without the option, expressions read
+/// the arenas directly.
+#[test]
+fn batch_registers_keep_compute_expressions_off_the_arenas() {
+    let (store, module) = build_batch_test_module();
+    // Lines of `compute` that read an arena inside an expression.
+    let arena_reads = |out: &str| -> Vec<String> {
+        let start = out
+            .find("var count: S32, var inputs: ImmStreams")
+            .expect("compute");
+        let body = &out[start..];
+        let end = body[1..].find("\n    def ").map_or(body.len(), |e| e + 1);
+        body[..end]
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let line = line.trim();
+                let rhs = if line.starts_with("var ") && line.contains("_reg") {
+                    return None;
+                } else if line.starts_with("dsp.state_") {
+                    line.split_once("] = ").map_or(line, |(_, rhs)| rhs)
+                } else {
+                    line
+                };
+                rhs.contains("dsp.state_").then(|| line.to_owned())
+            })
+            .collect()
+    };
+    let promoted = generate_mojo_module(&store, module, &batch_options()).unwrap();
+    assert_eq!(arena_reads(&promoted), Vec::<String>::new(), "{promoted}");
+    assert!(
+        promoted.contains("var rec0_reg1: FaustFloat = dsp.state_"),
+        "{promoted}"
+    );
+    let plain = MojoOptions {
+        batch_registers: false,
+        ..batch_options()
+    };
+    let unpromoted = generate_mojo_module(&store, module, &plain).unwrap();
+    assert!(!arena_reads(&unpromoted).is_empty(), "{unpromoted}");
+    assert!(!unpromoted.contains("_reg"), "{unpromoted}");
+}
+
 /// The lifecycle contract (`porting/backend-lifecycle-contract-en.md`) in
 /// its batch form: `class_init` once for all voices, `instance_init(voice)`
 /// = constants, reset, clear of that voice, never `class_init`.

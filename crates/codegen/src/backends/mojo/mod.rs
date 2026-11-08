@@ -104,6 +104,15 @@ pub struct MojoOptions {
     /// plan G3.5, `porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`
     /// §3.5). An emitter option only (decision D3): no CLI surface.
     pub batch: bool,
+    /// With `batch`, keep the `compute` state in locals for the sample loop
+    /// (`fir::batch::promote_state`, run before the layout): every per-voice
+    /// field `compute` reaches only as a scalar or at literal indices is read
+    /// once at the head of `compute` and written back at its end, instead of
+    /// going through the voice arenas at every sample, which Mojo does not
+    /// keep in registers (plan
+    /// `porting/batch-state-register-promotion-plan-2026-11-08-en.md`).
+    /// `false` emits the arena accesses as they are, for A/B measurements.
+    pub batch_registers: bool,
 }
 
 impl Default for MojoOptions {
@@ -117,6 +126,7 @@ impl Default for MojoOptions {
             metadata_entries: Vec::new(),
             dsp_json: None,
             batch: false,
+            batch_registers: true,
         }
     }
 }
@@ -211,8 +221,23 @@ fn generate_mojo_module_step(
         CodegenError::new(CodegenErrorCode::InvalidModuleSection, message).at_node(module)
     })?;
     let (store, module) = prepared.as_ref().map_or((store, module), |(s, m)| (s, *m));
-    // Batch contract: the per-voice state laid out as a structure of arrays,
-    // the output accepted by the pass's independent checker.
+    // Batch contract: the `compute` state promoted to locals, then the
+    // per-voice state laid out as a structure of arrays, each output accepted
+    // by its pass's independent checker.
+    let promoted = if options.batch && options.batch_registers {
+        Some(fir::batch::promote_state(store, module).map_err(|err| {
+            CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("batch state promotion: {err}"),
+            )
+            .at_node(module)
+        })?)
+    } else {
+        None
+    };
+    let (store, module) = promoted
+        .as_ref()
+        .map_or((store, module), |(s, m, _)| (s, *m));
     let batched = if options.batch {
         Some(fir::batch::layout_voices(store, module).map_err(|err| {
             CodegenError::new(

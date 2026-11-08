@@ -1565,6 +1565,7 @@ enum FirMathOp
 enum FirType
 enum FlattenError
 enum InitStatus
+enum PromoteError
 enum Severity
 enum SliderType
 enum SubModuleStatePolicy
@@ -1647,6 +1648,7 @@ fn VoiceLayout::placement
 fn analyze_fir_inliner
 fn arena_name
 fn canonical_fir_fingerprint
+fn check_promotion
 fn check_voice_layout
 fn clone_fir_hygienic
 fn clone_fir_hygienic_with_state
@@ -1662,6 +1664,7 @@ fn is_obviously_side_effect_free_value
 fn layout_voices
 fn match_fir
 fn prepare_callee_body_for_inlining
+fn promote_state
 fn promote_static_tables_to_struct
 fn qualify_struct_access
 fn qualify_sub_module_bodies
@@ -1678,6 +1681,7 @@ mod check
 mod checker
 mod helpers
 mod inliner
+mod promote_check
 mod schedule
 mod subcontainer
 struct Arena
@@ -1705,12 +1709,16 @@ struct LayoutViolation
 struct ModuleSymbols
 struct NamedType
 struct Placement
+struct PromotedElement
+struct PromotedState
+struct PromotionViolation
 struct SliderRange
 struct VoiceLayout
 type FirId
 use builder::FirBuilder
 use dump
 use matcher
+use promote
 use store::FirStore
 use tlib::on_compile_stack
 use types

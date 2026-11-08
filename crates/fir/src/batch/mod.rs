@@ -31,9 +31,15 @@
 //!   (Rust-only, `adapted`); C++ Faust has no multi-voice state layout.
 
 #[cfg(test)]
+mod promote_tests;
+#[cfg(test)]
 mod tests;
 
 pub mod check;
+mod promote;
+pub mod promote_check;
+
+pub use promote::{PromoteError, PromotedElement, PromotedState, promote_state};
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;

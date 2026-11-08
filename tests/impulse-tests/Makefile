@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-modal-fad mojo-gpu-modal-fad-build mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -407,6 +407,50 @@ mojo-gpu-choir-render: mojo-gpu-choir-build
 	build/mojo-gpu-choir/choir render $(CHOIR) 69 build/mojo-gpu-choir/choir-reverb.f32 reverb
 	python3 tools/f32_to_wav.py build/mojo-gpu-choir/choir-reverb.f32 build/mojo-gpu-choir/choir-reverb.wav
 
+# Modal sound matching by `fad` on the GPU (archs/modalfadmojogpubatch.mojo):
+# a bank of MODAL modes, one instance of ../corpus/gpu_modal_fad_voice.dsp
+# per mode (y and its three tangents), fitted to a synthetic target (a hidden
+# bank) from a start MODAL_SIGMA bandwidths away, for MODAL_EPOCHS epochs of
+# MODAL_UPDATE (gn: damped Gauss-Newton per mode; adam). Validates the
+# outputs and gradients (GPU against the CPU program and the closed form),
+# times one epoch on the GPU twice, with the batch code as emitted (its
+# `compute` state in locals, `fir::batch::promote_state`) and with every
+# state access left in the voice arenas (`mojo_batch --no-registers`), and
+# against the CPU baseline: archs/modalfadcpu.cpp, the same fit with
+# ../corpus/gpu_modal_fad_group.dsp (four modes per program) compiled by
+# clang and run on MODAL_THREADS threads; then fits.
+MODAL ?= 4096
+MODAL_EPOCHS ?= 300
+MODAL_SIGMA ?= 0.5
+MODAL_UPDATE ?= gn
+MODAL_THREADS ?= 1 4 10
+CXX_MODAL ?= clang++ -std=c++17 -O3 -ffast-math -mcpu=native
+mojo-gpu-modal-fad-build:
+	cargo build --release -p compiler --example mojo_batch
+	mkdir -p build/mojo-gpu-modal-fad
+	../../target/release/examples/mojo_batch ../corpus/gpu_modal_fad_voice.dsp --cn modaldsp -o build/mojo-gpu-modal-fad/modal.mojo
+	../../target/release/examples/mojo_batch ../corpus/gpu_modal_fad_voice.dsp --cn modaldsp --no-registers -o build/mojo-gpu-modal-fad/modal_arena.mojo
+	$(FAUST_RS) -lang mojo -single -cn refdsp ../corpus/gpu_modal_fad_voice.dsp -o build/mojo-gpu-modal-fad/ref.mojo
+	cat archs/impulsemojo.mojo build/mojo-gpu-modal-fad/modal.mojo build/mojo-gpu-modal-fad/ref.mojo \
+	  archs/modalfadmojogpubatch.mojo > build/mojo-gpu-modal-fad/modal_main.mojo
+	cat archs/impulsemojo.mojo build/mojo-gpu-modal-fad/modal_arena.mojo build/mojo-gpu-modal-fad/ref.mojo \
+	  archs/modalfadmojogpubatch.mojo > build/mojo-gpu-modal-fad/modal_arena_main.mojo
+	$(MOJO) build build/mojo-gpu-modal-fad/modal_main.mojo -o build/mojo-gpu-modal-fad/modalfad -O3 -D DFAUST=DType.float32
+	$(MOJO) build build/mojo-gpu-modal-fad/modal_arena_main.mojo -o build/mojo-gpu-modal-fad/modalfad_arena -O3 -D DFAUST=DType.float32
+	$(FAUST_RS) -lang cpp -single -cn plainvoice -pn plain ../corpus/gpu_modal_fad_group.dsp -o build/mojo-gpu-modal-fad/plain.cpp
+	$(FAUST_RS) -lang cpp -single -cn fadvoice ../corpus/gpu_modal_fad_group.dsp -o build/mojo-gpu-modal-fad/fad.cpp
+	{ cat archs/modalfadcpu.cpp build/mojo-gpu-modal-fad/plain.cpp build/mojo-gpu-modal-fad/fad.cpp; \
+	  echo '#define MODALFAD_DRIVER'; echo '#define MODALFAD_GROUP 4'; cat archs/modalfadcpu.cpp; } \
+	  > build/mojo-gpu-modal-fad/modalfadcpu_main.cpp
+	$(CXX_MODAL) build/mojo-gpu-modal-fad/modalfadcpu_main.cpp -o build/mojo-gpu-modal-fad/modalfadcpu
+	build/mojo-gpu-modal-fad/modalfad validate
+	build/mojo-gpu-modal-fad/modalfad_arena validate
+mojo-gpu-modal-fad: mojo-gpu-modal-fad-build
+	build/mojo-gpu-modal-fad/modalfad bench $(MODAL)
+	build/mojo-gpu-modal-fad/modalfad_arena bench $(MODAL)
+	build/mojo-gpu-modal-fad/modalfadcpu bench $(MODAL) $(MODAL_THREADS)
+	build/mojo-gpu-modal-fad/modalfad fit $(MODAL) $(MODAL_EPOCHS) $(MODAL_SIGMA) $(MODAL_UPDATE)
+
 # The cost model of the GPU lane (G2): timings over voices x block sizes, to
 # build/mojo-gpu-bench/results.csv. Runs serially (-j would skew timings).
 mojo-gpu-bench:
@@ -482,6 +526,7 @@ help:
 	@echo "  mojo-gpu-choir : an additive choir, ~48,000 rich partials on the GPU (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-choir-reverb : the same choir in a hall, the reverb on the CPU (needs MOJO, PortAudio)"
 	@echo "  mojo-gpu-choir-render : both choir versions rendered offline to WAV files"
+	@echo "  mojo-gpu-modal-fad : fits thousands of modes to a target by fad on the GPU, against the CPU (needs MOJO)"
 	@echo "  mojo-gpu-bench : GPU against CPU timings for many voices (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-bench-batch : the same with the batch layout (structure of arrays)"
 	@echo "  cmajor         : check scalar Cmajor via cmaj-generated C++ (external)"

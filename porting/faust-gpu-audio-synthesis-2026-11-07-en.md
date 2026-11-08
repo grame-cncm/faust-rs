@@ -487,6 +487,11 @@ scalar contract, its 50 modes in one `compute`), the bells split over 1, 4 or
 | 256 | 12,800 | 0.84 ms | 3.47 ms | 0.97 ms | 4.87 ms | ×1.15 |
 | 1,024 | 51,200 | 2.0 ms | 13.7 ms | 3.88 ms | 19.6 ms | ×1.9 |
 
+- Since 2026-11-08 the batch `compute` keeps its state in locals (§7). One
+  re-run at 256 bells gives 0.46 ms on the GPU against 1.14 ms for the best
+  CPU threads in the same process: ×2.5 where the table shows ×1.15. The
+  table is kept as measured; the crossover is now well below 220 bells, but
+  it was not re-measured.
 - The 10 threads were slower than the 4 at every size.
 - The one-thread column agrees with LLVM: `faustbench-llvm` puts one
   `pm.standardBell` at 0.23 % of a core at 48 kHz, and 37 distinct bells in
@@ -614,6 +619,150 @@ tangent or one gradient per instance.
 The limits are `f32` precision for gradients, and the memory of `rad` tapes,
 which grows as N × block × tape width.
 
+### Modal sound matching by `fad` (measured, 2026-11-08)
+
+A prototype of the learning case: a bank of N modes fitted to a target
+signal by gradient descent, one GPU instance per mode.
+
+- **The voice** (`tests/corpus/gpu_modal_fad_voice.dsp`) is one mode struck by
+  an impulse: a damped rotation (the `fi.nlf2` form `pm.modeFilter` uses), with
+  controls `freq`, `t60` and `gain`. It outputs y and its three tangents,
+  `fad(gain * resonator(freq, t60), (freq, t60, gain))`. faustprobe
+  `--fd-check` in double agrees to 3e-10.
+- **The loss** is L = Σ e² / Σ target², with e = target − Σ y_k over 1.024 s
+  at 48 kHz. The gradient of mode k is −2 Σ e · ∂y_k/∂θ_k, normalised the
+  same way.
+- **One epoch is one pass, not two.** The loss is a sum over time of a
+  function of the mix at that time. So e on one block needs only that block of
+  every mode. Per block:
+  - the voice kernel first reduces its own tangents of the previous block
+    against that block's e (the outputs are still in place), then computes
+    the next block;
+  - a two-stage mix (the choir's) writes e = target − mix.
+
+  No tangent outlives its block: memory is N × 4 × block floats.
+- **Two updates**, one GPU thread per mode, in the coordinates
+  (freq / bandwidth, log T60, gain / |gain at start|):
+  - Adam, with a cosine-decayed rate;
+  - a damped **Gauss-Newton per mode**. Six more sums give each mode the 3×3
+    Gram matrix of its tangents, and each mode solves for its own three
+    parameters against the shared residual (a block-Jacobi step). Overlapping
+    modes correct the same residual at once and overshoot together, so the
+    fit globalises the step: a step that raises the loss is undone and its
+    factor halved.
+- **The target is synthetic:** a hidden bank of N modes, rendered by the same
+  voice on the GPU, so recovery is checked mode by mode.
+  - Frequencies lie on a jittered grid from 100 Hz to 16 kHz, T60 from 2.5 s
+    down to 0.4 s, and gains have random signs over 24 dB.
+  - The fit starts σ bandwidths away from the truth: each frequency moved by
+    σ times its bandwidth (Gaussian), T60 and gain by 0.3σ (relative).
+  - "Strict" recovery means a frequency within 0.01 bandwidth, and T60 and
+    gain within 1 %.
+- **Validation** (`validate`, 48 modes, 0.5 s) compares, mode by mode, the GPU
+  against the scalar program on the CPU, the closed form in f64, the CPU
+  residual and the gradient sums formed in f64. The worst relative difference
+  is 1.1e-3, on dy/dt60. This is f32 drift: the device's `cos`, `sin` and
+  `pow` differ from the CPU's by an ulp, and a recursion turns that into a
+  phase that grows with time. Both sides start from the same loss (0.93498
+  against 0.93501 for 1,024 modes) and the same total gradient (6,922.9
+  against 6,923.6).
+
+**Cost of one epoch.** Measured as the median epoch, block 1,024, on an Apple
+M5 (4 performance and 6 efficiency cores).
+
+The CPU baseline (`archs/modalfadcpu.cpp`) is the same fit written for a CPU
+and compiled by clang `-O3 -ffast-math`, in two passes:
+
+1. the modes without tangents give e;
+2. the `fad` program reduces against it.
+
+It runs **four modes per program** (`tests/corpus/gpu_modal_fad_group.dsp`).
+One mode per instance is bound by the latency of its recursion, 9.1 ns per
+mode and sample on one core. Four or eight independent modes in one sample
+loop bring that to 4.7 ns, sixteen to 4.9, and thirty-two spill (9.8). Both
+sides print the same starting loss and total gradient.
+
+| modes | GPU, state in the arenas | GPU, state in locals | CPU, 1 core | CPU, 10 threads | GPU (locals) vs CPU |
+|---|---|---|---|---|---|
+| 1,024 | 75 ms | 13.6 ms | 235 ms | 42–49 ms | ×3.1 |
+| 4,096 | 128 ms | 64 ms | 958 ms | 162–172 ms | ×2.5 |
+| 16,384 | 659 ms | 291 ms | 3.9 s | 622–680 ms | ×2.1 |
+
+- The CPU column varied by about 15 % between runs; the range shows the
+  clean runs.
+- The two updates cost the same: the Gauss-Newton sums add under 3 %.
+- **With every state access in the voice arenas, the batch code loses to the
+  CPU at 1,024 modes (×0.57) and breaks even above (×1.3, ×0.94).** That was
+  the batch code as first emitted: its `compute` read and wrote every
+  recursion's state in device memory at every sample, 25 loads and 18 stores
+  for this voice. Mojo cannot keep them in registers, because the state
+  pointer may alias the outputs. With few threads per GPU core, the sample
+  loop then waits on those round trips: 1.5 ns per mode and sample at 1,024
+  modes.
+- **With the state in locals for the sample loop, the epoch is 2.0 to 5.5
+  times faster, and the GPU gains ×2 to ×3.1 over the whole CPU.** The
+  column was first measured with a text rewrite of the generated Mojo. The
+  compiler now does the same, by a FIR pass of the batch form
+  (`fir::batch::promote_state`, plan
+  `porting/batch-state-register-promotion-plan-2026-11-08-en.md`). In one run
+  the pass's output and the rewrite's timed 14.8 against 14.7 ms, 67.8
+  against 67.8 ms and 292 against 293 ms. `mojo_batch --no-registers` still
+  emits the arena form for comparison.
+- The remaining cost is memory traffic: four outputs written per mode and
+  sample, then read back by the reductions. That is why the gain shrinks as
+  N grows.
+
+**Convergence** (state in locals, 300 epochs; one epoch is 14 ms at
+1,024 modes, so a run takes about 4 s):
+
+| modes | σ | update | loss from → to | strict | loose (0.1 bw, 10 %) |
+|---|---|---|---|---|---|
+| 1,024 | 0.25 | Gauss-Newton | 0.13 → 2.5e-8 | 1,021 | 1,024 |
+| 1,024 | 0.25 | Adam | 0.13 → 3.2e-7 | 1,021 | 1,023 |
+| 1,024 | 0.5 | Gauss-Newton | 0.40 → 7.0e-5 | 1,001 | 1,013 |
+| 1,024 | 0.5 | Adam | 0.40 → 3.0e-5 | 987 | 1,009 |
+| 1,024 | 1 | Gauss-Newton | 0.93 → 6.1e-4 | 914 | 967 |
+| 1,024 | 1 | Adam | 0.93 → 1.8e-3 | 622 | 884 |
+| 1,024 | 2 | Gauss-Newton | 2.0 → 4.5e-2 | 268 | 540 |
+| 1,024 | 2 | Adam | 2.0 → 2.8e-2 | 154 | 433 |
+| 4,096 | 0.5 | Gauss-Newton | 0.39 → 5.0e-4 | 317 | 1,347 |
+| 4,096 | 0.5 | Adam | 0.39 → 7.4e-4 | 319 | 1,246 |
+| 16,384 | 0.5 | Gauss-Newton | 0.36 → 4.4e-4 | 2 | 430 |
+| 16,384 | 0.5 | Adam | 0.36 → 2.4e-4 | 1 | 372 |
+
+- **Gauss-Newton per mode converges in about 15 epochs** where the modes are
+  separated: at 1,024 modes and σ = 0.5 it reaches 1.4e-4 at epoch 15, where
+  Adam is at 3.8e-2. Adam catches up only after 150 epochs and a tuned rate:
+  0.1 recovers 987 modes, 0.01 recovers 440, 0.005 recovers 170.
+- **The basin is about one bandwidth.** From σ = 0.25 every isolated mode is
+  recovered strictly (693 of 693). From σ = 1, 89 % of all modes are
+  recovered, and from σ = 2 a quarter.
+  This is the time-domain loss: a frequency error of one bandwidth turns the
+  mode's correlation with the target to noise within its decay. A real
+  pipeline needs a front end that starts each mode within a bandwidth (peak
+  picking with sub-bin interpolation). The fit refines; it does not search.
+- **Dense banks are not identifiable.** At 4,096 modes on 100 Hz–16 kHz the
+  grid step is 3.9 Hz, below most bandwidths. Only 10 modes are isolated
+  (both neighbours more than 2 (bw + 1/T) away), and all 10 are recovered.
+  At 16,384 modes the loss falls by three orders while the parameters move
+  away from the truth: 676 modes are loosely right at the start, 372 to 430
+  at the end. The bank explains the signal with other modes. More modes than
+  the signal resolves need a longer signal, a prior or a sparsity term. A
+  faster optimiser does not help.
+
+What this says about the GPU: the learning case is where the batch axis
+pays, because the blocks are long and no latency applies. The fit refines
+1,024 modes in a few seconds and 16,384 at 0.3 s per epoch. But the gain over
+the whole CPU is ×2 to ×3.1, and only with the state kept in locals: the
+first batch code did not beat ten CPU threads below a few thousand modes. `rad` was not tried: its per-voice tape (§5, learning)
+grows with the signal length, where `fad` needs memory only for N × 4 × block.
+
+The lane is `make -C tests/impulse-tests mojo-gpu-modal-fad MOJO=<mojo>`
+(`MODAL`, `MODAL_EPOCHS`, `MODAL_SIGMA`, `MODAL_UPDATE`, `MODAL_THREADS`). It
+builds both GPU binaries and the CPU baseline, validates both GPU builds,
+times all three and runs one fit. A recorded or rendered bell as the target
+was not attempted.
+
 ## 6. A decision guide
 
 | question | GPU worth trying | stay on the CPU |
@@ -628,6 +777,14 @@ which grows as N × block × tape width.
 
 ## 7. What would come next
 
+- **Re-measure the other sections with the state in locals.** Since
+  2026-11-08 the batch `compute` reads its per-voice state once into locals
+  and writes it back at the end (`fir::batch::promote_state`). This made the
+  modal fit's epoch 2 to 5.5 times faster (§5, modal sound matching). The
+  carillon, re-run once, went from 0.84 ms to 0.46 ms per block at 256
+  bells: ×2.5 over the CPU threads, where §5 records ×1.15. The other timings
+  of this document predate the pass, and its crossovers are pessimistic for
+  that reason.
 - **SIMD across voices on the CPU.** The structure-of-arrays layout lets a
   CPU process 4 to 16 voices per instruction. This would give the fair
   baseline, and probably a CPU win of its own for small programs (§4). It is

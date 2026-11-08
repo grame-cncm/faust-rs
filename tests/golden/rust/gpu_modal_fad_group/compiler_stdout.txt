@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=gpu_modal_fad_group.dsp
+bytes=1214
+lines=24
+fnv1a64=91145b828b500839

@@ -115,6 +115,19 @@ See the design write-up in
      and `choir-reverb.wav` (one cycle and the hall's tail, 69 s): 24-bit,
      48 kHz, peak at -1 dBFS (`render <singers> <seconds> <out.f32> [reverb
      ...]`, then `tools/f32_to_wav.py`).
+   - `make mojo-gpu-modal-fad` — modal sound matching by `fad`: a bank of
+     `MODAL` (4,096) modes, one GPU instance of
+     `../corpus/gpu_modal_fad_voice.dsp` per mode (y and its three tangents),
+     fitted to a synthetic target from a start `MODAL_SIGMA` (0.5)
+     bandwidths away, for `MODAL_EPOCHS` (300) epochs of `MODAL_UPDATE` (`gn`,
+     a damped Gauss-Newton per mode, or `adam`). It validates the GPU outputs
+     and gradients against the scalar CPU program and the closed form, then
+     times one epoch three ways: on the GPU with the batch code as emitted
+     (its `compute` state in locals), on the GPU with every state access left
+     in the voice arenas (`mojo_batch --no-registers`), and on the CPU (`archs/modalfadcpu.cpp`: the same fit,
+     four modes per program from `../corpus/gpu_modal_fad_group.dsp`,
+     compiled by clang, on `MODAL_THREADS` threads). Then it runs one fit
+     (`archs/modalfadmojogpubatch.mojo`; no PortAudio).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

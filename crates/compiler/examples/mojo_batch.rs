@@ -35,6 +35,10 @@ struct Args {
     /// Name of the generated struct.
     #[arg(long = "cn", default_value = "mydsp")]
     class_name: String,
+    /// Keep every per-voice state access in the voice arenas, as before the
+    /// state promotion (`MojoOptions::batch_registers`), for A/B timings.
+    #[arg(long = "no-registers")]
+    no_registers: bool,
 }
 
 fn main() -> ExitCode {
@@ -47,6 +51,7 @@ fn main() -> ExitCode {
             MojoRealType::Float32
         },
         batch: true,
+        batch_registers: !args.no_registers,
         ..MojoOptions::default()
     };
     match Compiler::new().compile_file_to_mojo(&args.input, &args.include, &options) {

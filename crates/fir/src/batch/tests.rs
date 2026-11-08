@@ -47,22 +47,27 @@ fn sample_rate_arg() -> NamedType {
 
 /// Options that make the module wrong in one way, for the refusal tests.
 #[derive(Default, Clone, Copy)]
-struct Twist {
+pub(super) struct Twist {
     /// `staticInit` also writes `fIOTA`, an instance field.
-    shared_and_instance: bool,
+    pub(super) shared_and_instance: bool,
     /// `compute` takes the address of `fRec0`.
-    address: bool,
+    pub(super) address: bool,
     /// The module already declares `fVoices`.
-    voices_taken: bool,
+    pub(super) voices_taken: bool,
     /// `fHslider0` is declared `Quad`.
-    quad: bool,
+    pub(super) quad: bool,
     /// `instanceResetUserInterface` stores a `Float32` constant into the
     /// `FaustFloat` control, as the producer does with a `StoreVar`.
-    uncast_store: bool,
+    pub(super) uncast_store: bool,
+    /// `compute` ends with a `Return` (state promotion refusal).
+    pub(super) early_return: bool,
+    /// `compute` calls `instanceClear`, a function of the module (state
+    /// promotion refusal).
+    pub(super) module_call: bool,
 }
 
 /// The module of the file doc, and its store.
-fn module(twist: Twist) -> (FirStore, FirId) {
+pub(super) fn module(twist: Twist) -> (FirStore, FirId) {
     let mut s = FirStore::new();
     let mut b = FirBuilder::new(&mut s);
 
@@ -169,6 +174,13 @@ fn module(twist: Twist) -> (FirStore, FirId) {
         let addr = b.load_var_address("fRec0", AccessType::Struct, arr(FF, 2));
         compute_body.push(b.drop_(addr));
     }
+    if twist.module_call {
+        let call = b.fun_call("instanceClear", &[], FirType::Void);
+        compute_body.push(b.drop_(call));
+    }
+    if twist.early_return {
+        compute_body.push(b.ret(None));
+    }
     let compute_body = b.block(&compute_body);
     let streams = FirType::Ptr(Box::new(FirType::Ptr(Box::new(FF))));
     let compute = fun(
@@ -225,7 +237,7 @@ fn sections(s: &FirStore, root: FirId) -> (Vec<FirId>, Vec<FirId>, Vec<FirId>) {
     (items(dsp_struct), items(functions), items(static_decls))
 }
 
-fn function(s: &FirStore, root: FirId, name: &str) -> (Vec<NamedType>, FirType, FirId) {
+pub(super) fn function(s: &FirStore, root: FirId, name: &str) -> (Vec<NamedType>, FirType, FirId) {
     let (_, functions, _) = sections(s, root);
     functions
         .into_iter()

@@ -200,11 +200,22 @@ fn options(opt_level: i32) -> InterpOptions {
 }
 
 /// The differential for one program: every voice of its batch layout,
-/// bit-identical to an independent scalar instance.
+/// bit-identical to an independent scalar instance; with and without the
+/// `compute` state promoted to locals first (`fir::batch::promote_state`,
+/// plan `porting/batch-state-register-promotion-plan-2026-11-08-en.md` §5.3).
 fn check_program(name: &str, source: &str) {
-    {
+    for promote in [false, true] {
         let (store, module) = flat_module(name, source);
-        let (bstore, broot, layout) = fir::batch::layout_voices(&store, module)
+        let (pstore, pmodule) = if promote {
+            let (pstore, pmodule, _) = fir::batch::promote_state(&store, module)
+                .unwrap_or_else(|e| panic!("{name}: promotion refused: {e}"));
+            (pstore, pmodule)
+        } else {
+            let mut pstore = FirStore::new();
+            let pmodule = pstore.import_from(&store, module);
+            (pstore, pmodule)
+        };
+        let (bstore, broot, layout) = fir::batch::layout_voices(&pstore, pmodule)
             .unwrap_or_else(|e| panic!("{name}: layout refused: {e}"));
         for opt_level in [0, i32::from(MAX_OPT_LEVEL)] {
             let mut scalar = generate_interp_module::<f32>(&store, module, &options(opt_level))
@@ -228,8 +239,9 @@ fn check_program(name: &str, source: &str) {
                             .position(|(a, b)| a.to_bits() != b.to_bits());
                         assert!(
                             first.is_none(),
-                            "{name}, opt {opt_level}, {voices} voices: voice {v} channel {c} \
-                             differs at frame {first:?}: scalar {:?}, batch {:?}",
+                            "{name}, promoted {promote}, opt {opt_level}, {voices} voices: \
+                             voice {v} channel {c} differs at frame {first:?}: scalar {:?}, \
+                             batch {:?}",
                             first.map(|i| w[i]),
                             first.map(|i| g[i]),
                         );
@@ -264,6 +276,7 @@ fn the_corpus_gpu_voices_match_their_scalar_instances() {
         "gpu_partial_sine",
         "gpu_mode_resonator",
         "gpu_choir_partial",
+        "gpu_modal_fad_voice",
     ] {
         let path = corpus.join(format!("{name}.dsp"));
         let source =
@@ -286,4 +299,88 @@ fn the_corpus_covers_shared_state_and_per_voice_controls() {
     let (store, module) = flat_module("button", PROGRAMS[6].1);
     let (_, _, layout) = fir::batch::layout_voices(&store, module).unwrap();
     assert_eq!(layout.controls.len(), 1);
+}
+
+/// Every `Struct` access reachable from `id`.
+fn struct_accesses(store: &FirStore, id: FirId, out: &mut Vec<String>) {
+    use fir::{AccessType, FirMatch, match_fir};
+    match match_fir(store, id) {
+        FirMatch::LoadVar {
+            name,
+            access: AccessType::Struct,
+            ..
+        }
+        | FirMatch::LoadTable {
+            name,
+            access: AccessType::Struct,
+            ..
+        }
+        | FirMatch::StoreVar {
+            name,
+            access: AccessType::Struct,
+            ..
+        }
+        | FirMatch::StoreTable {
+            name,
+            access: AccessType::Struct,
+            ..
+        } => out.push(name),
+        _ => {}
+    }
+    for child in fir::fir_match_children(store, id) {
+        struct_accesses(store, child, out);
+    }
+}
+
+/// The sample loop of the modal voice (its recursions, its impulse counter,
+/// its controls) reaches no voice arena once its state is promoted, and
+/// reaches them at every sample without the promotion: the structural
+/// non-regression test of the plan (§5.2).
+#[test]
+fn the_promoted_modal_voice_has_no_arena_access_in_its_sample_loop() {
+    use fir::{FirMatch, match_fir};
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/gpu_modal_fad_voice.dsp");
+    let source = std::fs::read_to_string(&path).expect("gpu_modal_fad_voice.dsp");
+    let (store, module) = flat_module("gpu_modal_fad_voice", &source);
+    let loop_accesses = |store: &FirStore, root: FirId| -> Vec<String> {
+        let FirMatch::Module { functions, .. } = match_fir(store, root) else {
+            panic!("not a module");
+        };
+        let FirMatch::Block(functions) = match_fir(store, functions) else {
+            panic!("no functions");
+        };
+        let body = functions
+            .into_iter()
+            .find_map(|f| match match_fir(store, f) {
+                FirMatch::DeclareFun {
+                    name,
+                    body: Some(body),
+                    ..
+                } if name == "compute" => Some(body),
+                _ => None,
+            })
+            .expect("compute");
+        let FirMatch::Block(items) = match_fir(store, body) else {
+            panic!("compute body");
+        };
+        let mut out = Vec::new();
+        for item in items {
+            if let FirMatch::SimpleForLoop { body, .. } | FirMatch::ForLoop { body, .. } =
+                match_fir(store, item)
+            {
+                struct_accesses(store, body, &mut out);
+            }
+        }
+        out
+    };
+    let (bstore, broot, _) = fir::batch::layout_voices(&store, module).expect("layout");
+    assert!(
+        !loop_accesses(&bstore, broot).is_empty(),
+        "without the promotion the sample loop should read the arenas"
+    );
+    let (pstore, pmodule, state) = fir::batch::promote_state(&store, module).expect("promotion");
+    assert!(state.kept.is_empty(), "kept in memory: {:?}", state.kept);
+    let (bstore, broot, _) = fir::batch::layout_voices(&pstore, pmodule).expect("layout");
+    assert_eq!(loop_accesses(&bstore, broot), Vec::<String>::new());
 }
