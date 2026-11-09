@@ -159,6 +159,147 @@ PortAudio's blocking API, with voices driven by scripted notes.
 - The blocking API adds buffering on top of CoreAudio. A runner driven by the
   audio callback would get closer to the block period; it has not been written.
 
+#### Under CPU load (measured, 2026-11-09)
+
+The players click when the CPUs are busy, for instance during a compile. The
+three players (`poly`, `choir`, `bells`) now share `archs/realtimemojo.mojo`.
+It times each block in four parts: enqueue, GPU wait, host work and
+`Pa_WriteStream`. It also records the gap between two writes and the fill of
+PortAudio's ring just before each write. And it offers three measures, set by
+command-line words (`POLY_RT` in the Makefile):
+
+- `rt=tc`: the time-constraint policy (`thread_policy_set`) on the loop's
+  thread, with period and constraint one block and computation half a block;
+- `rt=wg`: the loop's thread joins the output device's IO workgroup
+  (`kAudioDevicePropertyIOThreadOSWorkgroup`, `os_workgroup_join`);
+- `pipeline`: block n + 1 is submitted before block n is written, and the
+  loop waits on block n's event rather than the whole queue. This costs one
+  block of latency. The played mix is bit-identical with and without it, in
+  all three players.
+
+`latency=<ms>` sets the suggested latency.
+
+The protocol:
+
+- **Player:** `poly`, 256 voices of `gpu_voice_saw.dsp`, 256-frame blocks,
+  muted (the GPU work is done and silence is written).
+- **Runs:** 15 s per run, every variant taken in turn, two rounds (one round
+  idle, at 10 s).
+- **Machine:** otherwise idle; the coopiano fit was paused for these runs.
+- **Loads:**
+  - 10 or 20 busy loops (`yes > /dev/null` at normal priority; 10 is one per
+    core);
+  - a compile, `cargo build --release -j 10 --workspace --all-targets` from an
+    empty target directory. It ran through round 1, through the first two
+    runs of round 2, and ended during the third, so the last run of round 2
+    had no load.
+
+**Where the time goes.** The enqueue (median 0.1 ms, at most 4 ms) and the
+host's work (2 µs) do not move under load. The GPU wait does:
+
+- its median stays at 0.7 to 0.9 ms, but its 99th percentile goes from 3 ms
+  idle to 11 ms;
+- single waits reach 20 to 32 ms, and once 194 ms in the carillon.
+
+The GPU's own utilisation stays at 0 to 26 % (the display). So the long waits
+are not the GPU computing; they are probably the CPU side, waking the thread
+once the GPU is done. That wake-up goes through Metal's completion threads,
+which are not real-time. This was not traced: `sample` returned no call
+graph.
+
+**The cushion is PortAudio's ring, not the latency it reports.**
+
+- The blocking API keeps a ring of twice the suggested latency, rounded up to
+  a power of two frames: 1,024 frames (21.3 ms) at the default two blocks of
+  256.
+- The 43 ms that `Pa_GetStreamInfo` reports add the driver's buffers to that
+  ring.
+- `Pa_WriteStream` polls the ring in 5 ms sleeps and returns as soon as its
+  block fits. A loop running late therefore refills the ring one block per
+  write and never tops it up again.
+- Without real-time scheduling under load, the median write takes 1 µs: the
+  ring is rarely full. Idle, or with `rt=tc`, every write blocks for one
+  sleep, 5.0 ms with `rt=tc` (6.3 ms at normal priority, timer slack), and
+  the ring is full each time.
+
+`poly`, worst value over the runs; the ring fill is the lowest seen before a
+write, out of 21.3 ms (42.7 ms with `latency=21.3`):
+
+| load | measure | underruns per run | GPU wait p99 / max (ms) | longest gap (ms) | gaps over one block, per run | lowest ring fill (ms) |
+|---|---|---|---|---|---|---|
+| idle | none | 0 | 3.1 / 3.6 | 3.7 | 0 | 16.0 |
+| idle | `rt=tc pipeline` | 0 | 0.0 / 1.4 | 1.9 | 0 | 16.0 |
+| 10 loops | none | 36, 15 | 11.0 / 20.5 | 20.6 | 434, 416 | 0 |
+| 10 loops | `rt=tc` | 0, 1 | 8.2 / 16.3 | 16.3 | 220, 218 | 0 |
+| 10 loops | `rt=wg` | 2, 0 | 8.5 / 16.2 | 16.3 | 284, 238 | 0 |
+| 10 loops | `rt=tc+wg` | 2, 0 | 8.0 / 14.1 | 14.2 | 232, 214 | 0 |
+| 10 loops | `pipeline` | 0, 0 | 6.9 / 15.4 | 15.6 | 71, 75 | 0 |
+| 10 loops | `rt=tc pipeline` | 0, 0 | 1.7 / 8.0 | 8.1 | 2, 2 | 10.7 |
+| 10 loops | `rt=tc+wg pipeline` | 0, 0 | 2.2 / 8.4 | 8.5 | 1, 7 | 10.7 |
+| 10 loops | `latency=21.3` | 6, 3 | 10.9 / 18.3 | 18.4 | 519, 520 | 0 of 42.7 |
+| 10 loops | `rt=tc+wg pipeline latency=21.3` | 0, 0 | 1.7 / 9.1 | 9.2 | 0, 2 | 32.0 of 42.7 |
+| 20 loops | none | 5, 0 | 4.3 / 22.7 | 23.5 | 19, 3 | 0 |
+| 20 loops | `rt=tc` | 0, 6 | 3.3 / 15.7 | 15.7 | 1, 14 | 0 |
+| 20 loops | `pipeline` | 0, 0 | 1.6 / 4.4 | 4.5 | 0, 0 | 16.0 |
+| 20 loops | `rt=tc pipeline` | 0, 0 | 0.0 / 0.2 | 0.1 | 0, 0 | 21.3 |
+| compile | none | 46, 17 | 11.3 / 31.8 | 32.0 | 446, 383 | 0 |
+| compile | `rt=tc` | 1, 0 | 9.4 / 17.7 | 17.9 | 272, 246 | 0 |
+| compile | `pipeline` | 0, 0 | 7.2 / 15.0 | 20.2 | 81, 11 | 0 |
+| compile | `rt=tc pipeline` | 0, 0 | 0.7 / 5.6 | 5.9 | 1, 0 | 16.0 |
+
+The heavier players, one run per measure under 10 loops: the choir, 448
+singers (48,048 partials), 3.0 ms median block; the carillon, 256 bells
+(12,800 modes), 1.4 ms:
+
+| player | none | `rt=tc` | `pipeline` | `rt=tc pipeline` | `rt=tc+wg pipeline latency=21.3` |
+|---|---|---|---|---|---|
+| choir: underruns (longest gap) | 226 (42 ms) | 43 (33 ms) | 0 (16 ms) | 0 (12 ms) | 0 (9 ms) |
+| carillon: underruns (longest gap) | 156 (195 ms) | 12 (19 ms) | 0 (11 ms) | 1 (28 ms) | 0 (8 ms) |
+
+What the tables say:
+
+- **Two late wake-ups, two fixes.**
+  - The loop's thread is late to run: after `synchronize` returns and in
+    `Pa_WriteStream`'s sleeps. The time-constraint policy fixes this.
+  - The thread is woken late once the GPU has finished. The policy does not
+    fix this: under `rt=tc` the GPU wait keeps a 99th percentile of 8 to
+    9 ms, and about 220 gaps per run exceed a block.
+  - `pipeline` hides the second: the block is finished while the previous
+    write blocks, and the wait usually returns at once (median 0). It does
+    not fix the first: the ring still touches empty.
+- **Together they hold.** With `rt=tc pipeline`, no underrun in any run of
+  `poly`, choir or carillon, except one in the carillon's single run. The
+  ring never fell below 10.7 ms of its 21.3 ms in `poly`, and gaps over one
+  block dropped from about 430 to 2 per run. `rt=tc` alone left up to 43
+  underruns per run (the choir). `pipeline` alone counted none, but its ring
+  touched empty in `poly` (10 loops, compile) and in the choir: it held by
+  luck, not by margin.
+- **The workgroup adds nothing measurable here.** `rt=wg` does about as well
+  as `rt=tc`, and `rt=tc+wg` no better than `rt=tc`. Joining succeeds
+  without the time-constraint policy. Its intended use is threads that run
+  in step with the IO cycle, and this loop is decoupled from it by the ring.
+- **A larger ring alone does not help.** With `latency=21.3` (a 42.7 ms ring,
+  64.6 ms reported) the ring still runs dry: a late loop refills it one block
+  per write. With both measures, the larger ring stays above 32 ms.
+- **20 loops hurt less than 10.** Twenty busy processes left the default loop
+  with 5 underruns where ten left 36. The scheduler's response is not
+  monotonic in the load, so a single load level is not a bound.
+- **The thread's CPU time** stays between 50 and 230 µs per block in every
+  variant, a few percent of the 5.3 ms period. `synchronize` blocks rather
+  than spins, so the half-block computation declared to the time-constraint
+  policy is not approached.
+- **Open:** under 10 loops some single writes took 110 to 170 ms (`rt=wg`,
+  `rt=tc+wg`, `pipeline`) with no underrun after them, and CoreAudio logged
+  no overload. The first write of a run, which waits for the device to start,
+  was not separated in these runs; checked afterwards on its own, it took 12
+  to 20 ms. The cause of these writes is not known.
+
+Use `rt=tc pipeline`, or `POLY_RT="rt=tc pipeline"` with the Makefile
+targets, whenever the machine does other work. The price is one block of
+latency. Mojo's `DeviceEvent` has no non-blocking query, so the wake-up from
+the GPU cannot be polled from the real-time thread. A player driven by the
+audio callback (§7) would still need this decoupling.
+
 ### 2.6 Correctness
 
 - The structure-of-arrays layout changes no arithmetic. On the CPU, through
@@ -930,7 +1071,9 @@ rendered once for listening (10 s), but no lane does it.
 - Lanes in `tests/impulse-tests`:
   - `make mojo-gpu` and `make mojo-gpu-batch` (correctness);
   - `make mojo-gpu-bench` and `make mojo-gpu-bench-batch` (cost);
-  - `make mojo-gpu-poly` (real time).
+  - `make mojo-gpu-poly` (real time); `POLY_RT` passes the real-time
+    measures of §2.5 (`archs/realtimemojo.mojo`) to it and to the choir and
+    carillon players.
 - The additive choir of §5: `tests/corpus/gpu_choir_partial.dsp`;
   `make mojo-gpu-choir`.
 - The carillon of §5: `tests/corpus/gpu_bell_strike.dsp`,

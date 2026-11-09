@@ -337,7 +337,9 @@ mojo-gpu-batch:
 # A polyphonic instrument played in real time (G4): POLY_VOICES voices of
 # POLY_DSP (../corpus/gpu_voice_saw.dsp) on the GPU with the batch contract, mixed on the device and
 # written through PortAudio (muted unless POLY_AUDIBLE=audible); fails on an
-# underrun. PORTAUDIO_LIB names the directory of libportaudio.
+# underrun. PORTAUDIO_LIB names the directory of libportaudio. POLY_RT holds
+# the real-time options of archs/realtimemojo.mojo, for the three players
+# (poly, bells, choir): `rt=tc`, `rt=wg` or `rt=tc+wg`, and `pipeline`.
 MOJO ?= mojo
 POLY_VOICES ?= 256
 POLY_SECONDS ?= 10
@@ -345,14 +347,18 @@ POLY_BLOCK ?= 256
 POLY_AUDIBLE ?=
 POLY_DSP ?= ../corpus/gpu_voice_saw.dsp
 PORTAUDIO_LIB ?= /opt/homebrew/lib
+POLY_RT ?=
+MOJO_AUDIO_LINK = -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB) \
+	  -Xlinker -framework -Xlinker CoreAudio
 mojo-gpu-poly:
 	cargo build --release -p compiler --example mojo_batch
 	mkdir -p build/mojo-gpu-poly
 	../../target/release/examples/mojo_batch $(POLY_DSP) -o build/mojo-gpu-poly/voice.mojo
-	cat archs/impulsemojo.mojo build/mojo-gpu-poly/voice.mojo archs/polymojogpubatch.mojo > build/mojo-gpu-poly/poly_main.mojo
+	cat archs/impulsemojo.mojo build/mojo-gpu-poly/voice.mojo archs/realtimemojo.mojo archs/polymojogpubatch.mojo \
+	  > build/mojo-gpu-poly/poly_main.mojo
 	$(MOJO) build build/mojo-gpu-poly/poly_main.mojo -o build/mojo-gpu-poly/poly -O3 -D DFAUST=DType.float32 \
-	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
-	build/mojo-gpu-poly/poly $(POLY_VOICES) $(POLY_SECONDS) $(POLY_AUDIBLE) $(POLY_BLOCK)
+	  $(MOJO_AUDIO_LINK)
+	build/mojo-gpu-poly/poly $(POLY_VOICES) $(POLY_SECONDS) $(POLY_AUDIBLE) $(POLY_BLOCK) $(POLY_RT)
 
 # A carillon on the GPU (modal synthesis use case): BELLS bells, each a
 # `pm.strikeModel` strike and the 50 `pm.modeFilter` modes of
@@ -377,13 +383,13 @@ mojo-gpu-bells:
 	../../target/release/examples/mojo_batch ../corpus/gpu_bell_mode.dsp -I $(FAUSTLIBS) --cn modedsp -o build/mojo-gpu-bells/mode.mojo
 	$(FAUST_RS) -lang mojo -single -cn refdsp -I $(FAUSTLIBS) ../corpus/gpu_bell_reference.dsp -o build/mojo-gpu-bells/ref.mojo
 	cat archs/impulsemojo.mojo build/mojo-gpu-bells/bell_data.mojo build/mojo-gpu-bells/strike.mojo \
-	  build/mojo-gpu-bells/mode.mojo build/mojo-gpu-bells/ref.mojo archs/bellsmojogpubatch.mojo \
+	  build/mojo-gpu-bells/mode.mojo build/mojo-gpu-bells/ref.mojo archs/realtimemojo.mojo archs/bellsmojogpubatch.mojo \
 	  > build/mojo-gpu-bells/bells_main.mojo
 	$(MOJO) build build/mojo-gpu-bells/bells_main.mojo -o build/mojo-gpu-bells/bells -O3 -D DFAUST=DType.float32 \
-	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
+	  $(MOJO_AUDIO_LINK)
 	build/mojo-gpu-bells/bells validate
 	build/mojo-gpu-bells/bells bench $(BELLS)
-	build/mojo-gpu-bells/bells play $(BELLS) $(BELLS_SECONDS) $(POLY_AUDIBLE) $(BELLS_SCORE)
+	build/mojo-gpu-bells/bells play $(BELLS) $(BELLS_SECONDS) $(POLY_AUDIBLE) $(BELLS_SCORE) $(POLY_RT)
 
 # An additive choir on the GPU (archs/choirmojogpubatch.mojo): CHOIR singers
 # in four parts, every harmonic up to 20 kHz one instance of
@@ -400,15 +406,15 @@ mojo-gpu-choir-build:
 	$(FAUST_RS) -lang mojo -single -cn refdsp ../corpus/gpu_choir_partial.dsp -o build/mojo-gpu-choir/ref.mojo
 	$(FAUST_RS) -lang mojo -single -cn revdsp -I $(FAUSTLIBS) ../corpus/gpu_choir_reverb.dsp -o build/mojo-gpu-choir/rev.mojo
 	cat archs/impulsemojo.mojo build/mojo-gpu-choir/choir.mojo build/mojo-gpu-choir/ref.mojo \
-	  build/mojo-gpu-choir/rev.mojo archs/choirmojogpubatch.mojo > build/mojo-gpu-choir/choir_main.mojo
+	  build/mojo-gpu-choir/rev.mojo archs/realtimemojo.mojo archs/choirmojogpubatch.mojo > build/mojo-gpu-choir/choir_main.mojo
 	$(MOJO) build build/mojo-gpu-choir/choir_main.mojo -o build/mojo-gpu-choir/choir -O3 -D DFAUST=DType.float32 \
-	  -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB)
+	  $(MOJO_AUDIO_LINK)
 	build/mojo-gpu-choir/choir validate
 mojo-gpu-choir: mojo-gpu-choir-build
 	build/mojo-gpu-choir/choir bench $(CHOIR)
-	build/mojo-gpu-choir/choir play $(CHOIR) $(CHOIR_SECONDS) $(POLY_AUDIBLE)
+	build/mojo-gpu-choir/choir play $(CHOIR) $(CHOIR_SECONDS) $(POLY_AUDIBLE) $(POLY_RT)
 mojo-gpu-choir-reverb: mojo-gpu-choir-build
-	build/mojo-gpu-choir/choir play $(CHOIR) $(CHOIR_SECONDS) $(POLY_AUDIBLE) reverb
+	build/mojo-gpu-choir/choir play $(CHOIR) $(CHOIR_SECONDS) $(POLY_AUDIBLE) reverb $(POLY_RT)
 # Both versions rendered offline to WAV files: one cycle of the dry choir
 # (four chords, 20 s) and one of the choir in the hall (eight chords and
 # their rests, 64 s, plus 5 s for the tail).

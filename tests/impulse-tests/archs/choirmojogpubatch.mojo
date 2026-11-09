@@ -7,17 +7,26 @@
 # singers is about 48,000 partials (porting/faust-gpu-audio-synthesis-
 # 2026-11-07-en.md, §5).
 #
-# Concatenated after `impulsemojo.mojo` and three generated programs:
-# `choirdsp` (the batch contract of gpu_choir_partial.dsp), `refdsp` (its
-# scalar contract, one ordinary instance per partial, the CPU baseline) and
-# `revdsp` (gpu_choir_reverb.dsp, the hall: `re.zita_rev1_stereo` mixed with
-# the dry signal).
-# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio`.
+# Concatenated after `impulsemojo.mojo`, three generated programs and
+# `realtimemojo.mojo`: `choirdsp` (the batch contract of
+# gpu_choir_partial.dsp), `refdsp` (its scalar contract, one ordinary
+# instance per partial, the CPU baseline) and `revdsp` (gpu_choir_reverb.dsp,
+# the hall: `re.zita_rev1_stereo` mixed with the dry signal).
+# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio -framework
+# CoreAudio`.
 #
 #   <binary> validate                         a small choir, GPU against CPU
 #   <binary> bench <singers> [<block>]        GPU against the CPU threads
 #   <binary> play <singers> <seconds> [audible] [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>]
+#                 [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]
 #   <binary> render <singers> <seconds> <out.f32> [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>]
+#
+# `rt=`, `pipeline` and `latency=` are the real-time options of `play`
+# (realtimemojo.mojo): the time-constraint policy for the loop's thread, the
+# output device's IO workgroup, the GPU work submitted one block ahead, and
+# the suggested output latency. `play` prints a second line, `timing`: each
+# block split into enqueue, GPU wait, host work (the hall with `reverb`) and
+# `Pa_WriteStream`, the gaps between writes and the fill of PortAudio's ring.
 #
 # `render` computes the same scene offline, as fast as the GPU goes, and
 # writes the stereo mix (after the hall, with `reverb`) as raw interleaved
@@ -57,7 +66,7 @@
 # Every buffer a kernel reaches is one of its arguments (Metal).
 # ---------------------------------------------------------------------------
 
-from max.gpu.host import DeviceContext
+from max.gpu.host import DeviceContext, DeviceEvent, HostBuffer
 from max.gpu import global_idx
 from max.algorithm import parallelize
 from std.ffi import external_call
@@ -69,7 +78,6 @@ comptime RATE = S32(48000)
 comptime WARMUP = 20
 comptime FMAX = 20000.0
 comptime CHORD_SECONDS = 5.0
-comptime paFloat32 = UInt64(1)
 comptime paOutputUnderflowed = Int32(-9980)
 
 # The controls of a partial, in the order the host sets them.
@@ -585,7 +593,7 @@ def run_choir(
     mut choir: Choir, block: Int, blocks: Int, mode: Int, audible: Bool, reverb: Bool = False,
     gap: F64 = 0.0,
     hall_labels: List[String] = List[String](), hall_values: List[FaustFloat] = List[FaustFloat](),
-    path: String = "",
+    path: String = "", rt: RtOptions = RtOptions(),
 ) raises -> F64:
     var n = choir.n
     var singers = choir.singers
@@ -614,7 +622,6 @@ def run_choir(
     var values = ctx.enqueue_create_buffer[dfaust](n)
     var values_host = ctx.enqueue_create_host_buffer[dfaust](n)
     var mix = ctx.enqueue_create_buffer[dfaust](2 * block)
-    var mix_host = ctx.enqueue_create_host_buffer[dfaust](2 * block)
     ctx.synchronize()
     for s in range(singers + 1):
         starts_host[s] = choir.starts[s]
@@ -660,6 +667,9 @@ def run_choir(
     var stream = UInt64(0)
     var underflows = 0
     var peak = F64(0.0)
+    # The sum of squares of the played mix: the same with and without
+    # `pipeline` (a check that the double buffers hold the right block).
+    var energy = F64(0.0)
     var latency_s = F64(-1.0)
     # `render` drops the same warm-up blocks as `play`, so that a file holds
     # what the sound card receives: every partial starts at phase 0, and the
@@ -669,58 +679,84 @@ def run_choir(
     var rendered = List[F32]()
     var times = List[Int]()
     var score = 1
-    for k in range(blocks + warmup):
-        var kb = max(k - warmup, 0)
-        var t0 = perf_counter_ns()
-        var sc = score_at(kb, block, gap)
-        if sc != score:
-            score = sc
-            if sc % 2 == 1:
-                choir.set_chord(sc // 2)
-            else:
-                choir.silence()
-            for kc in range(NCTL):
-                # A chord uploads freq, gain and noise; a rest only gain.
-                if not (kc == 1 or (sc % 2 == 1 and (kc == 0 or kc == 5))):
-                    continue
-                ctx.synchronize()
-                for v in range(n):
-                    values_host[v] = choir.ctl[kc][v]
-                ctx.enqueue_copy(dst_buf=values, src_buf=values_host)
-                ctx.enqueue_function[control_kernel](
-                    dsps, state, values, S32(n), Int32(index[kc]), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
-                )
-            if mode == MODE_VALIDATE:
-                cpu.set(choir)
-        ctx.enqueue_function[partial_kernel](
-            dsps, state, outs, chan, S32(n), S32(block), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
-        )
-        ctx.enqueue_function[singer_mix_kernel](
-            outs, starts, singersum, S32(singers), S32(block), S32(block),
-            grid_dim=grid(singers * block), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[mix_kernel](
-            singersum, pans, mix, S32(singers), S32(block), S32(block),
-            grid_dim=grid(block), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_copy(dst_buf=mix_host, src_buf=mix)
-        ctx.synchronize()
-        var t1 = perf_counter_ns()
-        if k < warmup:
+    # Iteration k submits block k and processes block k - depth: with
+    # `pipeline` in `play` (depth 1), block k + 1 is on the GPU while block k
+    # is written. Two mixes on the host, and an event after each block.
+    var rl = RtLoop(rt, block, RATE)
+    var depth = rl.depth() if mode == MODE_PLAY else 0
+    var mix_hosts = List[HostBuffer[dfaust]]()
+    var events = List[DeviceEvent]()
+    for _ in range(2):
+        mix_hosts.append(ctx.enqueue_create_host_buffer[dfaust](2 * block))
+        events.append(ctx.create_event())
+    ctx.synchronize()
+    var enqueue_ns = List[Int](length=2, fill=0)
+    var total = blocks + warmup
+    for k in range(total + depth):
+        if k < total:
+            var kb = max(k - warmup, 0)
+            var si = k % 2
+            var t0 = Int(perf_counter_ns())
+            var sc = score_at(kb, block, gap)
+            if sc != score:
+                score = sc
+                if sc % 2 == 1:
+                    choir.set_chord(sc // 2)
+                else:
+                    choir.silence()
+                for kc in range(NCTL):
+                    # A chord uploads freq, gain and noise; a rest only gain.
+                    if not (kc == 1 or (sc % 2 == 1 and (kc == 0 or kc == 5))):
+                        continue
+                    ctx.synchronize()
+                    for v in range(n):
+                        values_host[v] = choir.ctl[kc][v]
+                    ctx.enqueue_copy(dst_buf=values, src_buf=values_host)
+                    ctx.enqueue_function[control_kernel](
+                        dsps, state, values, S32(n), Int32(index[kc]), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
+                    )
+                if mode == MODE_VALIDATE:
+                    cpu.set(choir)
+            ctx.enqueue_function[partial_kernel](
+                dsps, state, outs, chan, S32(n), S32(block), grid_dim=grid(n), block_dim=GPU_BLOCK_DIM
+            )
+            ctx.enqueue_function[singer_mix_kernel](
+                outs, starts, singersum, S32(singers), S32(block), S32(block),
+                grid_dim=grid(singers * block), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[mix_kernel](
+                singersum, pans, mix, S32(singers), S32(block), S32(block),
+                grid_dim=grid(block), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_copy(dst_buf=mix_hosts[si], src_buf=mix)
+            if depth > 0:
+                ctx.stream().record_event(events[si])
+            enqueue_ns[si] = Int(perf_counter_ns()) - t0
+        var j = k - depth
+        if j < 0:
             continue
-        times.append(Int(t1 - t0))
+        var so = j % 2
+        var t1 = Int(perf_counter_ns())
+        if depth > 0:
+            events[so].synchronize()
+        else:
+            ctx.synchronize()
+        var t2 = Int(perf_counter_ns())
+        if j < warmup:
+            continue
+        times.append(enqueue_ns[so] + t2 - t1)
         if mode == MODE_VALIDATE:
             cpu.run()
             for i in range(2 * block):
-                var got = F64(mix_host[i])
+                var got = F64(mix_hosts[so][i])
                 var want = F64(cpu.mix[unsafe_offset=i])
                 diff = max(diff, abs(got - want))
                 peak_ref = max(peak_ref, abs(want))
         elif mode == MODE_PLAY or mode == MODE_RENDER:
             if reverb:
                 for i in range(block):
-                    rin[unsafe_offset=i] = mix_host[2 * i]
-                    rin[unsafe_offset=block + i] = mix_host[2 * i + 1]
+                    rin[unsafe_offset=i] = mix_hosts[so][2 * i]
+                    rin[unsafe_offset=block + i] = mix_hosts[so][2 * i + 1]
                 var h0 = perf_counter_ns()
                 hall[].compute(
                     S32(block),
@@ -729,41 +765,32 @@ def run_choir(
                 )
                 hall_times.append(Int(perf_counter_ns() - h0))
                 for i in range(block):
-                    mix_host[2 * i] = rout[unsafe_offset=i]
-                    mix_host[2 * i + 1] = rout[unsafe_offset=block + i]
+                    mix_hosts[so][2 * i] = rout[unsafe_offset=i]
+                    mix_hosts[so][2 * i + 1] = rout[unsafe_offset=block + i]
             for i in range(2 * block):
-                var x = F32(mix_host[i])
+                var x = F32(mix_hosts[so][i])
                 peak = max(peak, abs(F64(x)))
+                energy += F64(x) * F64(x)
                 out[unsafe_offset=i] = x * F32(0.5) if audible else F32(0.0)
                 if mode == MODE_RENDER:
                     rendered.append(x)
             if mode == MODE_RENDER:
                 continue
-            if kb == 0:
-                if external_call["Pa_Initialize", Int32]() != 0:
-                    raise Error("Pa_Initialize failed")
-                var params = unsafe_alloc[UInt64](4)
-                params.unsafe_bitcast[Int32]()[unsafe_offset=0] = external_call["Pa_GetDefaultOutputDevice", Int32]()
-                params.unsafe_bitcast[Int32]()[unsafe_offset=1] = Int32(2)
-                params[unsafe_offset=1] = paFloat32
-                params.unsafe_bitcast[F64]()[unsafe_offset=2] = 2.0 * F64(block) / F64(RATE)
-                params[unsafe_offset=3] = UInt64(0)
-                var err = external_call["Pa_OpenStream", Int32](
-                    address(Ptr(to=stream).unsafe_origin_cast[MUT_NOTRK]()), UInt64(0),
-                    address(params.unsafe_origin_cast[MUT_NOTRK]()),
-                    F64(RATE), UInt64(block), UInt64(0), UInt64(0), UInt64(0),
-                )
-                params.unsafe_free()
-                if err != 0:
-                    raise Error(String("Pa_OpenStream failed: ") + String(err))
-                if external_call["Pa_StartStream", Int32](stream) != 0:
-                    raise Error("Pa_StartStream failed")
-                var info = external_call["Pa_GetStreamInfo", UInt64](stream)
-                if info != 0:
-                    latency_s = Ptr[F64](unsafe_from_address=Int(info) + 16)[]
+            var t3 = Int(perf_counter_ns())
+            if j == warmup:
+                # The stream starts once the GPU is warm, the real-time
+                # requests with it.
+                rl.start()
+                var suggested = rt.latency_s(block, RATE)
+                stream = rt_open_output(RATE, block, suggested)
+                latency_s = rt_output_latency(stream)
+                rl.joined(stream, suggested)
+            var fill = rl.ring_fill(stream)
+            var w0 = Int(perf_counter_ns())
             var r = external_call["Pa_WriteStream", Int32](
                 stream, address(out.unsafe_origin_cast[MUT_NOTRK]()), UInt64(block)
             )
+            rl.record(enqueue_ns[so], t2 - t1, t3 - t2, fill, w0, Int(perf_counter_ns()))
             if r == paOutputUnderflowed:
                 underflows += 1
 
@@ -780,9 +807,8 @@ def run_choir(
             "compute_median_us", F64(median(times)) / 1000.0,
         )
     else:
-        _ = external_call["Pa_StopStream", Int32](stream)
-        _ = external_call["Pa_CloseStream", Int32](stream)
-        _ = external_call["Pa_Terminate", Int32]()
+        rl.leave()
+        rt_close_output(stream)
         var worst = 0
         for t in times:
             worst = max(worst, t)
@@ -790,11 +816,13 @@ def run_choir(
             "singers", singers, "partials", n, "block", block, "blocks", blocks,
             "underflows", underflows, "compute_median_us", F64(median(times)) / 1000.0,
             "compute_max_us", F64(worst) / 1000.0, "budget_us", F64(block) * 1e6 / F64(RATE),
-            "peak", peak, "audible", audible, "output_latency_ms", latency_s * 1000.0,
+            "peak", peak, "energy", energy, "audible", audible, "output_latency_ms", latency_s * 1000.0,
         )
+        print(rl.summary())
         if reverb:
             print("reverb on the CPU: median", F64(median(hall_times)) / 1000.0, "us per block")
         result = F64(underflows)
+    rl.free()
     cpu.free()
     hall.unsafe_free()
     rin.unsafe_free()
@@ -849,13 +877,13 @@ def bench(singers: Int, block: Int) raises:
 
 def play(
     singers: Int, seconds: F64, audible: Bool, reverb: Bool, gap: F64, block: Int,
-    hall_labels: List[String], hall_values: List[FaustFloat],
+    hall_labels: List[String], hall_values: List[FaustFloat], rt: RtOptions,
 ) raises:
     # The version in the hall sings the wider, eight-chord choir.
     var choir = Choir(singers, reverb)
     var blocks = Int(seconds * F64(RATE) / F64(block))
     var underflows = run_choir(
-        choir, block, blocks, MODE_PLAY, audible, reverb, gap, hall_labels, hall_values
+        choir, block, blocks, MODE_PLAY, audible, reverb, gap, hall_labels, hall_values, "", rt
     )
     print("partials", choir.n, "chords", len(choir.chords) // 4)
     if underflows > 0:
@@ -879,7 +907,8 @@ def main() raises -> None:
     if len(args) < 2:
         raise Error(
             "usage: validate | bench <singers> [<block>] | play <singers> <seconds> [audible] [reverb]"
-            + " [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>]"
+            + " [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>] [rt=off|tc|wg|tc+wg] [pipeline]"
+            + " [latency=<ms>]"
         )
     if args[1] == "validate":
         validate()
@@ -910,9 +939,12 @@ def main() raises -> None:
         var hall_labels = List[String]()
         var hall_values = List[FaustFloat]()
         var gap = F64(-1.0)
+        var rt = RtOptions()
         for i in range(4, len(args)):
             var a = String(args[i])
-            if a == "audible":
+            if rt.parse(a):
+                continue
+            elif a == "audible":
                 audible = True
             elif a == "reverb":
                 reverb = True
@@ -926,6 +958,6 @@ def main() raises -> None:
                 block = atol(a)
         if gap < 0.0:
             gap = 3.0 if reverb else 0.0
-        play(atol(args[2]), atof(args[3]), audible, reverb, gap, block, hall_labels, hall_values)
+        play(atol(args[2]), atof(args[3]), audible, reverb, gap, block, hall_labels, hall_values, rt)
     else:
         raise Error("unknown mode")

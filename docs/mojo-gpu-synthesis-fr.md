@@ -605,12 +605,17 @@ chaque exécution :
       |                                                |   en continu    |
 ```
 
-La latence accordée (43 ms à 256 échantillons, 30 ms à 128) est ce buffer :
-c'est lui qui permet à un bloc lent (un changement d'accord prend 10 à 17 ms,
+Ce buffer est un anneau de deux fois la latence suggérée, arrondie à une
+puissance de deux trames : 1 024 trames (21,3 ms) à 256 échantillons. C'est
+lui qui permet à un bloc lent (un changement d'accord prend 10 à 17 ms,
 trois blocs de 256 échantillons) de passer sans coupure, pourvu que les blocs
-suivants soient assez rapides pour le remplir de nouveau. Avec l'API
-bloquante, PortAudio ajoute sa propre mise en tampon à celle du pilote, si
-bien que la latence dépasse les deux blocs demandés.
+suivants soient assez rapides pour le remplir de nouveau. La latence accordée
+(43 ms à 256 échantillons, 30 ms à 128) est cet anneau plus les buffers du
+pilote : elle dépasse les deux blocs demandés, et dépasse aussi la réserve
+contre un bloc en retard. Sous charge CPU, la boucle a besoin d'un
+ordonnancement temps réel et d'une attente du GPU décalée d'un bloc pour
+garder cet anneau plein (`porting/faust-gpu-audio-synthesis-2026-11-07-en.md`,
+§2.5).
 
 ### 8.3 Ce qui pourrait la réduire
 

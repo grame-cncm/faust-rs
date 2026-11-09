@@ -110,6 +110,17 @@ See the design write-up in
      hall's tail is heard. The built binary takes `reverb dry=<x> wet=<x>
      t60=<s> gap=<s>` after `play <singers> <seconds> [audible]` (defaults
      0.4, 2, 5 s and 3 s).
+   - The three real-time players (`mojo-gpu-poly`, `mojo-gpu-bells`,
+     `mojo-gpu-choir`, `mojo-gpu-choir-reverb`) share
+     `archs/realtimemojo.mojo` and take its options through `POLY_RT`:
+     `rt=tc` (the loop's thread takes the Mach time-constraint policy),
+     `rt=wg` (it joins the output device's IO workgroup), `rt=tc+wg`,
+     `pipeline` (the GPU computes block n + 1 while block n is written) and
+     `latency=<ms>` (the suggested output latency; PortAudio's ring holds
+     twice that). Each run prints a `timing` line: every block split into
+     enqueue, GPU wait, host work and `Pa_WriteStream`, the gaps between
+     writes, and the lowest fill of PortAudio's ring. They link
+     `-framework CoreAudio`.
    - `make mojo-gpu-choir-render` — both versions rendered offline, as fast as
      the GPU goes, to `build/mojo-gpu-choir/choir-dry.wav` (one cycle, 20 s)
      and `choir-reverb.wav` (one cycle and the hall's tail, 69 s): 24-bit,

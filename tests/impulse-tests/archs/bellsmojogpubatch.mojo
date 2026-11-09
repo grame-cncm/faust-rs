@@ -6,15 +6,25 @@
 # 2026-11-07-en.md, modal synthesis).
 #
 # Concatenated after `impulsemojo.mojo`, the bell data that
-# `tools/bell_modes.py` reads from the installed physmodels.lib, and three
+# `tools/bell_modes.py` reads from the installed physmodels.lib, three
 # generated programs: `strikedsp` and `modedsp` (the batch contract of
 # tests/corpus/gpu_bell_strike.dsp and gpu_bell_mode.dsp) and `refdsp` (the
-# scalar contract of gpu_bell_reference.dsp, the original `pm.standardBell`).
-# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio`.
+# scalar contract of gpu_bell_reference.dsp, the original `pm.standardBell`),
+# and `realtimemojo.mojo`.
+# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio -framework
+# CoreAudio`.
+#
+# `rt=`, `pipeline` and `latency=` are the real-time options of `play`
+# (realtimemojo.mojo): the time-constraint policy for the loop's thread, the
+# output device's IO workgroup, the GPU work submitted one block ahead, and
+# the suggested output latency. `play` prints a second line, `timing`: each
+# block split into enqueue, GPU wait, host work and `Pa_WriteStream`, the
+# gaps between writes and the fill of PortAudio's ring.
 #
 #   <binary> validate                         one bell against pm.standardBell
 #   <binary> bench <bells> [<block>]          GPU against the CPU threads
 #   <binary> play <bells> <seconds> [audible] [<block>] [cloud|melody|chime]
+#                 [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]
 #
 # The scores of `play`: `cloud` (the default) strikes bell b every 96 blocks,
 # 7 blocks after bell b - 1, a dense cloud of bells; `melody` plays the two
@@ -43,7 +53,7 @@
 # Every buffer a kernel reaches is one of its arguments (Metal).
 # ---------------------------------------------------------------------------
 
-from max.gpu.host import DeviceContext
+from max.gpu.host import DeviceContext, DeviceEvent, HostBuffer
 from max.gpu import global_idx
 from max.algorithm import parallelize
 from std.ffi import external_call
@@ -53,7 +63,6 @@ from std.time import perf_counter_ns
 comptime GPU_BLOCK_DIM = 64
 comptime RATE = S32(48000)
 comptime WARMUP = 20
-comptime paFloat32 = UInt64(1)
 comptime paOutputUnderflowed = Int32(-9980)
 
 
@@ -405,7 +414,7 @@ def median(mut xs: List[Int]) -> Int:
 # writes the mix to PortAudio and returns the number of underruns.
 def run_scene(
     scene: Carillon, block: Int, blocks: Int, mode: Int, position: Int, audible: Bool,
-    score: Int = SCORE_CLOUD,
+    score: Int = SCORE_CLOUD, rt: RtOptions = RtOptions(),
 ) raises -> F64:
     var bells = scene.bells
     var n = bells * scene.modes
@@ -466,9 +475,7 @@ def run_scene(
         pans_host[i] = scene.pans[i]
     ctx.enqueue_copy(dst_buf=pans, src_buf=pans_host)
     var mix = ctx.enqueue_create_buffer[dfaust](2 * block)
-    var mix_host = ctx.enqueue_create_host_buffer[dfaust](2 * block)
     var gates = ctx.enqueue_create_buffer[dfaust](bells)
-    var gates_host = ctx.enqueue_create_host_buffer[dfaust](bells)
     ctx.synchronize()
 
     # The reference (MODE_VALIDATE): pm.standardBell, one program, on the CPU.
@@ -493,50 +500,83 @@ def run_scene(
 
     var warmup = 0 if mode == MODE_VALIDATE else WARMUP
     var times = List[Int]()
+    # The sum of squares of the played mix: the same with and without
+    # `pipeline` (a check that the double buffers hold the right block).
+    var energy = F64(0.0)
     var sc = melody(bells) if score == SCORE_MELODY else (chime(bells) if score == SCORE_CHIME else Score())
     var row = List[FaustFloat](length=bells, fill=FaustFloat(0.0))
-    for k in range(blocks + warmup):
-        var kb = k - warmup
-        # The tune starts with the stream, not during the warm-up.
-        if mode != MODE_VALIDATE and score != SCORE_CLOUD and kb >= 0:
-            sc.gates(kb, row)
-        for b in range(bells):
-            if mode == MODE_VALIDATE:
-                gates_host[b] = FaustFloat(1.0) if kb == 0 else FaustFloat(0.0)
-            elif score == SCORE_CLOUD:
-                gates_host[b] = score_gate(b, k)
-            else:
-                gates_host[b] = row[b] if kb >= 0 else FaustFloat(0.0)
-        var t0 = perf_counter_ns()
-        ctx.enqueue_copy(dst_buf=gates, src_buf=gates_host)
-        ctx.enqueue_function[strike_control_kernel](
-            sdsps, sstate, gates, S32(bells), Int32(gate_index),
-            grid_dim=grid(bells), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[strike_kernel](
-            sdsps, sstate, strikes, schan, S32(bells), S32(block),
-            grid_dim=grid(bells), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[mode_kernel](
-            mdsps, mstate, strikes, outs, mchan, S32(n), S32(block),
-            grid_dim=grid(n), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[bell_mix_kernel](
-            outs, bellsum, S32(bells), S32(scene.modes), S32(block), S32(block),
-            grid_dim=grid(bells * block), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[mix_kernel](
-            bellsum, pans, mix, S32(bells), S32(scene.modes), S32(block), S32(block),
-            grid_dim=grid(block), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_copy(dst_buf=mix_host, src_buf=mix)
-        ctx.synchronize()
-        var t1 = perf_counter_ns()
-        if kb < 0:
+    # Iteration k submits block k and processes block k - depth: with
+    # `pipeline` in `play` (depth 1), block k + 1 is on the GPU while block k
+    # is written. Two of each host buffer a block in flight reads or writes,
+    # and an event after each block.
+    var rl = RtLoop(rt, block, RATE)
+    var depth = rl.depth() if mode == MODE_PLAY else 0
+    var gates_hosts = List[HostBuffer[dfaust]]()
+    var mix_hosts = List[HostBuffer[dfaust]]()
+    var events = List[DeviceEvent]()
+    for _ in range(2):
+        gates_hosts.append(ctx.enqueue_create_host_buffer[dfaust](bells))
+        mix_hosts.append(ctx.enqueue_create_host_buffer[dfaust](2 * block))
+        events.append(ctx.create_event())
+    ctx.synchronize()
+    var enqueue_ns = List[Int](length=2, fill=0)
+    var total = blocks + warmup
+    for k in range(total + depth):
+        if k < total:
+            var kb = k - warmup
+            var si = k % 2
+            # The tune starts with the stream, not during the warm-up.
+            if mode != MODE_VALIDATE and score != SCORE_CLOUD and kb >= 0:
+                sc.gates(kb, row)
+            for b in range(bells):
+                if mode == MODE_VALIDATE:
+                    gates_hosts[si][b] = FaustFloat(1.0) if kb == 0 else FaustFloat(0.0)
+                elif score == SCORE_CLOUD:
+                    gates_hosts[si][b] = score_gate(b, k)
+                else:
+                    gates_hosts[si][b] = row[b] if kb >= 0 else FaustFloat(0.0)
+            var t0 = Int(perf_counter_ns())
+            ctx.enqueue_copy(dst_buf=gates, src_buf=gates_hosts[si])
+            ctx.enqueue_function[strike_control_kernel](
+                sdsps, sstate, gates, S32(bells), Int32(gate_index),
+                grid_dim=grid(bells), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[strike_kernel](
+                sdsps, sstate, strikes, schan, S32(bells), S32(block),
+                grid_dim=grid(bells), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[mode_kernel](
+                mdsps, mstate, strikes, outs, mchan, S32(n), S32(block),
+                grid_dim=grid(n), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[bell_mix_kernel](
+                outs, bellsum, S32(bells), S32(scene.modes), S32(block), S32(block),
+                grid_dim=grid(bells * block), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[mix_kernel](
+                bellsum, pans, mix, S32(bells), S32(scene.modes), S32(block), S32(block),
+                grid_dim=grid(block), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_copy(dst_buf=mix_hosts[si], src_buf=mix)
+            if depth > 0:
+                ctx.stream().record_event(events[si])
+            enqueue_ns[si] = Int(perf_counter_ns()) - t0
+        var j = k - depth
+        if j < 0:
             continue
-        times.append(Int(t1 - t0))
+        var jb = j - warmup
+        var so = j % 2
+        var t1 = Int(perf_counter_ns())
+        if depth > 0:
+            events[so].synchronize()
+        else:
+            ctx.synchronize()
+        var t2 = Int(perf_counter_ns())
+        if jb < 0:
+            continue
+        times.append(enqueue_ns[so] + t2 - t1)
         if mode == MODE_VALIDATE:
-            zones.set("gate", gates_host[0])
+            zones.set("gate", gates_hosts[so][0])
             refi[].compute(
                 S32(block),
                 ref_heads.unsafe_origin_cast[MUT_NOTRK]().unsafe_bitcast[Ptr[FaustFloat, IMM_NOTRK]](),
@@ -544,43 +584,34 @@ def run_scene(
             )
             for i in range(block):
                 # One bell is centred: each channel carries it times cos(pi/4).
-                var got = F64(mix_host[2 * i]) / 0.7071067811865476
+                var got = F64(mix_hosts[so][2 * i]) / 0.7071067811865476
                 var want = F64(ref_out[unsafe_offset=i])
                 diff = max(diff, abs(got - want))
                 ref_peak = max(ref_peak, abs(want))
         elif mode == MODE_PLAY:
             for i in range(2 * block):
-                var x = F32(mix_host[i])
+                var x = F32(mix_hosts[so][i])
                 peak = max(peak, abs(F64(x)))
+                energy += F64(x) * F64(x)
                 # The cloud's peak grows like sqrt(bells) (31 at 1,024 bells);
                 # a tune rings one or two bells at a time (peak about 2.1).
                 var gain = 0.8 / sqrt(F64(bells)) if score == SCORE_CLOUD else 0.4
                 out[unsafe_offset=i] = x * F32(gain) if audible else F32(0.0)
-            if kb == 0:
-                if external_call["Pa_Initialize", Int32]() != 0:
-                    raise Error("Pa_Initialize failed")
-                var params = unsafe_alloc[UInt64](4)
-                params.unsafe_bitcast[Int32]()[unsafe_offset=0] = external_call["Pa_GetDefaultOutputDevice", Int32]()
-                params.unsafe_bitcast[Int32]()[unsafe_offset=1] = Int32(2)
-                params[unsafe_offset=1] = paFloat32
-                params.unsafe_bitcast[F64]()[unsafe_offset=2] = 2.0 * F64(block) / F64(RATE)
-                params[unsafe_offset=3] = UInt64(0)
-                var err = external_call["Pa_OpenStream", Int32](
-                    address(Ptr(to=stream).unsafe_origin_cast[MUT_NOTRK]()), UInt64(0),
-                    address(params.unsafe_origin_cast[MUT_NOTRK]()),
-                    F64(RATE), UInt64(block), UInt64(0), UInt64(0), UInt64(0),
-                )
-                params.unsafe_free()
-                if err != 0:
-                    raise Error(String("Pa_OpenStream failed: ") + String(err))
-                if external_call["Pa_StartStream", Int32](stream) != 0:
-                    raise Error("Pa_StartStream failed")
-                var info = external_call["Pa_GetStreamInfo", UInt64](stream)
-                if info != 0:
-                    latency_s = Ptr[F64](unsafe_from_address=Int(info) + 16)[]
+            var t3 = Int(perf_counter_ns())
+            if jb == 0:
+                # The stream starts once the GPU is warm, the real-time
+                # requests with it.
+                rl.start()
+                var suggested = rt.latency_s(block, RATE)
+                stream = rt_open_output(RATE, block, suggested)
+                latency_s = rt_output_latency(stream)
+                rl.joined(stream, suggested)
+            var fill = rl.ring_fill(stream)
+            var w0 = Int(perf_counter_ns())
             var r = external_call["Pa_WriteStream", Int32](
                 stream, address(out.unsafe_origin_cast[MUT_NOTRK]()), UInt64(block)
             )
+            rl.record(enqueue_ns[so], t2 - t1, t3 - t2, fill, w0, Int(perf_counter_ns()))
             if r == paOutputUnderflowed:
                 underflows += 1
 
@@ -591,9 +622,8 @@ def run_scene(
     elif mode == MODE_BENCH:
         result = F64(median(times))
     else:
-        _ = external_call["Pa_StopStream", Int32](stream)
-        _ = external_call["Pa_CloseStream", Int32](stream)
-        _ = external_call["Pa_Terminate", Int32]()
+        rl.leave()
+        rt_close_output(stream)
         var worst = 0
         for t in times:
             worst = max(worst, t)
@@ -601,9 +631,11 @@ def run_scene(
             "bells", bells, "modes", n, "block", block, "blocks", blocks,
             "underflows", underflows, "compute_median_us", F64(median(times)) / 1000.0,
             "compute_max_us", F64(worst) / 1000.0, "budget_us", F64(block) * 1e6 / F64(RATE),
-            "peak", peak, "audible", audible, "output_latency_ms", latency_s * 1000.0,
+            "peak", peak, "energy", energy, "audible", audible, "output_latency_ms", latency_s * 1000.0,
         )
+        print(rl.summary())
         result = F64(underflows)
+    rl.free()
     shost.unsafe_free()
     mhost.unsafe_free()
     refi.unsafe_free()
@@ -832,9 +864,9 @@ def bench(bells: Int, block: Int) raises:
     )
 
 
-def play(bells: Int, seconds: F64, audible: Bool, block: Int, score: Int) raises:
+def play(bells: Int, seconds: F64, audible: Bool, block: Int, score: Int, rt: RtOptions) raises:
     var blocks = Int(seconds * F64(RATE) / F64(block))
-    var underflows = run_scene(Carillon(bells, -1), block, blocks, MODE_PLAY, -1, audible, score)
+    var underflows = run_scene(Carillon(bells, -1), block, blocks, MODE_PLAY, -1, audible, score, rt)
     if underflows > 0:
         raise Error(String(Int(underflows)) + " underruns")
 
@@ -843,7 +875,10 @@ def main() raises -> None:
     comptime assert dfaust == f32, "the Apple GPU computes in f32: -D DFAUST=DType.float32"
     var args = argv()
     if len(args) < 2:
-        raise Error("usage: validate | bench <bells> [<block>] | play <bells> <seconds> [audible] [<block>]")
+        raise Error(
+            "usage: validate | bench <bells> [<block>] | play <bells> <seconds> [audible] [<block>]"
+            + " [cloud|melody|chime] [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]"
+        )
     if args[1] == "validate":
         validate()
     elif args[1] == "bench":
@@ -852,8 +887,11 @@ def main() raises -> None:
         var audible = False
         var block = 256
         var score = SCORE_CLOUD
+        var rt = RtOptions()
         for i in range(4, len(args)):
-            if args[i] == "audible":
+            if rt.parse(String(args[i])):
+                continue
+            elif args[i] == "audible":
                 audible = True
             elif args[i] == "melody":
                 score = SCORE_MELODY
@@ -863,6 +901,6 @@ def main() raises -> None:
                 score = SCORE_CLOUD
             else:
                 block = atol(args[i])
-        play(atol(args[2]), atof(args[3]), audible, block, score)
+        play(atol(args[2]), atof(args[3]), audible, block, score, rt)
     else:
         raise Error("unknown mode")

@@ -5,11 +5,22 @@
 # written to the default audio output through PortAudio (GPU batch plan G4,
 # porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md).
 #
-# Concatenated after `impulsemojo.mojo` and the `mojo_batch` output of a voice
-# with `freq`, `gain` and `gate` controls (`poly/voice.dsp`). Built with
-# `-D DFAUST=DType.float32` and linked with `-lportaudio`.
+# Concatenated after `impulsemojo.mojo`, the `mojo_batch` output of a voice
+# with `freq`, `gain` and `gate` controls (`poly/voice.dsp`) and
+# `realtimemojo.mojo`. Built with `-D DFAUST=DType.float32` and linked with
+# `-lportaudio -framework CoreAudio`.
 #
 #   <binary> <voices> <seconds> [audible] [<block> [<stress_us> [<latency_ms>]]]
+#            [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]
+#
+# `rt=`, `pipeline` and `latency=` (anywhere on the line) are the real-time
+# options of realtimemojo.mojo: the time-constraint policy for the loop's
+# thread, the output device's IO workgroup, the GPU work submitted one block
+# ahead, and the suggested latency (`latency_ms`, if given, wins).
+# A second line, `timing`, splits each block into enqueue, GPU wait, host
+# work and `Pa_WriteStream` (median, 99th percentile, maximum), with the gap
+# between two writes; porting/faust-gpu-audio-synthesis-2026-11-07-en.md
+# §2.5 records them under CPU load.
 #
 # PortAudio's blocking API (`Pa_WriteStream`) paces the loop at the device's
 # rate and reports every underrun (`paOutputUnderflowed`): no C callback is
@@ -30,7 +41,7 @@
 # Every buffer a kernel reaches is one of its arguments (Metal, G3.5).
 # ---------------------------------------------------------------------------
 
-from max.gpu.host import DeviceContext
+from max.gpu.host import DeviceContext, DeviceEvent, HostBuffer
 from max.gpu import global_idx
 from std.ffi import external_call
 from std.sys import argv
@@ -39,7 +50,6 @@ from std.time import perf_counter_ns
 comptime GPU_BLOCK_DIM = 64
 comptime RATE = S32(48000)
 comptime WARMUP = 20
-comptime paFloat32 = UInt64(1)
 comptime paOutputUnderflowed = Int32(-9980)
 
 
@@ -196,14 +206,21 @@ def address[T: AnyType](p: Ptr[T, MUT_NOTRK]) -> UInt64:
 
 def main() raises -> None:
     comptime assert dfaust == f32, "the Apple GPU computes in f32: -D DFAUST=DType.float32"
-    var args = argv()
-    if len(args) < 3:
+    var argl = argv()
+    var rt = RtOptions()
+    var args = List[String]()
+    for i in range(1, len(argl)):
+        var a = String(argl[i])
+        if not rt.parse(a):
+            args.append(a)
+    if len(args) < 2:
         raise Error(
             "usage: <binary> <voices> <seconds> [audible] [<block> [<stress_us> [<latency_ms>]]]"
+            + " [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]"
         )
-    var nvoices = atol(args[1])
-    var seconds = atof(args[2])
-    var at = 3
+    var nvoices = atol(args[0])
+    var seconds = atof(args[1])
+    var at = 2
     var audible = False
     if len(args) > at and args[at] == "audible":
         audible = True
@@ -211,7 +228,7 @@ def main() raises -> None:
     var block = atol(args[at]) if len(args) > at else 256
     var stress_us = atol(args[at + 1]) if len(args) > at + 1 else 0
     var latency_ms = (
-        atof(args[at + 2]) if len(args) > at + 2 else 2000.0 * F64(block) / F64(RATE)
+        atof(args[at + 2]) if len(args) > at + 2 else rt.latency_s(block, RATE) * 1000.0
     )
     var nblocks = Int(seconds * F64(RATE) / F64(block))
 
@@ -249,9 +266,17 @@ def main() raises -> None:
         grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
     )
     var mix = ctx.enqueue_create_buffer[dfaust](block)
-    var mix_host = ctx.enqueue_create_host_buffer[dfaust](block)
     var values = ctx.enqueue_create_buffer[dfaust](nvoices)
     var values_host = ctx.enqueue_create_host_buffer[dfaust](nvoices)
+    # Two of each buffer the host touches while a block is in flight
+    # (`pipeline`), and the event recorded after each block.
+    var gates_hosts = List[HostBuffer[dfaust]]()
+    var mix_hosts = List[HostBuffer[dfaust]]()
+    var events = List[DeviceEvent]()
+    for _ in range(2):
+        gates_hosts.append(ctx.enqueue_create_host_buffer[dfaust](nvoices))
+        mix_hosts.append(ctx.enqueue_create_host_buffer[dfaust](block))
+        events.append(ctx.create_event())
     ctx.synchronize()
     for v in range(nvoices):
         values_host[v] = FaustFloat(55.0 * (2.0 ** (F64(v % 48) / 12.0)))
@@ -266,90 +291,96 @@ def main() raises -> None:
     var scale = F32(4.0 / F64(nvoices))
 
     # One block of the instrument: gates, voices, mix, back to the host.
+    # Iteration k submits block k and writes block k - depth: with
+    # `pipeline` (depth 1), block k + 1 is on the GPU while block k is
+    # written.
     var compute = List[Int]()
     var peak = F64(0.0)
+    # The sum of squares of the played mix: the same with and without
+    # `pipeline` (a check that the double buffers hold the right block).
+    var energy = F64(0.0)
     var stream = UInt64(0)
     var underflows = 0
     var errors = 0
     var t_start = 0
     var latency_s = F64(-1.0)
-    for b in range(nblocks + WARMUP):
-        var t0 = perf_counter_ns()
-        for v in range(nvoices):
-            var on = ((b + 7 * v) % 96) < 64
-            values_host[v] = FaustFloat(1.0) if on else FaustFloat(0.0)
-        ctx.enqueue_copy(dst_buf=values, src_buf=values_host)
-        ctx.enqueue_function[control_kernel](
-            dsps, state, values, S32(nvoices), Int32(i_gate),
-            grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[voices_kernel](
-            dsps, state, data, channels, S32(nvoices), S32(n_ins), S32(n_outs), S32(block),
-            grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_function[mix_kernel](
-            data, mix, S32(nvoices), S32(n_chans), S32(n_ins), S32(block),
-            grid_dim=grid(block), block_dim=GPU_BLOCK_DIM,
-        )
-        ctx.enqueue_copy(dst_buf=mix_host, src_buf=mix)
-        ctx.synchronize()
+    var rl = RtLoop(rt, block, RATE)
+    var depth = rl.depth()
+    var total = nblocks + WARMUP
+    var enqueue_ns = List[Int](length=2, fill=0)
+    for k in range(total + depth):
+        if k < total:
+            var si = k % 2
+            var t0 = Int(perf_counter_ns())
+            for v in range(nvoices):
+                var on = ((k + 7 * v) % 96) < 64
+                gates_hosts[si][v] = FaustFloat(1.0) if on else FaustFloat(0.0)
+            ctx.enqueue_copy(dst_buf=values, src_buf=gates_hosts[si])
+            ctx.enqueue_function[control_kernel](
+                dsps, state, values, S32(nvoices), Int32(i_gate),
+                grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[voices_kernel](
+                dsps, state, data, channels, S32(nvoices), S32(n_ins), S32(n_outs), S32(block),
+                grid_dim=grid(nvoices), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_function[mix_kernel](
+                data, mix, S32(nvoices), S32(n_chans), S32(n_ins), S32(block),
+                grid_dim=grid(block), block_dim=GPU_BLOCK_DIM,
+            )
+            ctx.enqueue_copy(dst_buf=mix_hosts[si], src_buf=mix)
+            if depth > 0:
+                ctx.stream().record_event(events[si])
+            enqueue_ns[si] = Int(perf_counter_ns()) - t0
+        var b = k - depth
+        if b < 0:
+            continue
+        var so = b % 2
+        var t1 = Int(perf_counter_ns())
+        if depth > 0:
+            events[so].synchronize()
+        else:
+            ctx.synchronize()
+        var t2 = Int(perf_counter_ns())
         if stress_us > 0:
-            var until = Int(perf_counter_ns()) + stress_us * 1000
+            var until = t2 + stress_us * 1000
             while Int(perf_counter_ns()) < until:
                 continue
-        var t1 = perf_counter_ns()
+        var t_stress = Int(perf_counter_ns())
         for i in range(block):
-            var x = F32(mix_host[i])
+            var x = F32(mix_hosts[so][i])
             if abs(F64(x)) > peak:
                 peak = abs(F64(x))
             var y = x * scale if audible else F32(0.0)
             out[unsafe_offset=2 * i] = y
             out[unsafe_offset=2 * i + 1] = y
+        var t3 = Int(perf_counter_ns())
         if b < WARMUP:
             continue
+        for i in range(block):
+            energy += F64(mix_hosts[so][i]) * F64(mix_hosts[so][i])
         if b == WARMUP:
-            # The stream starts once the GPU is warm.
-            if external_call["Pa_Initialize", Int32]() != 0:
-                raise Error("Pa_Initialize failed")
-            # PaStreamParameters: PaDeviceIndex device; int channelCount;
-            # PaSampleFormat sampleFormat; PaTime suggestedLatency;
-            # void *hostApiSpecificStreamInfo (32 bytes on arm64).
-            var params = unsafe_alloc[UInt64](4)
-            var device = external_call["Pa_GetDefaultOutputDevice", Int32]()
-            params.unsafe_bitcast[Int32]()[unsafe_offset=0] = device
-            params.unsafe_bitcast[Int32]()[unsafe_offset=1] = Int32(2)
-            params[unsafe_offset=1] = paFloat32
-            params.unsafe_bitcast[F64]()[unsafe_offset=2] = latency_ms / 1000.0
-            params[unsafe_offset=3] = UInt64(0)
-            var err = external_call["Pa_OpenStream", Int32](
-                address(Ptr(to=stream).unsafe_origin_cast[MUT_NOTRK]()),
-                UInt64(0),
-                address(params.unsafe_origin_cast[MUT_NOTRK]()),
-                F64(RATE), UInt64(block), UInt64(0), UInt64(0), UInt64(0),
-            )
-            params.unsafe_free()
-            if err != 0:
-                raise Error(String("Pa_OpenStream failed: ") + String(err))
-            if external_call["Pa_StartStream", Int32](stream) != 0:
-                raise Error("Pa_StartStream failed")
+            # The stream starts once the GPU is warm, the real-time requests
+            # with it.
+            rl.start()
+            stream = rt_open_output(RATE, block, latency_ms / 1000.0)
             t_start = Int(perf_counter_ns())
-            # PaStreamInfo: int structVersion; PaTime inputLatency;
-            # PaTime outputLatency; double sampleRate.
-            var info = external_call["Pa_GetStreamInfo", UInt64](stream)
-            if info != 0:
-                latency_s = Ptr[F64](unsafe_from_address=Int(info) + 16)[]
-        compute.append(Int(t1 - t0))
+            latency_s = rt_output_latency(stream)
+            rl.joined(stream, latency_ms / 1000.0)
+        compute.append(enqueue_ns[so] + t_stress - t1)
+        var fill = rl.ring_fill(stream)
+        var w0 = Int(perf_counter_ns())
         var r = external_call["Pa_WriteStream", Int32](
             stream, address(out.unsafe_origin_cast[MUT_NOTRK]()), UInt64(block)
         )
+        rl.record(enqueue_ns[so], t2 - t1, t3 - t2, fill, w0, Int(perf_counter_ns()))
         if r == paOutputUnderflowed:
             underflows += 1
         elif r != 0:
             errors += 1
     var elapsed = F64(Int(perf_counter_ns()) - t_start) / 1e9
-    _ = external_call["Pa_StopStream", Int32](stream)
-    _ = external_call["Pa_CloseStream", Int32](stream)
-    _ = external_call["Pa_Terminate", Int32]()
+    rl.leave()
+    rt_close_output(stream)
 
     var worst = 0
     for c in compute:
@@ -360,9 +391,11 @@ def main() raises -> None:
         "seconds", elapsed, "underflows", underflows, "errors", errors,
         "compute_median_us", F64(median(compute)) / 1000.0,
         "compute_max_us", F64(worst) / 1000.0, "budget_us", budget_us,
-        "mix_peak", peak, "audible", audible, "stress_us", stress_us,
+        "mix_peak", peak, "mix_energy", energy, "audible", audible, "stress_us", stress_us,
         "output_latency_ms", latency_s * 1000.0,
     )
+    print(rl.summary())
+    rl.free()
     host.unsafe_free()
     out.unsafe_free()
     if underflows > 0 and stress_us == 0:

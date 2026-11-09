@@ -570,12 +570,15 @@ every block of N samples:
       |                                                |   continuously  |
 ```
 
-The latency granted (43 ms at 256 samples, 30 ms at 128) is that buffer: it
-is what lets a slow block (a chord change takes 10 to 17 ms, three blocks of
-256 samples) pass without a dropout, as long as the following blocks are fast
-enough to refill it. With the blocking API, PortAudio adds its own buffering
-on top of the driver's, so the latency is larger than the two blocks asked
-for.
+That buffer is a ring of twice the suggested latency, rounded up to a power
+of two frames: 1,024 frames (21.3 ms) at 256 samples. It is what lets a slow
+block (a chord change takes 10 to 17 ms, three blocks of 256 samples) pass
+without a dropout, as long as the following blocks are fast enough to refill
+it. The latency granted (43 ms at 256 samples, 30 ms at 128) is that ring
+plus the driver's own buffers, so it is larger than the two blocks asked
+for, and larger than the cushion against a late block. Under CPU load the
+loop needs real-time scheduling and a pipelined GPU wait to keep that ring
+filled (`porting/faust-gpu-audio-synthesis-2026-11-07-en.md`, §2.5).
 
 ### 8.3 What could lower it
 
