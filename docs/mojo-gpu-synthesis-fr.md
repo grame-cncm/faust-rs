@@ -628,10 +628,17 @@ garder cet anneau plein (`porting/faust-gpu-audio-synthesis-2026-11-07-en.md`,
   file sans verrou entre lui et le callback. La latence est alors la
   profondeur de cette file, que la gigue impose : avec 3 à 5 ms de gigue à 128
   échantillons, deux ou trois blocs, soit environ 6 à 8 ms de file plus le
-  buffer propre du pilote. Ni écrit ni mesuré.
+  buffer propre du pilote. Écrit et mesuré depuis (2026-11-09) avec la crate
+  Rust cpal (`audio=cpal`) : 12,9 à 18,2 ms de latence à 256 échantillons sur
+  une machine chargée (quelques coupures dans certains essais pendant une
+  compilation), 10,3 ms à 128 (davantage de coupures sous charge), et 6,2 ms
+  à 64 sur une machine au repos seulement, contre 43, 30 et 23 ms pour l'API
+  bloquante de PortAudio
+  (`porting/faust-gpu-audio-synthesis-2026-11-07-en.md`, §2.5).
 - **Recouvrir les blocs** : lancer le bloc k + 1 sur le GPU pendant que le
   bloc k passe par la réverbération et part vers PortAudio masque une partie
-  du coût fixe.
+  du coût fixe. Fait depuis (`pipeline`) : avec un thread temps réel, c'est ce
+  qui empêche le lecteur de craquer quand les CPU sont occupés.
 - **Garder le GPU éveillé** entre les blocs supprimerait la pénalité du temps
   réel (1 ms au lieu de 0,34 ms à 64 échantillons), au prix de la
   consommation.

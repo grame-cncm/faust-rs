@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-outline mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-modal-fad mojo-gpu-modal-fad-build mojo-gpu-modal-fad-bell mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report reference-libs-accept interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 mojo mojo-vec0 mojo-vec1 mojo-outline mojo-gpu mojo-gpu-batch mojo-gpu-poly mojo-gpu-bells mojo-gpu-choir mojo-gpu-choir-build cpal-bridge mojo-gpu-choir-reverb mojo-gpu-choir-render mojo-gpu-modal-fad mojo-gpu-modal-fad-build mojo-gpu-modal-fad-bell mojo-gpu-bench mojo-gpu-bench-batch cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -339,7 +339,11 @@ mojo-gpu-batch:
 # written through PortAudio (muted unless POLY_AUDIBLE=audible); fails on an
 # underrun. PORTAUDIO_LIB names the directory of libportaudio. POLY_RT holds
 # the real-time options of archs/realtimemojo.mojo, for the three players
-# (poly, bells, choir): `rt=tc`, `rt=wg` or `rt=tc+wg`, and `pipeline`.
+# (poly, bells, choir): `rt=tc`, `rt=wg` or `rt=tc+wg`, `pipeline`,
+# `latency=<ms>`, and `audio=cpal` (with `ring=<frames>`, `buffer=<frames>`)
+# to play through cpal instead of PortAudio. The players link
+# tools/cpal-bridge, a C ABI over the cpal crate, built here with cargo into
+# build/cpal-bridge.
 MOJO ?= mojo
 POLY_VOICES ?= 256
 POLY_SECONDS ?= 10
@@ -348,9 +352,13 @@ POLY_AUDIBLE ?=
 POLY_DSP ?= ../corpus/gpu_voice_saw.dsp
 PORTAUDIO_LIB ?= /opt/homebrew/lib
 POLY_RT ?=
+CPAL_BRIDGE_LIB = $(CURDIR)/build/cpal-bridge/release
 MOJO_AUDIO_LINK = -Xlinker -L$(PORTAUDIO_LIB) -Xlinker -lportaudio -Xlinker -rpath -Xlinker $(PORTAUDIO_LIB) \
+	  -Xlinker -L$(CPAL_BRIDGE_LIB) -Xlinker -lcpal_bridge -Xlinker -rpath -Xlinker $(CPAL_BRIDGE_LIB) \
 	  -Xlinker -framework -Xlinker CoreAudio
-mojo-gpu-poly:
+cpal-bridge:
+	cargo build --release --manifest-path tools/cpal-bridge/Cargo.toml --target-dir build/cpal-bridge
+mojo-gpu-poly: cpal-bridge
 	cargo build --release -p compiler --example mojo_batch
 	mkdir -p build/mojo-gpu-poly
 	../../target/release/examples/mojo_batch $(POLY_DSP) -o build/mojo-gpu-poly/voice.mojo
@@ -375,7 +383,7 @@ BELLS_SECONDS ?= 10
 # cloud (every bell, staggered), melody (Ode to Joy) or chime (Westminster
 # Quarters); the two tunes want BELLS=37, one bell per semitone.
 BELLS_SCORE ?= cloud
-mojo-gpu-bells:
+mojo-gpu-bells: cpal-bridge
 	cargo build --release -p compiler --example mojo_batch
 	mkdir -p build/mojo-gpu-bells
 	python3 tools/bell_modes.py $(FAUSTLIBS)/physmodels.lib build/mojo-gpu-bells/bell_data.mojo
@@ -399,7 +407,7 @@ mojo-gpu-bells:
 # ../corpus/gpu_choir_reverb.dsp (re.zita_rev1_stereo) on the CPU.
 CHOIR ?= 448
 CHOIR_SECONDS ?= 20
-mojo-gpu-choir-build:
+mojo-gpu-choir-build: cpal-bridge
 	cargo build --release -p compiler --example mojo_batch
 	mkdir -p build/mojo-gpu-choir
 	../../target/release/examples/mojo_batch ../corpus/gpu_choir_partial.dsp --cn choirdsp -o build/mojo-gpu-choir/choir.mojo

@@ -590,10 +590,17 @@ filled (`porting/faust-gpu-audio-synthesis-2026-11-07-en.md`, §2.5).
   computing thread that keeps a few blocks ahead, and a lock-free queue
   between it and the callback. The latency is then the depth of that queue,
   which the jitter dictates: with 3 to 5 ms of jitter at 128 samples, two or
-  three blocks, about 6 to 8 ms of queue plus the driver's own buffer. Not
-  written or measured.
+  three blocks, about 6 to 8 ms of queue plus the driver's own buffer.
+  Written and measured since (2026-11-09) with the Rust crate cpal
+  (`audio=cpal`): 12.9 to 18.2 ms of latency at 256 samples on a loaded
+  machine (a few dropouts in some runs during a compile), 10.3 ms at 128
+  (more dropouts under load), and 6.2 ms at 64 on an idle machine only,
+  against 43, 30 and 23 ms for PortAudio's blocking API
+  (`porting/faust-gpu-audio-synthesis-2026-11-07-en.md`, §2.5).
 - **Overlapping blocks**: launching block k + 1 on the GPU while block k
   goes through the reverb and to PortAudio hides part of the fixed cost.
+  Done since (`pipeline`): with a real-time thread, it is what keeps the
+  player from crackling while the CPUs are busy.
 - **Keeping the GPU awake** between blocks would remove the real-time
   penalty (1 ms instead of 0.34 ms at 64 samples), at the price of power.
 

@@ -288,17 +288,110 @@ What the tables say:
   variant, a few percent of the 5.3 ms period. `synchronize` blocks rather
   than spins, so the half-block computation declared to the time-constraint
   policy is not approached.
-- **Open:** under 10 loops some single writes took 110 to 170 ms (`rt=wg`,
-  `rt=tc+wg`, `pipeline`) with no underrun after them, and CoreAudio logged
-  no overload. The first write of a run, which waits for the device to start,
-  was not separated in these runs; checked afterwards on its own, it took 12
-  to 20 ms. The cause of these writes is not known.
+- **The long single writes.** Under 10 loops some single writes took 110 to
+  170 ms (`rt=wg`, `rt=tc+wg`, `pipeline`) with no underrun after them, and
+  CoreAudio logged no overload. They were first writes, which wait for the
+  device to start. In the cpal comparison below, which reports the first
+  write apart, 7 first writes of 61 took 98 to 165 ms, idle as well as under
+  load and with both outputs. No later write took more than 15 ms.
 
 Use `rt=tc pipeline`, or `POLY_RT="rt=tc pipeline"` with the Makefile
 targets, whenever the machine does other work. The price is one block of
 latency. Mojo's `DeviceEvent` has no non-blocking query, so the wake-up from
 the GPU cannot be polled from the real-time thread. A player driven by the
 audio callback (§7) would still need this decoupling.
+
+#### PortAudio or cpal (measured, 2026-11-09)
+
+The question was whether [cpal](https://crates.io/crates/cpal) (0.18.2, the
+Rust audio crate) does better than PortAudio for latency and priority. The
+players take `audio=cpal` (`archs/realtimemojo.mojo`). They then write into a
+ring of their own, `tools/cpal-bridge`: a C ABI over cpal, built as a
+standalone Cargo project outside the workspace. cpal's output callback reads
+that ring on the CoreAudio IO thread. The design differs from PortAudio's
+blocking API in four ways:
+
+- **The ring's size** is free (`ring=<frames>`). PortAudio's is twice the
+  suggested latency, at least three blocks, rounded up to a power of two.
+- **The writer's wake-up.** A writer that finds the ring full parks, and each
+  callback unparks it. PortAudio's writer sleeps 5 ms at a time.
+- **The device buffer** is set to one block (`buffer=<frames>`,
+  `BufferSize::Fixed`).
+- **The bridge counts what the callback sees:** the ring's fill at each
+  callback (the true margin), the time between callbacks, and CoreAudio
+  overloads (`ErrorKind::Xrun`).
+
+The same protocol as above: `poly`, 256 voices, the built-in speakers at
+48 kHz, an otherwise idle machine, 15 s per run, two rounds. The compile now
+runs in a loop (the workspace rebuilt from an empty target directory, again
+and again), so that it covers every run. The latency is what each output
+reports:
+
+- PortAudio: `Pa_GetStreamInfo`;
+- cpal: the ring plus cpal's playback-minus-callback delay, which is the
+  device buffer plus the device's latency and safety offset.
+
+Neither was measured acoustically.
+
+Underruns per run, 256-frame blocks:
+
+| output | latency | idle | 10 loops | compile |
+|---|---|---|---|---|
+| PortAudio, no measure | 43.3 ms | 0 | 11, 31 | 65, 79 |
+| cpal, no measure | 28.9 ms | 0 | 64, 57 | 68, 62 |
+| PortAudio, `rt=tc pipeline` | 43.3 ms | 0 | 0, 0 | 0, 0 |
+| cpal, `rt=tc pipeline` (ring 1,024, 21.3 ms) | 28.9 ms | 0 | 2, 0 | 0, 0 |
+| cpal, `rt=tc pipeline ring=512` (10.7 ms) | 18.2 ms | 0 | 0, 0 | 5, 0 |
+| cpal, `rt=tc pipeline ring=256` (5.3 ms) | 12.9 ms | 0 | 0, 0 | 0, 1 |
+| cpal, `rt=tc+wg pipeline ring=512` | 18.2 ms | 0 | 0, 0 | 0, 14 |
+
+Smaller blocks, all with `rt=tc pipeline`:
+
+| block | output | latency | idle | 10 loops | compile |
+|---|---|---|---|---|---|
+| 128 | PortAudio (ring 512, 10.7 ms) | 30.0 ms | 0 | 0, 0 | 5, 0 |
+| 128 | cpal, ring 256, buffer 128 | 10.3 ms | 0 | 0, 6 | 5, 15 |
+| 64 | PortAudio (ring 256, 5.3 ms) | 23.3 ms | 0 | 308, 289 | 544, 413 |
+| 64 | cpal, ring 128, buffer 64 | 6.2 ms | 0 | 284, 338 | 366, 337 |
+
+The choir (448 singers) and the carillon (256 bells), one run each under 10
+loops, `rt=tc pipeline`: the choir under-ran twice with PortAudio, on a
+39 ms GPU wait, and not at all with cpal at rings of 21.3 and 10.7 ms. The
+carillon did not under-run with either output.
+
+What the tables say:
+
+- **Latency: cpal is better, mostly on the device side.**
+  - At the same 21.3 ms ring, cpal reports 28.9 ms where PortAudio reports
+    43.3 ms. cpal's device side is 7.6 ms at 256 frames: the buffer (5.3 ms)
+    plus 2.3 ms of device latency and safety offset. PortAudio reports 18 to
+    22 ms beyond its ring at every block size.
+  - The ring can then shrink. At 256 frames, `ring=256` (12.9 ms in all) did
+    not under-run under 10 loops, and once in two compile runs.
+  - Idle, cpal played 64-frame blocks with 6.2 ms of latency and no underrun;
+    PortAudio's floor at that block is 23.3 ms.
+- **Priority: no difference.** Both feed the device from CoreAudio's
+  real-time IO thread, and cpal does nothing more on macOS: its `realtime`
+  features concern ALSA, PipeWire and AAudio. cpal's callback was never late
+  in any cpal run: the longest time between two callbacks was one buffer (5.4 ms
+  at 256 frames, 2.7 at 128, 1.4 at 64), and cpal reported no CoreAudio
+  overload. Every underrun was the loop's thread failing to refill the ring.
+  Without `rt=tc pipeline`, cpal under-runs as much as PortAudio.
+- **The limit is the GPU wake-up, whichever output.** With `rt=tc pipeline`,
+  rare GPU waits of 20 to 40 ms still occur under load: the completion path
+  that the policy cannot reach. Any ring smaller than such a wait loses a few
+  blocks in some runs. At 64 frames the per-block fixed cost and its jitter
+  exceed the 1.33 ms budget under load with both outputs.
+- **The workgroup still adds nothing:** `rt=tc+wg` was not better than
+  `rt=tc` with cpal either.
+
+`audio=cpal` is the better output for latency and diagnostics: 13 to 18 ms
+at 256 frames under load, with a few underruns in some compile runs, where
+PortAudio's blocking API never goes below 43 ms. It does not remove the need
+for `rt=tc pipeline`. PortAudio remains
+the default, because the bridge needs a cargo build. A smaller GPU wake-up
+latency, or a way to poll the GPU's completion from the real-time thread,
+would let the ring shrink further.
 
 ### 2.6 Correctness
 
@@ -1073,7 +1166,8 @@ rendered once for listening (10 s), but no lane does it.
   - `make mojo-gpu-bench` and `make mojo-gpu-bench-batch` (cost);
   - `make mojo-gpu-poly` (real time); `POLY_RT` passes the real-time
     measures of §2.5 (`archs/realtimemojo.mojo`) to it and to the choir and
-    carillon players.
+    carillon players, including `audio=cpal` (`tools/cpal-bridge`, built by
+    `make cpal-bridge`).
 - The additive choir of §5: `tests/corpus/gpu_choir_partial.dsp`;
   `make mojo-gpu-choir`.
 - The carillon of §5: `tests/corpus/gpu_bell_strike.dsp`,

@@ -117,10 +117,14 @@ See the design write-up in
      `rt=wg` (it joins the output device's IO workgroup), `rt=tc+wg`,
      `pipeline` (the GPU computes block n + 1 while block n is written) and
      `latency=<ms>` (the suggested output latency; PortAudio's ring holds
-     twice that). Each run prints a `timing` line: every block split into
-     enqueue, GPU wait, host work and `Pa_WriteStream`, the gaps between
-     writes, and the lowest fill of PortAudio's ring. They link
-     `-framework CoreAudio`.
+     twice that), and `audio=cpal` (play through the cpal crate instead of
+     PortAudio's blocking API, with `ring=<frames>` and `buffer=<frames>`).
+     Each run prints a `timing` line: every block split into enqueue, GPU
+     wait, host work and the write, the gaps between writes, the lowest fill
+     of the output ring, and with cpal the callback's own counters. They
+     link `-framework CoreAudio` and `tools/cpal-bridge` (a C ABI over cpal,
+     a standalone Cargo project built by `make cpal-bridge` into
+     `build/cpal-bridge`).
    - `make mojo-gpu-choir-render` — both versions rendered offline, as fast as
      the GPU goes, to `build/mojo-gpu-choir/choir-dry.wav` (one cycle, 20 s)
      and `choir-reverb.wav` (one cycle and the hall's tail, 69 s): 24-bit,

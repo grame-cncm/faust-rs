@@ -1,0 +1,15 @@
+[package]
+name = "cpal-bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A C ABI over cpal for the Mojo GPU players of tests/impulse-tests"
+
+# A standalone tool, not a member of the faust-rs workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+cpal = "0.18.2"

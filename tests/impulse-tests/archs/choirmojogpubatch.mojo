@@ -12,19 +12,22 @@
 # gpu_choir_partial.dsp), `refdsp` (its scalar contract, one ordinary
 # instance per partial, the CPU baseline) and `revdsp` (gpu_choir_reverb.dsp,
 # the hall: `re.zita_rev1_stereo` mixed with the dry signal).
-# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio -framework
-# CoreAudio`.
+# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio -lcpal_bridge
+# -framework CoreAudio`.
 #
 #   <binary> validate                         a small choir, GPU against CPU
 #   <binary> bench <singers> [<block>]        GPU against the CPU threads
 #   <binary> play <singers> <seconds> [audible] [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>]
 #                 [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]
+#                 [audio=pa|cpal] [ring=<frames>] [buffer=<frames>]
 #   <binary> render <singers> <seconds> <out.f32> [reverb] [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>]
 #
-# `rt=`, `pipeline` and `latency=` are the real-time options of `play`
-# (realtimemojo.mojo): the time-constraint policy for the loop's thread, the
-# output device's IO workgroup, the GPU work submitted one block ahead, and
-# the suggested output latency. `play` prints a second line, `timing`: each
+# `rt=`, `pipeline`, `latency=`, `audio=`, `ring=` and `buffer=` are the
+# real-time options of `play` (realtimemojo.mojo): the time-constraint policy
+# for the loop's thread, the output device's IO workgroup, the GPU work
+# submitted one block ahead, the suggested output latency, and the output:
+# PortAudio's blocking API (default) or cpal, with its ring and device
+# buffer. `play` prints a second line, `timing`: each
 # block split into enqueue, GPU wait, host work (the hall with `reverb`) and
 # `Pa_WriteStream`, the gaps between writes and the fill of PortAudio's ring.
 #
@@ -78,7 +81,6 @@ comptime RATE = S32(48000)
 comptime WARMUP = 20
 comptime FMAX = 20000.0
 comptime CHORD_SECONDS = 5.0
-comptime paOutputUnderflowed = Int32(-9980)
 
 # The controls of a partial, in the order the host sets them.
 comptime NCTL = 9
@@ -664,13 +666,11 @@ def run_choir(
     var hall_times = List[Int]()
 
     var out = unsafe_alloc[F32](2 * block)
-    var stream = UInt64(0)
     var underflows = 0
     var peak = F64(0.0)
     # The sum of squares of the played mix: the same with and without
     # `pipeline` (a check that the double buffers hold the right block).
     var energy = F64(0.0)
-    var latency_s = F64(-1.0)
     # `render` drops the same warm-up blocks as `play`, so that a file holds
     # what the sound card receives: every partial starts at phase 0, and the
     # first few milliseconds sum the harmonics in phase (a peak five times the
@@ -780,18 +780,12 @@ def run_choir(
             if j == warmup:
                 # The stream starts once the GPU is warm, the real-time
                 # requests with it.
-                rl.start()
-                var suggested = rt.latency_s(block, RATE)
-                stream = rt_open_output(RATE, block, suggested)
-                latency_s = rt_output_latency(stream)
-                rl.joined(stream, suggested)
-            var fill = rl.ring_fill(stream)
+                rl.open()
+            var fill = rl.ring_fill()
             var w0 = Int(perf_counter_ns())
-            var r = external_call["Pa_WriteStream", Int32](
-                stream, address(out.unsafe_origin_cast[MUT_NOTRK]()), UInt64(block)
-            )
+            var r = rl.write_block(out.unsafe_origin_cast[MUT_NOTRK]())
             rl.record(enqueue_ns[so], t2 - t1, t3 - t2, fill, w0, Int(perf_counter_ns()))
-            if r == paOutputUnderflowed:
+            if r == 1:
                 underflows += 1
 
     var result = F64(0.0)
@@ -807,8 +801,8 @@ def run_choir(
             "compute_median_us", F64(median(times)) / 1000.0,
         )
     else:
-        rl.leave()
-        rt_close_output(stream)
+        rl.close()
+        var latency_s = rl.output_latency()
         var worst = 0
         for t in times:
             worst = max(worst, t)
@@ -908,7 +902,7 @@ def main() raises -> None:
         raise Error(
             "usage: validate | bench <singers> [<block>] | play <singers> <seconds> [audible] [reverb]"
             + " [dry=<x>] [wet=<x>] [t60=<s>] [gap=<s>] [<block>] [rt=off|tc|wg|tc+wg] [pipeline]"
-            + " [latency=<ms>]"
+            + " [latency=<ms>] [audio=pa|cpal] [ring=<frames>] [buffer=<frames>]"
         )
     if args[1] == "validate":
         validate()

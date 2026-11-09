@@ -8,15 +8,18 @@
 # Concatenated after `impulsemojo.mojo`, the `mojo_batch` output of a voice
 # with `freq`, `gain` and `gate` controls (`poly/voice.dsp`) and
 # `realtimemojo.mojo`. Built with `-D DFAUST=DType.float32` and linked with
-# `-lportaudio -framework CoreAudio`.
+# `-lportaudio -lcpal_bridge -framework CoreAudio`.
 #
 #   <binary> <voices> <seconds> [audible] [<block> [<stress_us> [<latency_ms>]]]
 #            [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]
+#            [audio=pa|cpal] [ring=<frames>] [buffer=<frames>]
 #
-# `rt=`, `pipeline` and `latency=` (anywhere on the line) are the real-time
-# options of realtimemojo.mojo: the time-constraint policy for the loop's
-# thread, the output device's IO workgroup, the GPU work submitted one block
-# ahead, and the suggested latency (`latency_ms`, if given, wins).
+# `rt=`, `pipeline`, `latency=`, `audio=`, `ring=` and `buffer=` (anywhere on
+# the line) are the real-time options of realtimemojo.mojo: the
+# time-constraint policy for the loop's thread, the output device's IO
+# workgroup, the GPU work submitted one block ahead, the suggested latency
+# (`latency_ms`, if given, wins), and the output: PortAudio's blocking API
+# (default) or cpal, with its ring and device buffer.
 # A second line, `timing`, splits each block into enqueue, GPU wait, host
 # work and `Pa_WriteStream` (median, 99th percentile, maximum), with the gap
 # between two writes; porting/faust-gpu-audio-synthesis-2026-11-07-en.md
@@ -50,7 +53,6 @@ from std.time import perf_counter_ns
 comptime GPU_BLOCK_DIM = 64
 comptime RATE = S32(48000)
 comptime WARMUP = 20
-comptime paOutputUnderflowed = Int32(-9980)
 
 
 # Records the control labels, in control-table order.
@@ -216,7 +218,7 @@ def main() raises -> None:
     if len(args) < 2:
         raise Error(
             "usage: <binary> <voices> <seconds> [audible] [<block> [<stress_us> [<latency_ms>]]]"
-            + " [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]"
+            + " [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>] [audio=pa|cpal] [ring=<frames>] [buffer=<frames>]"
         )
     var nvoices = atol(args[0])
     var seconds = atof(args[1])
@@ -230,6 +232,7 @@ def main() raises -> None:
     var latency_ms = (
         atof(args[at + 2]) if len(args) > at + 2 else rt.latency_s(block, RATE) * 1000.0
     )
+    rt.latency_ms = latency_ms
     var nblocks = Int(seconds * F64(RATE) / F64(block))
 
     var ctx = DeviceContext()
@@ -299,11 +302,9 @@ def main() raises -> None:
     # The sum of squares of the played mix: the same with and without
     # `pipeline` (a check that the double buffers hold the right block).
     var energy = F64(0.0)
-    var stream = UInt64(0)
     var underflows = 0
     var errors = 0
     var t_start = 0
-    var latency_s = F64(-1.0)
     var rl = RtLoop(rt, block, RATE)
     var depth = rl.depth()
     var total = nblocks + WARMUP
@@ -362,25 +363,20 @@ def main() raises -> None:
         if b == WARMUP:
             # The stream starts once the GPU is warm, the real-time requests
             # with it.
-            rl.start()
-            stream = rt_open_output(RATE, block, latency_ms / 1000.0)
+            rl.open()
             t_start = Int(perf_counter_ns())
-            latency_s = rt_output_latency(stream)
-            rl.joined(stream, latency_ms / 1000.0)
         compute.append(enqueue_ns[so] + t_stress - t1)
-        var fill = rl.ring_fill(stream)
+        var fill = rl.ring_fill()
         var w0 = Int(perf_counter_ns())
-        var r = external_call["Pa_WriteStream", Int32](
-            stream, address(out.unsafe_origin_cast[MUT_NOTRK]()), UInt64(block)
-        )
+        var r = rl.write_block(out.unsafe_origin_cast[MUT_NOTRK]())
         rl.record(enqueue_ns[so], t2 - t1, t3 - t2, fill, w0, Int(perf_counter_ns()))
-        if r == paOutputUnderflowed:
+        if r == 1:
             underflows += 1
         elif r != 0:
             errors += 1
     var elapsed = F64(Int(perf_counter_ns()) - t_start) / 1e9
-    rl.leave()
-    rt_close_output(stream)
+    rl.close()
+    var latency_s = rl.output_latency()
 
     var worst = 0
     for c in compute:

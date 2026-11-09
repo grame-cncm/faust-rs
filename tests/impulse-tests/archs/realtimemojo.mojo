@@ -2,11 +2,14 @@
 # ---------------------------------------------------------------------------
 # realtimemojo.mojo — the real-time options and the per-block timing split of
 # the GPU players (polymojogpubatch.mojo, choirmojogpubatch.mojo,
-# bellsmojogpubatch.mojo), and the PortAudio output they share.
+# bellsmojogpubatch.mojo), and the audio output they share: PortAudio's
+# blocking API or cpal.
 #
 # Concatenated before a player, after `impulsemojo.mojo` and the generated
 # programs. macOS only: linked with `-lportaudio` (the CoreAudio host API,
-# for `PaMacCore_GetStreamOutputDevice`) and `-framework CoreAudio`.
+# for `PaMacCore_GetStreamOutputDevice`), `-lcpal_bridge`
+# (tools/cpal-bridge, a C ABI over the cpal crate) and `-framework
+# CoreAudio`.
 #
 # The options are words on a player's command line:
 #
@@ -33,6 +36,16 @@
 #             (21.3 ms) for the default at 256 frames. That ring is the
 #             cushion against a late block; the output latency PortAudio
 #             reports (43 ms there) adds the device's own buffers to it.
+#   audio=pa  (default) PortAudio's blocking API (`Pa_WriteStream`), which
+#             waits for room in its ring by sleeping 5 ms at a time.
+#   audio=cpal  cpal (tools/cpal-bridge): the loop writes into a ring that
+#             cpal's output callback reads on the CoreAudio IO thread; a
+#             write that finds the ring full parks until the next callback.
+#   ring=<frames>  with cpal, the ring's size (default: the size PortAudio
+#             would choose for the same latency, so that both start with the
+#             same cushion). It starts full of silence, as PortAudio's does.
+#   buffer=<frames>  with cpal, the device buffer (`BufferSize::Fixed`; one
+#             block by default, 0 for the device's default).
 #
 # The timing split: each block of the loop is cut into four timed parts,
 # printed on a `timing` line as median, 99th percentile and maximum in µs:
@@ -57,7 +70,15 @@
 # line also gives the status of each request: `tc_status`
 # (`thread_policy_set`'s kern_return_t), `wg_status` (`os_workgroup_join`'s
 # result, or the CoreAudio status when the workgroup could not be read), -1
-# when not asked.
+# when not asked. With cpal it adds the bridge's counters: callbacks, those
+# that found the ring short (`cpal_short_callbacks`, the underruns the
+# callback saw), CoreAudio overloads (`cpal_xruns`), the callback sizes, the
+# longest time between two callbacks, the lowest fill a callback saw, the
+# device buffer and the device latency (cpal's playback minus callback
+# instant: device buffer, device latency and safety offset).
+#
+# With rt=wg, the workgroup is that of PortAudio's stream device, or of the
+# default output device (the one cpal opens).
 # ---------------------------------------------------------------------------
 
 from max.gpu.host import DeviceContext, DeviceEvent, HostBuffer
@@ -70,6 +91,11 @@ comptime RT_CLOCK_THREAD_CPUTIME_ID = UInt32(16)
 # 'oswg', 'glob' and the main element of AudioObjectPropertyAddress.
 comptime RT_IO_THREAD_OS_WORKGROUP = UInt32(0x6F737767)
 comptime RT_SCOPE_GLOBAL = UInt32(0x676C6F62)
+# 'dOut': kAudioHardwarePropertyDefaultOutputDevice of the system object (1).
+comptime RT_DEFAULT_OUTPUT_DEVICE = UInt32(0x644F7574)
+comptime RT_PA_OUTPUT_UNDERFLOWED = Int32(-9980)
+# The 11 u64 counters of CpalBridgeStats (tools/cpal-bridge/src/lib.rs).
+comptime RT_CPAL_STATS = 11
 
 
 def rt_address[T: AnyType](p: Ptr[T, MUT_NOTRK]) -> UInt64:
@@ -82,12 +108,18 @@ struct RtOptions(ImplicitlyCopyable, Movable):
     var wg: Bool
     var pipeline: Bool
     var latency_ms: F64
+    var cpal: Bool
+    var ring: Int
+    var buffer: Int
 
     def __init__(out o):
         o.tc = False
         o.wg = False
         o.pipeline = False
         o.latency_ms = -1.0
+        o.cpal = False
+        o.ring = -1
+        o.buffer = -1
 
     # The suggested output latency in seconds: `latency=`, or two blocks.
     def latency_s(o, block: Int, rate: S32) -> F64:
@@ -113,6 +145,16 @@ struct RtOptions(ImplicitlyCopyable, Movable):
             o.pipeline = True
         elif a.startswith("latency="):
             o.latency_ms = atof(a.split("=")[1])
+        elif a == "audio=pa":
+            o.cpal = False
+        elif a == "audio=cpal":
+            o.cpal = True
+        elif a.startswith("ring="):
+            o.ring = atol(a.split("=")[1])
+        elif a.startswith("buffer="):
+            o.buffer = atol(a.split("=")[1])
+        elif a.startswith("audio="):
+            raise Error("unknown option " + a + " (audio=pa or audio=cpal)")
         elif a.startswith("rt="):
             raise Error("unknown option " + a + " (rt=off, rt=tc, rt=wg or rt=tc+wg)")
         else:
@@ -130,6 +172,14 @@ struct RtOptions(ImplicitlyCopyable, Movable):
         var s = "rt=" + rt + (" pipeline" if o.pipeline else "")
         if o.latency_ms > 0.0:
             s += " latency=" + String(o.latency_ms)
+        if o.cpal:
+            s += " audio=cpal"
+            if o.ring > 0:
+                s += " ring=" + String(o.ring)
+            if o.buffer >= 0:
+                s += " buffer=" + String(o.buffer)
+        else:
+            s += " audio=pa"
         return s
 
 
@@ -170,6 +220,28 @@ def rt_output_latency(stream: UInt64) -> F64:
     if info == 0:
         return -1.0
     return Ptr[F64](unsafe_from_address=Int(info) + 16)[]
+
+
+# The default output device (the one cpal opens), 0 if unknown.
+def rt_default_output_device() -> UInt32:
+    var addr = unsafe_alloc[UInt32](3)
+    addr[unsafe_offset=0] = RT_DEFAULT_OUTPUT_DEVICE
+    addr[unsafe_offset=1] = RT_SCOPE_GLOBAL
+    addr[unsafe_offset=2] = UInt32(0)
+    var size = unsafe_alloc[UInt32](1)
+    size[unsafe_offset=0] = UInt32(4)
+    var device = unsafe_alloc[UInt32](1)
+    device[unsafe_offset=0] = 0
+    _ = external_call["AudioObjectGetPropertyData", Int32](
+        UInt32(1), rt_address(addr.unsafe_origin_cast[MUT_NOTRK]()), UInt32(0), UInt64(0),
+        rt_address(size.unsafe_origin_cast[MUT_NOTRK]()),
+        rt_address(device.unsafe_origin_cast[MUT_NOTRK]()),
+    )
+    var d = device[unsafe_offset=0]
+    addr.unsafe_free()
+    size.unsafe_free()
+    device.unsafe_free()
+    return d
 
 
 def rt_close_output(stream: UInt64):
@@ -228,6 +300,9 @@ struct RtLoop:
     var last_write_end: Int
     var first_write: Int
     var cpu0: Int
+    var stream: UInt64
+    var latency_s: F64
+    var cpal_stats: Ptr[UInt64]
 
     def __init__(out r, opts: RtOptions, block: Int, rate: S32):
         r.opts = opts
@@ -251,6 +326,11 @@ struct RtLoop:
         r.last_write_end = -1
         r.first_write = 0
         r.cpu0 = 0
+        r.stream = 0
+        r.latency_s = -1.0
+        r.cpal_stats = unsafe_alloc[UInt64](RT_CPAL_STATS)
+        for i in range(RT_CPAL_STATS):
+            r.cpal_stats[unsafe_offset=i] = 0
 
     # One block of GPU work in flight with `pipeline`, none without.
     def depth(r) -> Int:
@@ -283,21 +363,45 @@ struct RtLoop:
             )
             policy.unsafe_free()
 
-    # Once the stream runs: the size of its ring (`latency_s` is the
-    # suggested latency it was opened with), the device's IO workgroup
-    # (rt=wg), and the start of the CPU-time count.
-    def joined(mut r, stream: UInt64, latency_s: F64):
+    # Opens and starts the output, with the real-time requests: the
+    # time-constraint policy (rt=tc) before, the device's IO workgroup
+    # (rt=wg) after; starts the CPU-time count.
+    def open(mut r) raises:
+        r.start()
+        var suggested = r.opts.latency_s(r.block, r.rate)
         # PortAudio's computeRingBufferSize (pa_mac_core_utilities.c): twice
         # the suggested latency, at least three buffers, rounded up to a
         # power of two. The ring starts full of zeros.
-        var want = max(Int(latency_s * F64(r.rate) * 2.0 + 0.5), 3 * r.block, 4)
+        var want = max(Int(suggested * F64(r.rate) * 2.0 + 0.5), 3 * r.block, 4)
         r.ring_frames = 1
         while r.ring_frames < want:
             r.ring_frames *= 2
+        var device = UInt32(0)
+        if r.opts.cpal:
+            if r.opts.ring > 0:
+                r.ring_frames = r.opts.ring
+            var buffer = r.opts.buffer if r.opts.buffer >= 0 else r.block
+            r.stream = external_call["cpal_bridge_open", UInt64](
+                UInt32(r.rate), UInt32(buffer), UInt32(r.ring_frames)
+            )
+            if r.stream == 0:
+                var msg = external_call["cpal_bridge_last_error", UInt64]()
+                raise Error(
+                    "cpal_bridge_open failed: "
+                    + (String(unsafe_from_utf8_ptr=Ptr[UInt8](unsafe_from_address=Int(msg))) if msg != 0 else "")
+                )
+            if r.opts.wg:
+                device = rt_default_output_device()
+        else:
+            r.stream = rt_open_output(r.rate, r.block, suggested)
+            r.latency_s = rt_output_latency(r.stream)
+            if r.opts.wg:
+                device = external_call["PaMacCore_GetStreamOutputDevice", UInt32](r.stream)
         r.cpu0 = Int(external_call["clock_gettime_nsec_np", UInt64](RT_CLOCK_THREAD_CPUTIME_ID))
-        if not r.opts.wg:
-            return
-        var device = external_call["PaMacCore_GetStreamOutputDevice", UInt32](stream)
+        if r.opts.wg:
+            r.join(device)
+
+    def join(mut r, device: UInt32):
         # AudioObjectPropertyAddress: selector, scope, element.
         var addr = unsafe_alloc[UInt32](3)
         addr[unsafe_offset=0] = RT_IO_THREAD_OS_WORKGROUP
@@ -324,8 +428,26 @@ struct RtLoop:
             external_call["os_workgroup_join", Int32](r.wg, rt_address(r.token.unsafe_origin_cast[MUT_NOTRK]()))
         )
 
-    # Before the stream stops: leave the workgroup.
-    def leave(mut r):
+    # What the ring holds now, in frames: call it just before a write.
+    def ring_fill(r) -> Int:
+        if r.opts.cpal:
+            return Int(external_call["cpal_bridge_fill", UInt64](r.stream))
+        return r.ring_frames - Int(external_call["Pa_GetStreamWriteAvailable", Int64](r.stream))
+
+    # Writes one block of interleaved stereo frames, waiting for room: 0, 1
+    # when the output under-ran since the previous write, -1 on an error.
+    def write_block(mut r, frames: Ptr[F32, MUT_NOTRK]) -> Int:
+        if r.opts.cpal:
+            return Int(external_call["cpal_bridge_write", Int32](r.stream, rt_address(frames), UInt32(r.block)))
+        var e = external_call["Pa_WriteStream", Int32](r.stream, rt_address(frames), UInt64(r.block))
+        if e == RT_PA_OUTPUT_UNDERFLOWED:
+            return 1
+        return 0 if e == 0 else -1
+
+    # Leaves the workgroup and closes the output. With cpal, reads the
+    # bridge's counters first; the output latency is then its ring plus the
+    # device latency of the last callback.
+    def close(mut r):
         if r.wg != 0:
             if r.wg_status == 0:
                 external_call["os_workgroup_leave", NoneType](
@@ -333,10 +455,22 @@ struct RtLoop:
                 )
             external_call["os_release", NoneType](r.wg)
             r.wg = 0
+        if r.stream == 0:
+            return
+        if r.opts.cpal:
+            external_call["cpal_bridge_stats", NoneType](
+                r.stream, rt_address(r.cpal_stats.unsafe_origin_cast[MUT_NOTRK]())
+            )
+            external_call["cpal_bridge_close", NoneType](r.stream)
+            r.latency_s = rt_ms(r.ring_frames, r.rate) / 1000.0 + F64(r.cpal_stats[unsafe_offset=9]) / 1e9
+        else:
+            rt_close_output(r.stream)
+        r.stream = 0
 
-    # What the ring holds now, in frames: call it just before a write.
-    def ring_fill(r, stream: UInt64) -> Int:
-        return r.ring_frames - Int(external_call["Pa_GetStreamWriteAvailable", Int64](stream))
+    # The output latency: granted by PortAudio, or ring plus device with
+    # cpal (known after `close`).
+    def output_latency(r) -> F64:
+        return r.latency_s
 
     # The four parts of one played block, the ring's fill before its write
     # and the gap before it (`write_start` is perf_counter_ns() just before
@@ -371,7 +505,24 @@ struct RtLoop:
             + " fill_min_ms " + String(rt_ms(fs[0] if len(fs) > 0 else 0, r.rate))
             + " fill_p1_ms " + String(rt_ms(fs[len(fs) // 100] if len(fs) > 0 else 0, r.rate))
             + " thread_cpu_us " + String(F64(cpu) / 1000.0 / F64(max(len(r.enqueue), 1)))
+            + (r.cpal_summary() if r.opts.cpal else "")
+        )
+
+    def cpal_summary(r) -> String:
+        var c = r.cpal_stats
+        return (
+            " cpal_callbacks " + String(c[unsafe_offset=0])
+            + " cpal_short_callbacks " + String(c[unsafe_offset=1])
+            + " cpal_short_frames " + String(c[unsafe_offset=2])
+            + " cpal_xruns " + String(c[unsafe_offset=3])
+            + " cpal_errors " + String(c[unsafe_offset=4])
+            + " cpal_callback_frames " + String(c[unsafe_offset=5]) + "-" + String(c[unsafe_offset=6])
+            + " cpal_max_interval_ms " + String(F64(c[unsafe_offset=7]) / 1e6)
+            + " cpal_min_fill_ms " + String(rt_ms(Int(c[unsafe_offset=8]), r.rate))
+            + " cpal_device_latency_ms " + String(F64(c[unsafe_offset=9]) / 1e6)
+            + " cpal_buffer_frames " + String(c[unsafe_offset=10])
         )
 
     def free(mut r):
         r.token.unsafe_free()
+        r.cpal_stats.unsafe_free()

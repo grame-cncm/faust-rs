@@ -11,13 +11,15 @@
 # tests/corpus/gpu_bell_strike.dsp and gpu_bell_mode.dsp) and `refdsp` (the
 # scalar contract of gpu_bell_reference.dsp, the original `pm.standardBell`),
 # and `realtimemojo.mojo`.
-# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio -framework
-# CoreAudio`.
+# Built with `-D DFAUST=DType.float32`, linked with `-lportaudio -lcpal_bridge
+# -framework CoreAudio`.
 #
-# `rt=`, `pipeline` and `latency=` are the real-time options of `play`
-# (realtimemojo.mojo): the time-constraint policy for the loop's thread, the
-# output device's IO workgroup, the GPU work submitted one block ahead, and
-# the suggested output latency. `play` prints a second line, `timing`: each
+# `rt=`, `pipeline`, `latency=`, `audio=`, `ring=` and `buffer=` are the
+# real-time options of `play` (realtimemojo.mojo): the time-constraint policy
+# for the loop's thread, the output device's IO workgroup, the GPU work
+# submitted one block ahead, the suggested output latency, and the output:
+# PortAudio's blocking API (default) or cpal, with its ring and device
+# buffer. `play` prints a second line, `timing`: each
 # block split into enqueue, GPU wait, host work and `Pa_WriteStream`, the
 # gaps between writes and the fill of PortAudio's ring.
 #
@@ -25,6 +27,7 @@
 #   <binary> bench <bells> [<block>]          GPU against the CPU threads
 #   <binary> play <bells> <seconds> [audible] [<block>] [cloud|melody|chime]
 #                 [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]
+#                 [audio=pa|cpal] [ring=<frames>] [buffer=<frames>]
 #
 # The scores of `play`: `cloud` (the default) strikes bell b every 96 blocks,
 # 7 blocks after bell b - 1, a dense cloud of bells; `melody` plays the two
@@ -63,7 +66,6 @@ from std.time import perf_counter_ns
 comptime GPU_BLOCK_DIM = 64
 comptime RATE = S32(48000)
 comptime WARMUP = 20
-comptime paOutputUnderflowed = Int32(-9980)
 
 
 # Records each control's label, in control-table order.
@@ -493,10 +495,8 @@ def run_scene(
 
     # PortAudio (MODE_PLAY).
     var out = unsafe_alloc[F32](2 * block)
-    var stream = UInt64(0)
     var underflows = 0
     var peak = F64(0.0)
-    var latency_s = F64(-1.0)
 
     var warmup = 0 if mode == MODE_VALIDATE else WARMUP
     var times = List[Int]()
@@ -601,18 +601,12 @@ def run_scene(
             if jb == 0:
                 # The stream starts once the GPU is warm, the real-time
                 # requests with it.
-                rl.start()
-                var suggested = rt.latency_s(block, RATE)
-                stream = rt_open_output(RATE, block, suggested)
-                latency_s = rt_output_latency(stream)
-                rl.joined(stream, suggested)
-            var fill = rl.ring_fill(stream)
+                rl.open()
+            var fill = rl.ring_fill()
             var w0 = Int(perf_counter_ns())
-            var r = external_call["Pa_WriteStream", Int32](
-                stream, address(out.unsafe_origin_cast[MUT_NOTRK]()), UInt64(block)
-            )
+            var r = rl.write_block(out.unsafe_origin_cast[MUT_NOTRK]())
             rl.record(enqueue_ns[so], t2 - t1, t3 - t2, fill, w0, Int(perf_counter_ns()))
-            if r == paOutputUnderflowed:
+            if r == 1:
                 underflows += 1
 
     var result = F64(0.0)
@@ -622,8 +616,8 @@ def run_scene(
     elif mode == MODE_BENCH:
         result = F64(median(times))
     else:
-        rl.leave()
-        rt_close_output(stream)
+        rl.close()
+        var latency_s = rl.output_latency()
         var worst = 0
         for t in times:
             worst = max(worst, t)
@@ -878,6 +872,7 @@ def main() raises -> None:
         raise Error(
             "usage: validate | bench <bells> [<block>] | play <bells> <seconds> [audible] [<block>]"
             + " [cloud|melody|chime] [rt=off|tc|wg|tc+wg] [pipeline] [latency=<ms>]"
+            + " [audio=pa|cpal] [ring=<frames>] [buffer=<frames>]"
         )
     if args[1] == "validate":
         validate()
