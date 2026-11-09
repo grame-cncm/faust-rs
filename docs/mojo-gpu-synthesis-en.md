@@ -610,6 +610,38 @@ that can afford a few tens of milliseconds: installations, sound masses,
 spatial scenes, offline rendering, training; not the monitoring of a played
 instrument.
 
+### 8.4 Why the GPU cannot compute in the audio thread
+
+The computation itself runs on the GPU, not on a thread of the CPU. A CPU
+thread only hands the work to the GPU and waits for it to finish, and
+neither step can be made real-time on macOS:
+
+- Handing over the work goes through Metal, which takes locks, allocates
+  memory and calls the kernel. It usually takes 0.1 ms, sometimes 4.
+- The end of the work reaches the waiting thread through Metal's own
+  threads, which are not real-time. Giving the waiting thread a real-time
+  priority does not help them: on a loaded machine, waits of 8 to 11 ms are
+  common and some last 20 to 40 ms.
+- The GPU is shared with the display and with other programs, and macOS
+  gives no real-time priority to an application's GPU work.
+
+Real time is about the worst case, not the average. The GPU is fast on
+average (0.7 ms for 256 voices), but its worst case has no bound, while a
+DSP computed by the CPU in the audio callback has a bounded cost.
+
+So the audio callback must never wait for the GPU. A separate thread,
+itself real-time, keeps the GPU a block or more ahead and fills a buffer;
+the callback only reads that buffer. This is how audio is streamed from a
+disk or a network as well. The buffer is the latency, and it is a margin,
+not a guarantee: it covers the delays seen so far, and a rarer, longer
+delay still costs a few blocks.
+
+Two ways of shrinking it remain untried: letting the real-time thread check
+whether the GPU has finished instead of being woken up (Metal allows it with
+an `MTLSharedEvent`, Mojo does not yet), and a kernel that stays resident on
+the GPU and picks up each block from shared memory, which Metal does not
+formally support and which keeps the GPU busy.
+
 ## 9. Trying it
 
 The GPU path is an experimental test lane, not yet a product. It needs a Mojo

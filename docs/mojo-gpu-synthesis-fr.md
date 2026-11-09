@@ -649,6 +649,38 @@ qui peut se permettre quelques dizaines de millisecondes : installations,
 masses sonores, scènes spatiales, rendu hors ligne, entraînement ; pas le
 retour direct d'un instrument joué.
 
+### 8.4 Pourquoi le GPU ne peut pas calculer dans le thread audio
+
+Le calcul lui-même tourne sur le GPU, pas sur un thread du CPU. Un thread du
+CPU ne fait que confier le travail au GPU et attendre qu'il se termine, et
+aucune de ces deux étapes ne peut être rendue temps réel sur macOS :
+
+- Confier le travail passe par Metal, qui prend des verrous, alloue de la
+  mémoire et appelle le noyau. Cela prend en général 0,1 ms, parfois 4.
+- La fin du travail parvient au thread qui attend par les threads propres de
+  Metal, qui ne sont pas temps réel. Donner une priorité temps réel au thread
+  qui attend ne les aide pas : sur une machine chargée, des attentes de 8 à
+  11 ms sont courantes et certaines durent 20 à 40 ms.
+- Le GPU est partagé avec l'affichage et les autres programmes, et macOS ne
+  donne aucune priorité temps réel au travail GPU d'une application.
+
+Le temps réel porte sur le pire cas, pas sur la moyenne. Le GPU est rapide en
+moyenne (0,7 ms pour 256 voix), mais son pire cas n'est pas borné, alors
+qu'une DSP calculée par le CPU dans le callback audio a un coût borné.
+
+Le callback audio ne doit donc jamais attendre le GPU. Un thread séparé,
+lui-même temps réel, garde le GPU un bloc ou plus en avance et remplit un
+buffer ; le callback ne fait que lire ce buffer. C'est aussi ainsi qu'on lit
+de l'audio depuis un disque ou un réseau. Ce buffer est la latence, et c'est
+une marge, pas une garantie : il couvre les retards observés jusqu'ici, et un
+retard plus rare et plus long coûte encore quelques blocs.
+
+Deux façons de le réduire restent à essayer : laisser le thread temps réel
+vérifier lui-même si le GPU a fini au lieu d'être réveillé (Metal le permet
+avec un `MTLSharedEvent`, Mojo pas encore), et un noyau qui reste résident
+sur le GPU et prend chaque bloc dans la mémoire partagée, ce que Metal ne
+garantit pas formellement et qui garde le GPU occupé.
+
 ## 9. Essayer
 
 La voie GPU est une piste de test expérimentale, pas encore un produit. Elle

@@ -388,10 +388,57 @@ What the tables say:
 `audio=cpal` is the better output for latency and diagnostics: 13 to 18 ms
 at 256 frames under load, with a few underruns in some compile runs, where
 PortAudio's blocking API never goes below 43 ms. It does not remove the need
-for `rt=tc pipeline`. PortAudio remains
-the default, because the bridge needs a cargo build. A smaller GPU wake-up
-latency, or a way to poll the GPU's completion from the real-time thread,
-would let the ring shrink further.
+for `rt=tc pipeline`. PortAudio remains the default, because the bridge
+needs a cargo build. A smaller GPU wake-up latency, or a way to poll the
+GPU's completion from the real-time thread, would let the ring shrink
+further.
+
+#### Why the GPU cannot compute in the real-time thread
+
+What the measurements above come down to:
+
+- **The computation runs on the GPU, not on a CPU thread.** A CPU thread only
+  submits the work and waits for its end, and neither can be made
+  real-time:
+  - submitting goes through Metal, which takes locks, allocates and enters
+    the kernel: 0.1 ms in median, up to 4 ms measured;
+  - the end of the work reaches the waiting thread through the driver and
+    Metal's completion threads, which are not real-time. Raising the waiting
+    thread's priority does not raise theirs: with `rt=tc` under load, the
+    GPU wait keeps a 99th percentile of 8 to 11 ms, and single waits reach
+    20 to 40 ms;
+  - the GPU itself is shared with the display and other processes, and
+    changes clock between blocks. macOS has no public real-time priority
+    for an application's GPU work; Game Mode applies to full-screen games
+    only.
+- **Real time means a bounded worst case, not a fast median.** The GPU's
+  median is short (0.7 ms for 256 voices), but its worst case is not bounded.
+  A CPU DSP computed in the audio callback has a bounded cost, and that is
+  what the GPU cannot give.
+- **Hence the rule: the audio callback never waits for the GPU.**
+  - A producer thread, real-time with `rt=tc`, submits ahead and fills a
+    ring; the callback reads the ring and never blocks. `pipeline` is a
+    one-block version of the same idea on the GPU side.
+  - This is the pattern used for disk streaming, network audio, or heavy
+    processing in a worker thread. The GPU's jitter only makes the ring
+    deeper.
+- **The ring is a statistical cushion, not a guarantee.** It covers the
+  round trips seen so far, not a bound. With `rt=tc pipeline`, rings of 5 to
+  10 ms held under load in most runs, and a single 30 ms wait still cost a
+  few blocks.
+- **Two ways to shrink it, not tried:**
+  - *Poll the end of the work from the real-time thread instead of waiting*,
+    by reading the value of an `MTLSharedEvent` (Metal directly) or a flag
+    that the last kernel writes into shared memory. This bypasses the
+    completion threads, and with them the priority inversion, but not the
+    cost of submitting or the sharing of the GPU. Mojo's `DeviceEvent` has
+    only a blocking `synchronize()`.
+  - *A persistent kernel* that stays resident on the GPU and takes each
+    block from a mailbox in unified memory: no submission and no completion
+    interrupt per block. But Metal does not formally guarantee memory
+    coherence with a running kernel, the system's GPU watchdog can cut off a
+    command buffer that runs too long, and the GPU stays busy, which costs
+    power. A research direction.
 
 ### 2.6 Correctness
 
