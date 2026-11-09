@@ -5,7 +5,9 @@
 //! functions whose first argument is `dsp: Ptr(Obj)`; a variable the block
 //! stores into is a `Ptr` of a scalar reached at index 0. The emitter prints
 //! such a function as a method of the struct, without `@always_inline`, and
-//! the pointer as a `mut` argument, which Mojo passes by reference.
+//! the pointer as a `mut` argument, which Mojo passes by reference. A run of
+//! phase 2 also receives the caller's spill arrays, `mut` arrays indexed at
+//! literal slots.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -59,6 +61,12 @@ impl Emitter<'_> {
                 (FirType::Ptr(inner), true) => {
                     let _ = write!(params, ", mut {local}: {}", self.emit_type(inner)?);
                     self.by_ref.insert(arg.name.clone());
+                }
+                // A spill array (`fir::outline` phase 2), declared by the
+                // caller and passed by reference: the run stores its escapes
+                // into it, later runs read them.
+                (typ @ FirType::Array(..), _) => {
+                    let _ = write!(params, ", mut {local}: {}", self.emit_type(typ)?);
                 }
                 (typ, _) => {
                     let _ = write!(params, ", {local}: {}", self.emit_type(typ)?);

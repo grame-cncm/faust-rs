@@ -305,15 +305,16 @@ mojo-vec0:
 mojo-vec1:
 	$(MAKE) -f Make.mojo all outdir=mojo-vec1 VECOPTS="-vec -lv 1"
 
-# Every `then`/`else` block of every program outlined into a method of its
-# own (`fir::outline` with budget and minimum 1, plan
+# Every program with its blocks outlined and its straight-line code cut into
+# runs of at most 8 statements (`fir::outline` with budget and split budget
+# 8, minimum 1, plan
 # porting/mojo-large-program-outlining-plan-2026-11-09-en.md): the scalar
 # contract through the compiler's `mojo_batch --scalar`, checked against the
 # C++ reference as `make mojo` is.
 mojo-outline:
 	cargo build --release -p compiler --example mojo_batch
 	$(MAKE) -f Make.mojo all outdir=mojo-outline \
-	  MOJO_BATCH="../../target/release/examples/mojo_batch --scalar --double --outline-budget 1 --outline-min-block 1"
+	  MOJO_BATCH="../../target/release/examples/mojo_batch --scalar --double --outline-budget 8 --outline-min-block 1 --outline-split-budget 8"
 
 # Many voices of each program on the GPU, one thread per voice (plan
 # porting/mojo-gpu-batch-of-voices-plan-2026-11-07-en.md, G1). The device has
@@ -573,7 +574,7 @@ help:
 	@echo "  rust           : check the faust-rs Rust backend (scalar prefix, rustc)"
 	@echo "  julia          : check the faust-rs Julia backend (scalar prefix, Julia)"
 	@echo "  mojo           : check the faust-rs Mojo backend (scalar prefix, opt-in, needs MOJO)"
-	@echo "  mojo-outline   : the same with every block outlined into its own method"
+	@echo "  mojo-outline   : the same with blocks outlined and code cut into small runs"
 	@echo "  mojo-gpu       : the same, many voices per program on the GPU (opt-in, needs MOJO)"
 	@echo "  mojo-gpu-batch : mojo-gpu with the batch contract (structure of arrays)"
 	@echo "  mojo-gpu-poly  : a polyphonic instrument played in real time (needs MOJO, PortAudio)"

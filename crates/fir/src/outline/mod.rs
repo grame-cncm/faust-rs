@@ -24,6 +24,11 @@
 //! exactly (a `Return`, a pointer or array local, an address taken, ...) stays
 //! inline.
 //!
+//! A function still above [`OutlinePolicy::split_budget`] afterwards has its
+//! dominant straight-line block cut into runs, each a function of its own;
+//! a single-assignment local read after its run goes through a spill array
+//! declared by the caller (`split.rs`, plan §3.4).
+//!
 //! A module whose methods are all under the budget comes back unchanged. The
 //! output is returned only once [`check::check_outlining`], written apart
 //! from the producer, has accepted it (fail closed).
@@ -37,6 +42,7 @@
 mod tests;
 
 pub mod check;
+mod split;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -47,6 +53,9 @@ use crate::{AccessType, FirBuilder, FirId, FirMatch, FirStore, FirType, NamedTyp
 pub const DEFAULT_BUDGET: usize = 2_000;
 /// Smallest block outlined ([`OutlinePolicy::min_block`]).
 pub const DEFAULT_MIN_BLOCK: usize = 64;
+/// Statements above which a function is split into runs
+/// ([`OutlinePolicy::split_budget`]).
+pub const DEFAULT_SPLIT_BUDGET: usize = 8_000;
 /// The DSP methods the pass rewrites, then the functions it creates.
 const TARGET_FUNCTIONS: [&str; 5] = [
     "compute",
@@ -69,6 +78,10 @@ pub struct OutlinePolicy {
     /// A block with fewer statements is never outlined, and an outlining
     /// leaves at least this many statements in its method.
     pub min_block: usize,
+    /// A function still above this after its blocks are outlined has its
+    /// largest straight-line block cut into runs of at most `budget`
+    /// statements, each moved into a function of its own (plan §3.4).
+    pub split_budget: usize,
 }
 
 impl Default for OutlinePolicy {
@@ -76,6 +89,7 @@ impl Default for OutlinePolicy {
         Self {
             budget: DEFAULT_BUDGET,
             min_block: DEFAULT_MIN_BLOCK,
+            split_budget: DEFAULT_SPLIT_BUDGET,
         }
     }
 }
@@ -179,6 +193,12 @@ pub(crate) enum Mutation {
     ShadowParam,
     /// The first read of a reference is at index 1.
     WrongIndex,
+    /// Locals that may not escape are spilled like the others.
+    SpillMutable,
+    /// The first read of a spill slot reads a neighbouring slot.
+    SpillWrongSlot,
+    /// The first two calls of a split block are swapped.
+    SpillEarly,
 }
 
 /// The producer without its checker.
@@ -295,6 +315,9 @@ enum Mode {
     Ref,
     /// A reference of the caller, passed on.
     PassRef,
+    /// A spill array of this many elements of the parameter's type, declared
+    /// by the caller, by reference (plan §3.4).
+    Spill(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -312,6 +335,7 @@ impl Param {
         match self.mode {
             Mode::Value => self.typ.clone(),
             Mode::Ref | Mode::PassRef => FirType::Ptr(Box::new(self.typ.clone())),
+            Mode::Spill(n) => FirType::Array(Box::new(self.typ.clone()), n),
         }
     }
 }
@@ -525,14 +549,21 @@ impl Analysis<'_> {
 
 /// The [`Content`] of `block`.
 fn content(store: &FirStore, added: &HashSet<String>, block: FirId) -> Content {
+    content_items(store, added, &block_items(store, block))
+}
+
+/// The [`Content`] of a run of statements, analysed as one block.
+fn content_items(store: &FirStore, added: &HashSet<String>, items: &[FirId]) -> Content {
     let mut a = Analysis {
         store,
         added,
-        inner: Vec::new(),
+        inner: vec![HashSet::new()],
         declared: HashSet::new(),
         free: BTreeMap::new(),
     };
-    a.block(block)?;
+    for &item in items {
+        a.node(item)?;
+    }
     if a.free.keys().any(|n| a.declared.contains(n)) {
         return Err("a declaration of a name the block also reads from outside");
     }
@@ -591,6 +622,8 @@ struct Added {
     params: Vec<Param>,
     body: FirId,
     statements: usize,
+    /// A run of phase 2: not split again (plan §3.4).
+    is_run: bool,
 }
 
 struct Pass {
@@ -606,6 +639,7 @@ struct Pass {
     report: OutlineReport,
     refused_seen: HashSet<(String, FirId)>,
     contents: HashMap<FirId, Content>,
+    next_spill: usize,
 }
 
 impl Pass {
@@ -767,7 +801,17 @@ impl Pass {
     /// ones refused, nested in a block already taken, or leaving fewer than
     /// `min_block` statements; each taken block shrinks the function by its
     /// size less one (the call).
-    fn process(&mut self, fname: &str, root: &str, base: &Env, body: FirId) -> FirId {
+    fn process(&mut self, fname: &str, root: &str, base: &Env, body: FirId, split: bool) -> FirId {
+        let body = self.outline_blocks(fname, root, base, body);
+        if split {
+            self.split_large(fname, root, base, body)
+        } else {
+            body
+        }
+    }
+
+    /// Phase 1 (plan §3.1): the large `then`/`else` blocks of one function.
+    fn outline_blocks(&mut self, fname: &str, root: &str, base: &Env, body: FirId) -> FirId {
         let mut env = base.clone();
         let mut candidates = Vec::new();
         let fsize = self.collect_block(body, &mut env, &mut 0, &mut Vec::new(), &mut candidates);
@@ -828,6 +872,7 @@ impl Pass {
                 params,
                 body: callee,
                 statements: c.size,
+                is_run: false,
             });
         }
         if targets.is_empty() {
@@ -878,6 +923,7 @@ impl Pass {
                 Mode::Value => b.load_var(&p.name, p.access, p.typ.clone()),
                 Mode::Ref => b.load_var_address(&p.name, p.access, p.fun_type()),
                 Mode::PassRef => b.load_var(&p.name, AccessType::FunArgs, p.fun_type()),
+                Mode::Spill(_) => b.load_var(&p.name, AccessType::Stack, p.fun_type()),
             });
         }
         if args.len() >= 3 && self.mutation == Mutation::SwapArgs && !self.mutated {
@@ -1153,6 +1199,7 @@ fn outline_step(
         report: OutlineReport::default(),
         refused_seen: HashSet::new(),
         contents: HashMap::new(),
+        next_spill: 0,
     };
 
     let items = block_items(&pass.store, functions);
@@ -1180,7 +1227,7 @@ fn outline_step(
                 env.declare(arg.name.clone(), Binding::Var(arg.typ.clone()));
             }
         }
-        let new_body = pass.process(&fname, &fname, &env, body);
+        let new_body = pass.process(&fname, &fname, &env, body, true);
         if new_body == body {
             new_items.push(f);
         } else {
@@ -1194,20 +1241,20 @@ fn outline_step(
         }
     }
     while let Some(k) = pass.queue.pop_front() {
-        let (name, root_name, body) = {
+        let (name, root_name, body, is_run) = {
             let a = &pass.added[k];
-            (a.name.clone(), a.root.clone(), a.body)
+            (a.name.clone(), a.root.clone(), a.body, a.is_run)
         };
         let mut env = Env::default();
         env.push();
         for p in &pass.added[k].params {
             let binding = match p.mode {
-                Mode::Value => Binding::Var(p.typ.clone()),
+                Mode::Value | Mode::Spill(_) => Binding::Var(p.fun_type()),
                 Mode::Ref | Mode::PassRef => Binding::Ref(p.typ.clone()),
             };
             env.declare(p.name.clone(), binding);
         }
-        let new_body = pass.process(&name, &root_name, &env, body);
+        let new_body = pass.process(&name, &root_name, &env, body, !is_run);
         pass.added[k].body = new_body;
     }
     if pass.added.is_empty() {

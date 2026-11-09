@@ -2255,7 +2255,13 @@ Cache:
 - `Checker::inlined`: every node of the output with the calls to outlined
   functions inlined back, for the whole check; `Substitute::memo`: one
   inlined body with its parameters turned back into the caller's variables,
-  per call.
+  per call;
+- phase 2 (added the same day, plan §3.4): `SlotRewriter::memo`
+  (`crates/fir/src/outline/split.rs`), one run's or caller statement's
+  reads of escaped locals turned into spill-slot reads, per rewrite; and in
+  the checker `SlotsBack::memo`, the slot reads of one block turned back into
+  the locals, per block. The items of a block being split are scanned once
+  per split, without a memo (their sizes, uses and barriers).
 
 Key (rule 6): a block's content depends on its subtree only, which its
 hash-consed id names, and on the names of the outlined functions. A name is

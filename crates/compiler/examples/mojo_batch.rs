@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use codegen::backends::mojo::{MojoOptions, MojoRealType};
-use compiler::Compiler;
+use compiler::{Compiler, RealType};
 
 #[derive(Debug, Parser)]
 #[command(about = "Emit the Mojo batch contract (many voices, one struct) of a Faust program")]
@@ -48,7 +48,7 @@ struct Args {
     #[arg(long)]
     scalar: bool,
     /// Keep every method whole (`MojoOptions::outline` off).
-    #[arg(long = "no-outline", conflicts_with_all = ["outline_budget", "outline_min_block"])]
+    #[arg(long = "no-outline", conflicts_with_all = ["outline_budget", "outline_min_block", "outline_split_budget"])]
     no_outline: bool,
     /// Statements above which a method is outlined (`OutlinePolicy::budget`).
     #[arg(long = "outline-budget")]
@@ -56,6 +56,10 @@ struct Args {
     /// Smallest block outlined (`OutlinePolicy::min_block`).
     #[arg(long = "outline-min-block")]
     outline_min_block: Option<usize>,
+    /// Statements above which a function's largest straight-line block is
+    /// cut into runs (`OutlinePolicy::split_budget`).
+    #[arg(long = "outline-split-budget")]
+    outline_split_budget: Option<usize>,
     /// Write every table as an array literal (`MojoOptions::packed_tables`
     /// off).
     #[arg(long = "table-literals")]
@@ -69,6 +73,7 @@ fn main() -> ExitCode {
         fir::outline::OutlinePolicy {
             budget: args.outline_budget.unwrap_or(default.budget),
             min_block: args.outline_min_block.unwrap_or(default.min_block),
+            split_budget: args.outline_split_budget.unwrap_or(default.split_budget),
         }
     });
     let options = MojoOptions {
@@ -84,7 +89,15 @@ fn main() -> ExitCode {
         packed_tables: !args.table_literals,
         ..MojoOptions::default()
     };
-    match Compiler::new().compile_file_to_mojo(&args.input, &args.include, &options) {
+    // `--double` is the compiler's precision as well as the emitter's (the
+    // emitter alone would print a single-precision computation in `F64`).
+    let real_type = if args.double {
+        RealType::Float64
+    } else {
+        RealType::Float32
+    };
+    let compiler = Compiler::new().with_real_type(real_type);
+    match compiler.compile_file_to_mojo(&args.input, &args.include, &options) {
         Ok(text) => match std::fs::write(&args.output, text) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {

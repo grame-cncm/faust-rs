@@ -123,7 +123,7 @@ KNOWN_FAIL_mojo := sound
 KNOWN_FAIL_mojo-gpu := sound math
 # The batch lane refuses the same two (the layout refuses soundfiles too).
 KNOWN_FAIL_mojo-gpu-batch := sound math
-# Every block outlined (`make mojo-outline`): the scalar lane's exclusion.
+# Blocks outlined, code cut into runs (`make mojo-outline`): the scalar lane's exclusion.
 KNOWN_FAIL_mojo-outline := sound
 # Programs whose GPU and CPU f32 runs drift apart from a rounding-level start
 # amplified by feedback (largest GPU/CPU gap over the 15,000 frames, Mojo

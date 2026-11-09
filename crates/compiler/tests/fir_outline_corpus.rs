@@ -27,6 +27,15 @@ use fir::{FirId, FirStore};
 const EVERY_BLOCK: OutlinePolicy = OutlinePolicy {
     budget: 1,
     min_block: 1,
+    split_budget: usize::MAX,
+};
+
+/// Phase 2 as well (plan §3.4): every block over 8 statements cut into runs
+/// of at most 8, escapes through spill arrays.
+const EVERY_RUN: OutlinePolicy = OutlinePolicy {
+    budget: 8,
+    min_block: 1,
+    split_budget: 8,
 };
 
 /// Programs with many small `ondemand` blocks inside the sample loop, as
@@ -98,11 +107,12 @@ fn mojo(name: &str, source: &str, batch: bool, outline: Option<OutlinePolicy>) -
         .ok()
 }
 
-/// Runs the checks of the module doc on one program; returns the number of
-/// functions outlined, `None` when the program does not lower to FIR.
-fn check(name: &str, source: &str) -> Option<usize> {
+/// Runs the checks of the module doc on one program, under `policy`;
+/// returns the number of functions outlined, `None` when the program does
+/// not lower to FIR.
+fn check_with(name: &str, source: &str, policy: OutlinePolicy) -> Option<usize> {
     let (store, root) = flat_module(name, source)?;
-    let (dst, droot, report) = outline_large_blocks(&store, root, EVERY_BLOCK)
+    let (dst, droot, report) = outline_large_blocks(&store, root, policy)
         .unwrap_or_else(|e| panic!("{name}: outlining failed: {e}"));
     assert_eq!(
         error_codes(&store, root),
@@ -110,7 +120,7 @@ fn check(name: &str, source: &str) -> Option<usize> {
         "{name}: the FIR verifier sees the outlined module differently"
     );
     for batch in [false, true] {
-        match mojo(name, source, batch, Some(EVERY_BLOCK)) {
+        match mojo(name, source, batch, Some(policy)) {
             Some(text) => {
                 if !report.outlined.is_empty() && !batch {
                     assert!(
@@ -129,9 +139,17 @@ fn check(name: &str, source: &str) -> Option<usize> {
     Some(report.outlined.len())
 }
 
-/// `(lowered, with blocks, functions)` over the hermetic programs of a
-/// directory of the repository.
-fn check_directory(dir: &str) -> (usize, usize, usize) {
+/// `(blocks, runs)`: the functions outlined under [`EVERY_BLOCK`] and
+/// under [`EVERY_RUN`].
+fn check(name: &str, source: &str) -> Option<(usize, usize)> {
+    let blocks = check_with(name, source, EVERY_BLOCK)?;
+    let runs = check_with(name, source, EVERY_RUN)?;
+    Some((blocks, runs))
+}
+
+/// `(lowered, with blocks, block functions, run functions)` over the
+/// hermetic programs of a directory of the repository.
+fn check_directory(dir: &str) -> (usize, usize, usize, usize) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(dir);
@@ -142,35 +160,39 @@ fn check_directory(dir: &str) -> (usize, usize, usize) {
         .filter(|p| p.extension().is_some_and(|x| x == "dsp"))
         .collect();
     paths.sort();
-    let (mut lowered, mut with_blocks, mut functions) = (0, 0, 0);
+    let (mut lowered, mut with_blocks, mut functions, mut runs) = (0, 0, 0, 0);
     for path in paths {
         let source = std::fs::read_to_string(&path).expect("corpus file");
         if source.contains("import(") || source.contains("library(") {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if let Some(n) = check(&name, &source) {
+        if let Some((n, r)) = check(&name, &source) {
             lowered += 1;
             with_blocks += usize::from(n > 0);
             functions += n;
+            runs += r;
         }
     }
     eprintln!(
-        "{dir}: {lowered} programs lowered, {with_blocks} with blocks, {functions} functions"
+        "{dir}: {lowered} programs lowered, {with_blocks} with blocks, {functions} block \
+         functions, {runs} functions with runs"
     );
-    (lowered, with_blocks, functions)
+    (lowered, with_blocks, functions, runs)
 }
 
 #[test]
 fn every_block_of_the_hermetic_corpus_outlines_exactly() {
     // Kept from going vacuous: the counts of 2026-11-09, rounded down.
-    let (lowered, _, _) = check_directory("tests/corpus");
+    let (lowered, _, _, runs) = check_directory("tests/corpus");
     assert!(lowered >= 230, "{lowered} corpus programs lowered");
+    assert!(runs >= 100, "{runs} functions with runs");
 }
 
 #[test]
 fn every_block_of_the_hermetic_impulse_programs_outlines_exactly() {
-    let (lowered, with_blocks, functions) = check_directory("tests/impulse-tests/dsp");
+    let (lowered, with_blocks, functions, runs) = check_directory("tests/impulse-tests/dsp");
+    assert!(runs >= 50, "{runs} functions with runs");
     assert!(lowered >= 50, "{lowered} impulse programs lowered");
     assert!(
         with_blocks >= 5,
@@ -182,7 +204,7 @@ fn every_block_of_the_hermetic_impulse_programs_outlines_exactly() {
 #[test]
 fn every_block_of_the_inline_ondemand_programs_outlines_exactly() {
     for &(name, source) in INLINE {
-        let n = check(name, source).unwrap_or_else(|| panic!("{name} does not lower"));
+        let (n, _) = check(name, source).unwrap_or_else(|| panic!("{name} does not lower"));
         assert!(n > 0, "{name}: nothing outlined");
     }
 }

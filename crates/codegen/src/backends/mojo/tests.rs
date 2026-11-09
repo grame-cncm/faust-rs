@@ -846,6 +846,7 @@ fn outline_every_block() -> MojoOptions {
         outline: Some(fir::outline::OutlinePolicy {
             budget: 1,
             min_block: 1,
+            split_budget: fir::outline::DEFAULT_SPLIT_BUDGET,
         }),
         ..MojoOptions::default()
     }
@@ -997,4 +998,87 @@ fn integer_and_double_tables_are_packed_and_short_tables_are_not() {
     let (store, root) = table_module(FirType::Float32, n - 1, |b, _| b.float32(0.5));
     let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
     assert!(!text.contains("faust_unpack"), "{text}");
+}
+
+/// A sample loop of `n` chained statements `tK = tK-1 + t0`, the last one
+/// stored into a field.
+fn straight_body_module(n: usize) -> (FirStore, fir::FirId) {
+    use crate::fixtures::{compute_fun_args, compute_fun_type};
+    let mut s = FirStore::new();
+    let mut b = FirBuilder::new(&mut s);
+    let field = b.declare_var("fOut", FirType::Float32, AccessType::Struct, None);
+    let dsp_struct = b.block(&[field]);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    let fi = b.cast(FirType::Float32, i0);
+    let mut body = vec![b.declare_var("t0", FirType::Float32, AccessType::Stack, Some(fi))];
+    let t0 = b.load_var("t0", AccessType::Stack, FirType::Float32);
+    let mut prev = t0;
+    for k in 1..n {
+        let v = b.binop(FirBinOp::Add, prev, t0, FirType::Float32);
+        let name = format!("t{k}");
+        body.push(b.declare_var(&name, FirType::Float32, AccessType::Stack, Some(v)));
+        prev = b.load_var(name, AccessType::Stack, FirType::Float32);
+    }
+    body.push(b.store_var("fOut", AccessType::Struct, prev));
+    let body = b.block(&body);
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let lp = b.simple_for_loop("i0", count, body, false);
+    let compute_body = b.block(&[lp]);
+    let compute = b.declare_fun(
+        "compute",
+        compute_fun_type(),
+        &compute_fun_args(),
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let globals = b.block(&[]);
+    let statics = b.block(&[]);
+    let root = b.module(
+        0,
+        0,
+        "straight",
+        dsp_struct,
+        globals,
+        functions,
+        statics,
+        &[],
+    );
+    (s, root)
+}
+
+#[test]
+fn a_split_run_receives_the_spill_array_as_a_mut_argument() {
+    let (store, root) = straight_body_module(30);
+    let options = MojoOptions {
+        outline: Some(fir::outline::OutlinePolicy {
+            budget: 8,
+            min_block: 2,
+            split_budget: 16,
+        }),
+        ..MojoOptions::default()
+    };
+    let text = generate_mojo_module(&store, root, &options).expect("emits");
+    // The caller declares the spill array zero-filled, then calls the runs:
+    // `t0` and the last value of each run cross the cuts (4 slots).
+    assert!(
+        text.contains(
+            "            var compute_spill0: Arr[F32, 4] = Arr[F32, 4](fill=F32(0.0))\n\
+             \x20           dsp.compute_outline0(compute_spill0, i0)\n"
+        ),
+        "{text}"
+    );
+    // The first run stores `t0` into its slot; the later ones read it there.
+    assert!(
+        text.contains("def compute_outline0(mut dsp, mut compute_spill0: Arr[F32, 4], i0: S32)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("        compute_spill0[S32(0)] = t0\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("        var t9: F32 = (t8 + compute_spill0[S32(0)])\n"),
+        "{text}"
+    );
 }

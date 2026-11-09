@@ -6,7 +6,7 @@
 //! counter and the block size.
 
 use super::check::{OutlineViolation, check_outlining};
-use super::{Mutation, OutlinePolicy, outline_large_blocks, outline_with};
+use super::{DEFAULT_SPLIT_BUDGET, Mutation, OutlinePolicy, outline_large_blocks, outline_with};
 use crate::checker::verify_fir_module;
 use crate::{
     AccessType, FirBinOp, FirBuilder, FirId, FirMatch, FirStore, FirType, NamedType, match_fir,
@@ -207,6 +207,7 @@ fn small() -> OutlinePolicy {
     OutlinePolicy {
         budget: 10,
         min_block: 2,
+        split_budget: DEFAULT_SPLIT_BUDGET,
     }
 }
 
@@ -341,6 +342,7 @@ fn a_block_under_the_minimum_stays_inline() {
     let policy = OutlinePolicy {
         budget: 10,
         min_block: 13,
+        split_budget: DEFAULT_SPLIT_BUDGET,
     };
     let (_, _, report) = outline_large_blocks(&src, root, policy).expect("outlining");
     // The second block (12 statements) is under the minimum; the first and
@@ -465,5 +467,212 @@ fn the_unmutated_producer_is_accepted() {
     let (src, root) = module(Shape::default());
     let (dst, droot, _) =
         outline_with(&src, root, small(), Mutation::None).expect("the producer runs");
+    check_outlining(&src, root, &dst, droot).expect("accepted");
+}
+
+// ------------------------------------------------------------- phase 2
+// (plan §3.4): a long straight-line sample loop body cut into runs.
+
+/// `compute` with a sample loop of `n` chained statements `tK = tK-1 * 0.5 +
+/// t0 + t1`, so `t0` and `t1` are read by every run; a mutable local `m`,
+/// declared first, stored second, read last; and an output write (a pointer
+/// local, a barrier) reading `m` and the last value.
+fn straight_module(n: usize) -> (FirStore, FirId) {
+    let mut s = FirStore::new();
+    let mut b = FirBuilder::new(&mut s);
+    let ff = FirType::FaustFloat;
+    let fields = [b.declare_var("fHslider0", F32, AccessType::Struct, None)];
+    let dsp_struct = b.block(&fields);
+    let slow = b.load_var("fSlow0", AccessType::Stack, F32);
+    let i0 = b.load_var("i0", AccessType::Loop, I32);
+    let half = b.float32(0.5);
+    let zero_i = b.int32(0);
+    let mut body = Vec::new();
+    let zero_f = b.float32(0.0);
+    body.push(b.declare_var("m", F32, AccessType::Stack, Some(zero_f)));
+    let fi = b.cast(F32, i0);
+    let mv = b.binop(FirBinOp::Add, slow, fi, F32);
+    body.push(b.store_var("m", AccessType::Stack, mv));
+    let t0v = b.binop(FirBinOp::Mul, slow, fi, F32);
+    body.push(b.declare_var("t0", F32, AccessType::Stack, Some(t0v)));
+    let t0 = b.load_var("t0", AccessType::Stack, F32);
+    let t1v = b.binop(FirBinOp::Add, t0, half, F32);
+    body.push(b.declare_var("t1", F32, AccessType::Stack, Some(t1v)));
+    let t1 = b.load_var("t1", AccessType::Stack, F32);
+    let mut prev = t1;
+    for k in 2..n {
+        let a = b.binop(FirBinOp::Mul, prev, half, F32);
+        let c = b.binop(FirBinOp::Add, a, t0, F32);
+        let v = b.binop(FirBinOp::Add, c, t1, F32);
+        let name = format!("t{k}");
+        body.push(b.declare_var(&name, F32, AccessType::Stack, Some(v)));
+        prev = b.load_var(name, AccessType::Stack, F32);
+    }
+    let m = b.load_var("m", AccessType::Stack, F32);
+    let last = b.binop(FirBinOp::Add, prev, m, F32);
+    let out = b.cast(ff.clone(), last);
+    body.push(b.store_table("output0", AccessType::Stack, i0, out));
+    let body = b.block(&body);
+    let count = b.load_var("count", AccessType::FunArgs, I32);
+    let lp = b.simple_for_loop("i0", count, body, false);
+    let hslider = b.load_var("fHslider0", AccessType::Struct, F32);
+    let outputs = b.load_table("outputs", AccessType::FunArgs, zero_i, ptr(ff.clone()));
+    let compute_body = [
+        b.declare_var("fSlow0", F32, AccessType::Stack, Some(hslider)),
+        b.declare_var("output0", ptr(ff.clone()), AccessType::Stack, Some(outputs)),
+        lp,
+    ];
+    let compute_body = b.block(&compute_body);
+    let streams = ptr(ptr(ff));
+    let args = [
+        arg("dsp", ptr(FirType::Obj)),
+        arg("count", I32),
+        arg("inputs", streams.clone()),
+        arg("outputs", streams.clone()),
+    ];
+    let typ = FirType::Fun {
+        args: args.iter().map(|a| a.typ.clone()).collect(),
+        ret: Box::new(FirType::Void),
+    };
+    let compute = b.declare_fun("compute", typ, &args, Some(compute_body), false);
+    let functions = b.block(&[compute]);
+    let globals = b.block(&[]);
+    let statics = b.block(&[]);
+    let root = b.module(
+        1,
+        1,
+        "straight",
+        dsp_struct,
+        globals,
+        functions,
+        statics,
+        &[],
+    );
+    (s, root)
+}
+
+fn splitting() -> OutlinePolicy {
+    OutlinePolicy {
+        budget: 10,
+        min_block: 2,
+        split_budget: 20,
+    }
+}
+
+/// The items of the sample loop body of `compute`.
+fn loop_items(s: &FirStore, root: FirId) -> Vec<FirId> {
+    let (_, _, body) = &functions(s, root)[0];
+    let FirMatch::Block(items) = match_fir(s, *body) else {
+        panic!()
+    };
+    let FirMatch::SimpleForLoop { body, .. } = match_fir(s, items[2]) else {
+        panic!("the loop moved")
+    };
+    let FirMatch::Block(items) = match_fir(s, body) else {
+        panic!()
+    };
+    items
+}
+
+#[test]
+fn a_long_straight_line_body_is_cut_into_runs_through_spill_arrays() {
+    let (src, root) = straight_module(60);
+    let (dst, droot, report) = outline_large_blocks(&src, root, splitting()).expect("outlining");
+    assert!(report.outlined.len() >= 5, "{:?}", report.outlined);
+    let items = loop_items(&dst, droot);
+    // `m` stays in the caller: a mutable local may not escape, so the item
+    // declaring it is a barrier, and the runs reach `m` as a parameter.
+    assert!(matches!(
+        match_fir(&dst, items[0]),
+        FirMatch::DeclareVar { ref name, .. } if name == "m"
+    ));
+    // One spill array, then calls, then the output write (a barrier).
+    let spills: Vec<_> = items
+        .iter()
+        .filter(|&&i| {
+            matches!(
+                match_fir(&dst, i),
+                FirMatch::DeclareVar {
+                    typ: FirType::Array(..),
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(spills.len(), 1);
+    assert!(matches!(
+        match_fir(&dst, *items.last().unwrap()),
+        FirMatch::StoreTable { ref name, .. } if name == "output0"
+    ));
+    // Every run after the first reads `t0` and `t1` from the spill array.
+    assert!(
+        report.outlined[1..]
+            .iter()
+            .all(|f| f.by_reference.iter().any(|p| p.starts_with("computeSpill")))
+    );
+    check_outlining(&src, root, &dst, droot).expect("checker");
+    let errors: Vec<_> = verify_fir_module(&dst, droot)
+        .diagnostics
+        .into_iter()
+        .filter(|d| d.severity == crate::checker::Severity::Error)
+        .map(|d| format!("{}: {}", d.code, d.message))
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[test]
+fn a_function_under_the_split_budget_is_not_split() {
+    let (src, root) = straight_module(60);
+    let policy = OutlinePolicy {
+        split_budget: 1_000,
+        ..splitting()
+    };
+    let (dst, droot, report) = outline_large_blocks(&src, root, policy).expect("outlining");
+    assert!(report.outlined.is_empty());
+    assert!(same((&src, root), (&dst, droot)));
+}
+
+fn rejected_split(mutation: Mutation) -> OutlineViolation {
+    let (src, root) = straight_module(60);
+    let (dst, droot, _) =
+        outline_with(&src, root, splitting(), mutation).expect("the producer runs");
+    check_outlining(&src, root, &dst, droot)
+        .map(|()| panic!("{mutation:?} should be rejected"))
+        .map_err(|v| {
+            eprintln!("{mutation:?} -> {v}");
+            v
+        })
+        .unwrap_err()
+}
+
+#[test]
+fn a_mutable_local_spilled_is_rejected_by_spills() {
+    assert!(matches!(
+        rejected_split(Mutation::SpillMutable),
+        OutlineViolation::Spills { .. }
+    ));
+}
+
+#[test]
+fn a_read_of_the_wrong_slot_is_rejected_by_inline_back() {
+    assert!(matches!(
+        rejected_split(Mutation::SpillWrongSlot),
+        OutlineViolation::InlineBack { .. }
+    ));
+}
+
+#[test]
+fn a_slot_read_before_its_store_is_rejected_by_spills() {
+    assert!(matches!(
+        rejected_split(Mutation::SpillEarly),
+        OutlineViolation::Spills { .. }
+    ));
+}
+
+#[test]
+fn the_unmutated_splitting_producer_is_accepted() {
+    let (src, root) = straight_module(60);
+    let (dst, droot, _) =
+        outline_with(&src, root, splitting(), Mutation::None).expect("the producer runs");
     check_outlining(&src, root, &dst, droot).expect("accepted");
 }

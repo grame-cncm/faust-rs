@@ -1,7 +1,7 @@
 # Mojo: large programs in useful compile time — plan (2026-11-09)
 
-Status: implemented 2026-11-09 (phase 1). The plan was written before the
-implementation; the outcome is in §9.
+Status: phase 1 implemented 2026-11-09 (outcome §9); phase 2 (§3.4) planned
+the same day, after phase 1's measurements, outcome §10.
 
 Parent: the batch contract of the Mojo backend
 (`porting/mojo-gpu-batch-g3-voice-layout-design-2026-11-07-en.md`) and its
@@ -74,7 +74,7 @@ function.
 ### 3.1 Policy
 
 ```text
-OutlinePolicy { budget: 2_000, min_block: 64 }
+OutlinePolicy { budget: 2_000, min_block: 64, split_budget: 8_000 }
 ```
 
 Size is the number of FIR statements of a subtree, nested ones included (a
@@ -147,13 +147,81 @@ A candidate block is left inline when it:
 The report lists each outlined function (name, parent, size, parameters by
 value and by reference) and each refused candidate with its reason.
 
-### 3.4 Phase 2: straight-line runs (not in this delivery)
+### 3.4 Phase 2: straight-line runs
 
-A function still above a second, larger budget after phase 1 (the 12-seed
-`fad` voice of coopiano has one `ondemand` block of 21,926 statements) needs
-its straight-line runs cut: declarations then escape the run and are hoisted
-into the caller (a zero-initialised local passed by reference). This is
-planned, not built, with its own checker rules; §9 records whether it was.
+Phase 1 leaves whole a block that is nearly all of its method. Measured on
+2026-11-09: `ondemand_stft_denoiser_1024` keeps a 52,361-statement
+straight-line `ondemand` body (Mojo: 428 s), and the 12-seed `fad` voice of
+coopiano has four methods out of reach — `instanceClear` (31,465 lines),
+`compute` (a 23,708-statement sample loop body) and two `ondemand` bodies
+(21,926 and 11,070 statements).
+
+**When.** After phase 1, a function above `split_budget` (default 8,000
+statements) is split. The block split is found by descending from the
+function's body into the largest nested block of an item holding more than
+half of the current block, so the sample loop body of `compute` is split, not
+`compute`'s few statements around it. The voices that build today (largest
+method 6,229 statements) are below the default and unchanged.
+
+**Runs.** The block's items are cut into consecutive runs of at most
+`budget` statements, each run moved into a new function called in its place,
+as in phase 1 (free locals read by value, stored by reference). An item the
+analysis refuses (a pointer local, a `Return`, ...) is a barrier: it stays in
+the caller and ends the current run. A cut is placed, within the second half
+of each run's budget, where the fewest values cross it.
+
+**Escaping values: spill arrays.** A local declared at the top level of a run
+and read after it (by a later run or a statement left in the caller) is an
+escape. Measured on the 12-seed voice, an `ondemand` body computes thousands
+of values and stores them all at its end: 1,000 to 10,000 values cross each
+cut of the 11,070-statement block, too many to pass as parameters. Instead,
+per element type, the caller declares one local array `<method>Spill<k>`
+(`Array(T, n)`, `Stack`, no initialiser) before its first call and passes it
+to the runs (a third parameter kind, `Array(T, n)`, by reference):
+
+- the defining run keeps the declaration and its uses unchanged and ends
+  with one spill store per escape, `StoreTable(spill, FunArgs, k,
+  LoadVar(e))`;
+- every later read of `e`, in a run or in the caller, becomes
+  `LoadTable(spill, FunArgs or Stack, k)`.
+
+Only a **single-assignment** local may escape: declared once in the block,
+with an initialiser, of a scalar type, never stored into, tee'd, shifted or
+addressed. A cut that a mutable local would cross is not taken. Then the
+value in slot `k` is the value of `e` wherever `e` is read, and inlining the
+spill back is exact.
+
+**Checker (rules 2 to 5, extended).** Signature: a parameter may also be an
+`Array` of a scalar, passed as `LoadVar(p, Stack)` of a fresh name declared
+in the calling block. Closed: such a parameter is reached only by
+`LoadTable`/`StoreTable` at an `Int32` literal index in range. **Spills (new
+rule):** each slot is stored by exactly one spill statement, at the end of
+one run, from a local `e` that is single-assignment in the source body; every
+read of the slot is in a call after that run's call, or in a caller statement
+after it, and never in the defining run. Inline-back: the spill
+declarations and the trailing spill stores are dropped, every slot read
+becomes `LoadVar(e)`, and the result must be the source body by id.
+
+**Mutations:** `SpillStale` (a spilled local stored into after its spill,
+rejected by spills), `SpillWrongSlot` (a read of the slot of another value,
+rejected by inline-back), `SpillEarly` (a run reading a slot before the run
+that stores it, rejected by spills).
+
+**Mojo.** An `Array` parameter is a `mut` argument (`mut p: Arr[T, n]`), its
+accesses `p[k]`; the caller's spill array is declared zero-filled, as any
+local array.
+
+**Pass criteria (phase 2):**
+- unit tests: a long run split with escapes through spill arrays, a barrier,
+  a mutable local that no cut crosses, the checker accepting, the three
+  mutations rejected by their rules;
+- the corpus test with a policy that also splits every block;
+- every program under the split budget unchanged (codegen-identity
+  differential over `tests/` and `examples/`), the coopiano voices included;
+- `ondemand_stft_denoiser_1024`: Mojo impulse output identical to the base
+  build, Mojo build time well below 428 s;
+- the 12-seed `fad` voice (`faust-coopiano/fit/voice_fad.dsp`) builds with
+  Mojo in useful time (it did not build at all in P0).
 
 ## 4. The independent checker
 
@@ -419,8 +487,100 @@ OutlineViolation}`, `MojoOptions::outline`, `MojoOptions::packed_tables` and
 extended (the Mojo output differs from the upstream pull request's in these
 two ways). Memo: `porting/MEMOIZATION.md` §2.31.
 
-Not done:
+Not done in phase 1 (phase 2 is §10):
 
-- phase 2 (§3.4): a block that is nearly all of its method, such as the
-  21,926-statement block of the 12-seed `fad` voice, is not split;
+- a block that is nearly all of its method, such as the 21,926-statement
+  block of the 12-seed `fad` voice, is not split;
 - blocks reading a pointer local are not outlined.
+
+## 10. Outcome of phase 2 (2026-11-09)
+
+Implemented as §3.4 planned, in `crates/fir/src/outline/split.rs` (producer)
+and `check.rs` (the spills rule, the slots in inline-back).
+`OutlinePolicy::split_budget` (default 8,000) turns it on; `mojo_batch`
+gains `--outline-split-budget`.
+
+Corrections to the plan from the implementation:
+
+- **A local that may not escape stays in the caller.** As first written,
+  a cut was refused wherever a non-single-assignment local crossed it. On the
+  12-seed voice that left `compute` at 19,317 lines: `iTemp` values declared
+  at the top of the sample loop body are passed to the 51 `ondemand` methods
+  spread through it, so no cut between them was allowed. Now an item that
+  declares such a local (stored into later, passed to an outlined function,
+  an array) and is used after it is a barrier: it stays in the caller and
+  the runs reach the local as an ordinary parameter. `compute` is then
+  split like the rest.
+- **An argument of an outlined call must name its variable.** The first
+  corpus run of the producer was rejected by the checker: a statement left in
+  the caller held a phase-1 call whose argument the slot rewrite had turned
+  into a slot read. Such a local is now pinned (not single-assignment), so
+  it never escapes. The checker caught the defect before anything was
+  emitted (fail closed).
+- **Runs are not split again** (`Added::is_run`): a run is at most a budget
+  long, and the checker can then look for the trailing spill stores at the
+  top level of a run's raw body.
+- **Mutations.** `SpillWrongSlot` first read slot `k + 1`, often stored by a
+  later run, so the spills rule (read before store) rejected it before
+  inline-back. It now reads an already-stored neighbour (`k - 1`, or `k + 1`
+  for slot 0), the defect inline-back exists to catch. `SpillMutable` also
+  bypasses the barrier rule above, otherwise it never fires. The three
+  mutations are rejected by their rules (spills, inline-back, spills).
+- **Checker cost.** The single-assignment test first walked the block once
+  per spilled local: 120 s on `ondemand_stft_denoiser_1024` (32,343 spilled
+  locals). One walk for all of them: 4.4 s for the whole compilation,
+  against 3.1 s without the pass.
+- **`mojo_batch --double`** set the emitter's precision but not the
+  compiler's, so the computation stayed single-precision with `F64` names.
+  Found by the impulse lane below; the example now sets both (no other
+  caller used `--double`: the GPU has no f64).
+
+Qualification:
+
+1. **Unit tests.** Six more in `crates/fir/src/outline/tests.rs` (21 in
+   all): a 60-statement sample loop body cut into runs through one spill
+   array, the mutable local kept in the caller, the output write (a pointer
+   local) left as a barrier, the FIR verifier clean, a function under the
+   split budget unchanged, and `SpillMutable` (spills), `SpillWrongSlot`
+   (inline-back) and `SpillEarly` (spills) rejected.
+2. **Corpus.** `fir_outline_corpus.rs` runs every program a second time
+   with `budget` and `split_budget` 8: 318 run functions over
+   `tests/corpus` and 244 over `tests/impulse-tests/dsp`, every output
+   accepted by the checker and the FIR verifier and emitted as Mojo, scalar
+   and batch.
+3. **Emitter.** A run receives the spill array as `mut compute_spill0:
+   Arr[F32, n]`, stores its escapes at its end and reads earlier ones as
+   `compute_spill0[S32(k)]`; the caller declares the array zero-filled.
+4. **Codegen identity.** The same 1,199 identical outputs as phase 1; of
+   the 10 different ones, only `ondemand_stft_denoiser_1024` (its 52,361-
+   statement block cut into 43 runs) and `ddsp_rad_harmonic_spectral_frame`
+   (an 8,000-plus-statement `instanceConstants` cut into 9 runs) changed
+   from phase 1.
+5. **Numeric.** `ondemand_stft_denoiser_1024` through the Mojo impulse
+   harness: output identical to the base build's (15,003 lines). The
+   impulse lane `make mojo-outline` (every program cut into runs of at most
+   8 statements, `-double`, against the C++ reference): 132/132 programs
+   (`sound` excluded, as in `make mojo`), on Mojo 1.3.0.dev2026110705. `APF`
+   and `HPF`, built with `--fp-mode contract=off` and `fast`, give the same
+   output whole and split.
+6. **The 12-seed `fad` voice** (`faust-coopiano/fit/voice_fad.dsp`,
+   `mojo_batch --no-registers`): 181 methods, the largest 6,460 lines (an
+   `ondemand` block under the split budget); `instance_clear` (31,465
+   lines), `compute` and the two large `ondemand` bodies are cut into runs,
+   escapes in six spill arrays (the largest 9,991 `F32`). Mojo builds it in
+   633 s and 15.6 GB (timed beside two other Mojo builds); it did not build
+   at all in P0. Not run on the GPU: Metal would compile its kernel for
+   hours.
+
+7. **Gates.** fmt, clippy `-D warnings`, the workspace tests (3,626
+   passed), the five structure gates (code graphs regenerated for
+   `DEFAULT_SPLIT_BUDGET`), `golden-check` 306/306; `compile-budget-check`
+   refused to measure on the idle Mac (calibration under its floor).
+
+**What the pass does not fix.** `ondemand_stft_denoiser_1024` now builds in
+384 s (base 629 s, phase 1 428 s), not far below. Its runs cost about 140 s;
+with every run emptied the unit still takes 247 s, and 227 s with
+`instance_clear` emptied too. The rest is the struct itself: 2,080 fields
+initialised one by one in a 2,082-line `__init__`, which is the emitter's
+text, not a FIR function the pass can split. Splitting `__init__` (or
+grouping the fields) is the next lever for programs with that much state.

@@ -54,8 +54,10 @@
 //! Mojo's compile time grows much faster than linearly with a function's
 //! size and with an array literal's length. A DSP method over a statement
 //! budget therefore has its largest `then`/`else` blocks moved into methods
-//! of their own (`fir::outline`, `MojoOptions::outline`, printed by
-//! `methods.rs`), and a struct table of at least 256 entries is initialised
+//! of their own, and a method still far above it its longest straight-line
+//! block cut into runs, values crossing a cut passed through a local spill
+//! array (`fir::outline`, `MojoOptions::outline`, printed by `methods.rs`);
+//! a struct table of at least 256 entries is initialised
 //! from the bit patterns of its entries (`MojoOptions::packed_tables`,
 //! decoded by a helper of `helpers.rs`). Upstream does neither; a program
 //! under the budget, with smaller tables, is emitted as before. Plan:

@@ -22,9 +22,14 @@
 //! 4. **closed** — an added function's body redeclares no parameter, has no
 //!    other free local variable, never stores into a value parameter, and
 //!    reaches a reference parameter only at index 0 (or passes it on);
-//! 5. **inline-back** — replacing every call by its function's body (callees
+//! 5. **spills** — a spill array (phase 2, plan §3.4) is declared once in
+//!    its block, before the calls that receive it; each slot is stored once,
+//!    by a trailing statement of one run, and read only after that run;
+//! 6. **inline-back** — replacing every call by its function's body (callees
 //!    first), parameter accesses turned back into accesses of the caller's
-//!    variable, gives every source function body exactly (by id).
+//!    variable, spill declarations and stores dropped and slot reads turned
+//!    back into the spilled local, gives every source function body exactly
+//!    (by id); every spilled local is single-assignment in the block.
 //!
 //! # Public API mapping status
 //! - `check_outlining`, `OutlineViolation`: no C++ counterpart (Rust-only,
@@ -50,6 +55,8 @@ pub enum OutlineViolation {
     Calls { function: String, why: String },
     /// Rule 4: an added function's body reaches something it should not.
     Closed { function: String, why: String },
+    /// Rule 5, and the single-assignment check of rule 6: a spill array.
+    Spills { function: String, why: String },
     /// Rule 5: inlining the calls back does not give the source body.
     InlineBack { function: String },
 }
@@ -61,6 +68,7 @@ impl fmt::Display for OutlineViolation {
             Self::Signature { function, why } => write!(f, "signature of `{function}`: {why}"),
             Self::Calls { function, why } => write!(f, "calls of `{function}`: {why}"),
             Self::Closed { function, why } => write!(f, "closed `{function}`: {why}"),
+            Self::Spills { function, why } => write!(f, "spills in `{function}`: {why}"),
             Self::InlineBack { function } => write!(
                 f,
                 "inline-back: `{function}` with its calls inlined differs from its source body"
@@ -90,6 +98,8 @@ pub fn check_outlining(
 enum Passing {
     Value(FirType),
     Reference(FirType),
+    /// A spill array of `n` elements, by reference.
+    Spill(FirType, usize),
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +128,8 @@ struct Call {
 
 struct Checker {
     cs: FirStore,
+    /// Every name the source module declares, its functions included.
+    src_names: HashSet<String>,
     added: HashMap<String, Added>,
     /// The calls of each added function (rule 3 leaves exactly one).
     calls: HashMap<String, Vec<Call>>,
@@ -297,6 +309,7 @@ impl Checker {
 
         let mut checker = Checker {
             cs,
+            src_names: HashSet::new(),
             added: HashMap::new(),
             calls: HashMap::new(),
             inlined: HashMap::new(),
@@ -306,11 +319,20 @@ impl Checker {
         for f in &d_funs[s_funs.len()..] {
             checker.closed(&f.name)?;
         }
+        for f in &d_funs {
+            if let Some(body) = f.body {
+                checker.spills(&f.name, body)?;
+            }
+        }
         for (sf, df) in s_funs.iter().zip(&d_funs) {
             let (Some(sb), Some(db)) = (sf.body, df.body) else {
                 continue;
             };
-            if checker.inline(db) != sb {
+            if checker.inline(db).map_err(|why| OutlineViolation::Spills {
+                function: sf.name.clone(),
+                why,
+            })? != sb
+            {
                 return Err(OutlineViolation::InlineBack {
                     function: sf.name.clone(),
                 });
@@ -369,12 +391,20 @@ impl Checker {
                 let passing = match &named.typ {
                     t if scalar(t) => Passing::Value(t.clone()),
                     FirType::Ptr(inner) if scalar(inner) => Passing::Reference((**inner).clone()),
-                    _ => return Err(bad("a parameter is neither a scalar nor a pointer to one")),
+                    FirType::Array(inner, n) if scalar(inner) => {
+                        Passing::Spill((**inner).clone(), *n)
+                    }
+                    _ => {
+                        return Err(bad(
+                            "a parameter is neither a scalar, a pointer to one nor an array of one",
+                        ));
+                    }
                 };
                 params.push((named.name.clone(), passing));
             }
             self.added.insert(f.name.clone(), Added { body, params });
         }
+        self.src_names = taken;
         Ok(())
     }
 
@@ -527,12 +557,25 @@ impl Checker {
                         && caller_refs.contains(name.as_str())
                         && typ == FirType::Ptr(Box::new(t.clone()))
                 }
+                (
+                    Passing::Spill(t, n),
+                    FirMatch::LoadVar {
+                        name,
+                        access: AccessType::Stack,
+                        typ,
+                    },
+                ) => {
+                    name == *param
+                        && !self.src_names.contains(&name)
+                        && typ == FirType::Array(Box::new(t.clone()), *n)
+                }
                 _ => false,
             };
             if !ok {
                 return Err(bad(format!(
-                    "the argument of parameter `{param}` does not name the caller's variable \
-                     the way the parameter is passed"
+                    "the argument of parameter `{param}` ({passing:?}) does not name the \
+                     caller's variable the way the parameter is passed: {:?}",
+                    match_fir(&self.cs, arg)
                 )));
             }
         }
@@ -558,31 +601,206 @@ impl Checker {
 
     // ------------------------------------------------------------- rule 5
 
+    /// The trailing spill stores of an added function's raw body:
+    /// `(spill parameter, slot, local)`, in order.
+    fn trailing_spills(&self, name: &str) -> Vec<(String, i32, String)> {
+        let added = &self.added[name];
+        let spills: HashSet<&str> = added
+            .params
+            .iter()
+            .filter(|(_, p)| matches!(p, Passing::Spill(..)))
+            .map(|(n, _)| n.as_str())
+            .collect();
+        let mut out = Vec::new();
+        for item in items(&self.cs, added.body).into_iter().rev() {
+            let FirMatch::StoreTable {
+                name: spill,
+                access: AccessType::FunArgs,
+                index,
+                value,
+            } = match_fir(&self.cs, item)
+            else {
+                break;
+            };
+            let (
+                FirMatch::Int32 { value: k, .. },
+                FirMatch::LoadVar {
+                    name: e,
+                    access: AccessType::Stack,
+                    ..
+                },
+            ) = (match_fir(&self.cs, index), match_fir(&self.cs, value))
+            else {
+                break;
+            };
+            if !spills.contains(spill.as_str()) {
+                break;
+            }
+            out.push((spill, k, e));
+        }
+        out.reverse();
+        out
+    }
+
+    /// The spill declarations of a block: `DeclareVar(p, Array, Stack,
+    /// None)` of a name the source does not declare, by item index.
+    fn spill_declarations(&self, block: &[FirId]) -> HashMap<String, usize> {
+        let mut out = HashMap::new();
+        for (i, &item) in block.iter().enumerate() {
+            if let FirMatch::DeclareVar {
+                name,
+                typ: FirType::Array(..),
+                access: AccessType::Stack,
+                init: None,
+            } = match_fir(&self.cs, item)
+                && !self.src_names.contains(&name)
+            {
+                out.insert(name, i);
+            }
+        }
+        out
+    }
+
+    // ------------------------------------------------------------- rule 5
+
+    /// Rule 5 over every block of a function.
+    fn spills(&mut self, fname: &str, body: FirId) -> Result<(), OutlineViolation> {
+        let bad = |why: String| OutlineViolation::Spills {
+            function: fname.to_owned(),
+            why,
+        };
+        let block = items(&self.cs, body);
+        let decls = self.spill_declarations(&block);
+        if !decls.is_empty() {
+            self.spills_in_block(&block, &decls).map_err(bad)?;
+        }
+        for item in block {
+            for child in nested_blocks(&self.cs, item) {
+                self.spills(fname, child)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn spills_in_block(
+        &self,
+        block: &[FirId],
+        decls: &HashMap<String, usize>,
+    ) -> Result<(), String> {
+        // Slots stored: (spill, slot) -> (local, call index).
+        let mut stored: HashMap<(String, i32), (String, usize)> = HashMap::new();
+        for (c, &item) in block.iter().enumerate() {
+            let Some((g, args, _)) = call_statement(&self.cs, item) else {
+                continue;
+            };
+            let Some(added) = self.added.get(&g) else {
+                continue;
+            };
+            for ((param, passing), &arg) in added.params.iter().zip(&args[1..]) {
+                if matches!(passing, Passing::Spill(..)) {
+                    match decls.get(param) {
+                        Some(&d) if d < c => {}
+                        _ => {
+                            return Err(format!(
+                                "spill `{param}` passed to `{g}` without a declaration before"
+                            ));
+                        }
+                    }
+                    let _ = arg;
+                }
+            }
+            for (spill, k, e) in self.trailing_spills(&g) {
+                if stored.insert((spill.clone(), k), (e, c)).is_some() {
+                    return Err(format!("slot {k} of `{spill}` stored twice"));
+                }
+            }
+        }
+        for (c, &item) in block.iter().enumerate() {
+            let mut accesses = Vec::new();
+            match call_statement(&self.cs, item) {
+                Some((g, _, _)) if self.added.contains_key(&g) => {
+                    let trailing = self.trailing_spills(&g).len();
+                    let body = items(&self.cs, self.added[&g].body);
+                    for &stmt in &body[..body.len() - trailing] {
+                        spill_accesses(&self.cs, stmt, decls, &mut accesses);
+                    }
+                }
+                _ => {
+                    if decls.values().any(|&d| d == c) {
+                        continue;
+                    }
+                    spill_accesses(&self.cs, item, decls, &mut accesses);
+                }
+            }
+            for (spill, k, is_read) in accesses {
+                let Some(k) = k.filter(|_| is_read) else {
+                    return Err(format!("`{spill}` accessed other than by a slot read"));
+                };
+                match stored.get(&(spill.clone(), k)) {
+                    Some(&(_, d)) if d < c => {}
+                    Some(_) => {
+                        return Err(format!(
+                            "slot {k} of `{spill}` read before or in the run that stores it"
+                        ));
+                    }
+                    None => return Err(format!("slot {k} of `{spill}` read but never stored")),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ------------------------------------------------------------- rule 6
+
     /// `id` with every call to an added function replaced by the function's
-    /// inlined body, parameters substituted.
-    fn inline(&mut self, id: FirId) -> FirId {
+    /// inlined body, parameters substituted, spills undone; `Err` when a
+    /// spilled local is not single-assignment in its block.
+    fn inline(&mut self, id: FirId) -> Result<FirId, String> {
         if let Some(&done) = self.inlined.get(&id) {
-            return done;
+            return Ok(done);
         }
         let out = if let FirMatch::Block(block) = match_fir(&self.cs, id) {
+            let decls = self.spill_declarations(&block);
+            let mut slots: HashMap<(String, i32), String> = HashMap::new();
             let mut out = Vec::with_capacity(block.len());
             let mut changed = false;
-            for item in block {
+            for (i, &item) in block.iter().enumerate() {
+                if decls.values().any(|&d| d == i) {
+                    changed = true;
+                    continue;
+                }
                 match call_statement(&self.cs, item) {
                     Some((name, args, _)) if self.added.contains_key(&name) => {
                         changed = true;
+                        let trailing = self.trailing_spills(&name);
                         let body = self.added[&name].body;
-                        let inlined = self.inline(body);
+                        let inlined = self.inline(body)?;
                         let params = self.added[&name].params.clone();
                         let restored = self.substitute(inlined, &params, &args[1..]);
-                        out.extend(items(&self.cs, restored));
+                        let restored = items(&self.cs, restored);
+                        out.extend_from_slice(&restored[..restored.len() - trailing.len()]);
+                        for (spill, k, e) in trailing {
+                            slots.insert((spill, k), e);
+                        }
                     }
                     _ => {
-                        let new = self.inline(item);
+                        let new = self.inline(item)?;
                         changed |= new != item;
                         out.push(new);
                     }
                 }
+            }
+            if !slots.is_empty() {
+                let mut back = SlotsBack {
+                    cs: &mut self.cs,
+                    slots: &slots,
+                    memo: HashMap::new(),
+                };
+                for item in &mut out {
+                    *item = back.node(*item);
+                }
+                let spilled: HashSet<&String> = slots.values().collect();
+                single_assignment(&self.cs, &out, &spilled)?;
             }
             if changed {
                 FirBuilder::new(&mut self.cs).block(&out)
@@ -595,7 +813,7 @@ impl Checker {
                     let mut changed = false;
                     let mut new_children = Vec::with_capacity(children.len());
                     for c in children {
-                        let n = self.inline(c);
+                        let n = self.inline(c)?;
                         changed |= n != c;
                         new_children.push(n);
                     }
@@ -608,7 +826,7 @@ impl Checker {
             }
         };
         self.inlined.insert(id, out);
-        out
+        Ok(out)
     }
 
     /// The body with each parameter access turned back into an access of
@@ -892,6 +1110,20 @@ impl Closed<'_> {
             } => {
                 if local(access)
                     && !self.bound(&name)
+                    && let Some(Passing::Spill(_, n)) = self.params.get(&name)
+                {
+                    let in_range = matches!(
+                        match_fir(self.cs, index),
+                        FirMatch::Int32 { value, .. }
+                            if usize::try_from(value).is_ok_and(|k| k < *n)
+                    );
+                    if !in_range || access != AccessType::FunArgs {
+                        return Err(format!(
+                            "spill `{name}` reached other than at a literal index in range"
+                        ));
+                    }
+                } else if local(access)
+                    && !self.bound(&name)
                     && matches!(self.params.get(&name), Some(Passing::Reference(_)))
                 {
                     let zero =
@@ -938,7 +1170,197 @@ impl Closed<'_> {
             Some(Passing::Value(_)) if access == AccessType::FunArgs && what == "a load" => Ok(()),
             Some(Passing::Value(_)) => Err(format!("{what} of value parameter `{name}`")),
             Some(Passing::Reference(_)) => Err(format!("{what} of reference `{name}`")),
+            Some(Passing::Spill(..)) => Err(format!("{what} of spill `{name}`")),
             None => Err(format!("{what} of `{name}`, free in the body")),
+        }
+    }
+}
+
+/// The blocks nested directly in a statement.
+fn nested_blocks(store: &FirStore, stmt: FirId) -> Vec<FirId> {
+    match match_fir(store, stmt) {
+        FirMatch::Block(_) => vec![stmt],
+        FirMatch::If {
+            then_block,
+            else_block,
+            ..
+        } => std::iter::once(then_block).chain(else_block).collect(),
+        FirMatch::Control { stmt, .. } => nested_blocks(store, stmt),
+        FirMatch::ForLoop { body, .. }
+        | FirMatch::SimpleForLoop { body, .. }
+        | FirMatch::IteratorForLoop { body, .. }
+        | FirMatch::WhileLoop { body, .. } => vec![body],
+        FirMatch::Switch { cases, default, .. } => {
+            cases.into_iter().map(|(_, b)| b).chain(default).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Every access under `id` to a spill array of `decls`: `(spill, literal
+/// slot, whether a `LoadTable`)`; the slot is `None` for any other access or
+/// index.
+fn spill_accesses(
+    store: &FirStore,
+    id: FirId,
+    decls: &HashMap<String, usize>,
+    out: &mut Vec<(String, Option<i32>, bool)>,
+) {
+    let found = match match_fir(store, id) {
+        FirMatch::LoadTable { name, index, .. } if decls.contains_key(&name) => {
+            let k = match match_fir(store, index) {
+                FirMatch::Int32 { value, .. } => Some(value),
+                _ => None,
+            };
+            Some((name, k, true))
+        }
+        FirMatch::LoadVar { name, .. }
+        | FirMatch::StoreVar { name, .. }
+        | FirMatch::StoreTable { name, .. }
+        | FirMatch::LoadVarAddress { name, .. }
+        | FirMatch::TeeVar { name, .. }
+        | FirMatch::ShiftArrayVar { name, .. }
+            if decls.contains_key(&name) =>
+        {
+            Some((name, None, false))
+        }
+        _ => None,
+    };
+    if let Some(f) = found {
+        out.push(f);
+    }
+    for &child in store.arena.children(id).unwrap_or(&[]) {
+        spill_accesses(store, child, decls, out);
+    }
+}
+
+/// Whether every local of `names` is single-assignment in a block's items:
+/// declared exactly once, with an initialiser, of a scalar type; never stored
+/// into, tee'd, addressed or shifted. One walk for all of them.
+fn single_assignment(
+    store: &FirStore,
+    block: &[FirId],
+    names: &HashSet<&String>,
+) -> Result<(), String> {
+    #[derive(Default)]
+    struct Seen {
+        decls: Vec<(FirType, bool)>,
+        mutated: bool,
+    }
+    fn walk(
+        store: &FirStore,
+        id: FirId,
+        names: &HashSet<&String>,
+        seen: &mut HashMap<String, Seen>,
+    ) {
+        match match_fir(store, id) {
+            FirMatch::DeclareVar {
+                name, typ, init, ..
+            } if names.contains(&name) => {
+                seen.entry(name)
+                    .or_default()
+                    .decls
+                    .push((typ, init.is_some()));
+            }
+            FirMatch::DeclareTable {
+                name, elem_type, ..
+            } if names.contains(&name) => {
+                let typ = FirType::Array(Box::new(elem_type), 0);
+                seen.entry(name).or_default().decls.push((typ, true));
+            }
+            FirMatch::ForLoop { var, .. } | FirMatch::SimpleForLoop { var, .. }
+                if names.contains(&var) =>
+            {
+                seen.entry(var)
+                    .or_default()
+                    .decls
+                    .push((FirType::Int32, false));
+            }
+            FirMatch::StoreVar { name, access, .. }
+            | FirMatch::StoreTable { name, access, .. }
+            | FirMatch::TeeVar { name, access, .. }
+            | FirMatch::LoadVarAddress { name, access, .. }
+            | FirMatch::ShiftArrayVar { name, access, .. }
+                if local(access) && names.contains(&name) =>
+            {
+                seen.entry(name).or_default().mutated = true;
+            }
+            _ => {}
+        }
+        for &child in store.arena.children(id).unwrap_or(&[]) {
+            walk(store, child, names, seen);
+        }
+    }
+    let mut seen: HashMap<String, Seen> = HashMap::new();
+    for &item in block {
+        walk(store, item, names, &mut seen);
+    }
+    let mut sorted: Vec<&&String> = names.iter().collect();
+    sorted.sort();
+    for e in sorted {
+        let ok = seen.get(e.as_str()).is_some_and(|s| {
+            !s.mutated && matches!(s.decls.as_slice(), [(typ, true)] if scalar(typ))
+        });
+        if !ok {
+            return Err(format!(
+                "spilled local `{e}` is not single-assignment in its block"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Slot reads turned back into the spilled locals.
+struct SlotsBack<'a> {
+    cs: &'a mut FirStore,
+    slots: &'a HashMap<(String, i32), String>,
+    memo: HashMap<FirId, FirId>,
+}
+
+impl SlotsBack<'_> {
+    fn node(&mut self, id: FirId) -> FirId {
+        if let Some(&done) = self.memo.get(&id) {
+            return done;
+        }
+        let out = match match_fir(self.cs, id) {
+            FirMatch::LoadTable {
+                name,
+                access: AccessType::Stack | AccessType::FunArgs,
+                index,
+                typ,
+            } => {
+                let slot = match match_fir(self.cs, index) {
+                    FirMatch::Int32 { value, .. } => self.slots.get(&(name, value)).cloned(),
+                    _ => None,
+                };
+                match slot {
+                    Some(e) => FirBuilder::new(self.cs).load_var(e, AccessType::Stack, typ),
+                    None => self.children(id),
+                }
+            }
+            _ => self.children(id),
+        };
+        self.memo.insert(id, out);
+        out
+    }
+
+    fn children(&mut self, id: FirId) -> FirId {
+        let Some(children) = self.cs.arena.children(id).map(<[FirId]>::to_vec) else {
+            return id;
+        };
+        if children.is_empty() {
+            return id;
+        }
+        let mut changed = false;
+        let mut out = Vec::with_capacity(children.len());
+        for c in children {
+            let n = self.node(c);
+            changed |= n != c;
+            out.push(n);
+        }
+        match self.cs.arena.kind(id).cloned() {
+            Some(kind) if changed => self.cs.arena.intern(kind, &out),
+            _ => id,
         }
     }
 }
