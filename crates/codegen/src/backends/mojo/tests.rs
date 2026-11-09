@@ -779,3 +779,222 @@ fn a_module_the_layout_refuses_is_a_codegen_error() {
     assert_eq!(err.code(), CodegenErrorCode::InvalidModuleSection);
     assert!(err.to_string().contains("batch voice layout"), "{err}");
 }
+
+// ------------------------------------------------- outlining, packed tables
+// (`porting/mojo-large-program-outlining-plan-2026-11-09-en.md` §5, §6)
+
+/// A module whose sample loop holds an `ondemand`-like block of `n`
+/// statements, then `tail` statements: the block stores into `iDone0`
+/// (declared before the loop) and into a field, and reads the loop counter.
+fn outlined_block_module(n: usize, tail: usize) -> (FirStore, fir::FirId) {
+    use crate::fixtures::{compute_fun_args, compute_fun_type};
+    let mut s = FirStore::new();
+    let mut b = FirBuilder::new(&mut s);
+    let field = b.declare_var("fHeld", FirType::Float32, AccessType::Struct, None);
+    let dsp_struct = b.block(&[field]);
+    let zero = b.int32(0);
+    let one = b.int32(1);
+    let done = b.load_var("iDone0", AccessType::Stack, FirType::Int32);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    let mut then = Vec::new();
+    for k in 0..n {
+        let fi = b.cast(FirType::Float32, i0);
+        let kf = b.float32(k as f32);
+        let v = b.binop(FirBinOp::Add, fi, kf, FirType::Float32);
+        then.push(b.store_var("fHeld", AccessType::Struct, v));
+    }
+    let next = b.binop(FirBinOp::Add, done, one, FirType::Int32);
+    then.push(b.store_var("iDone0", AccessType::Stack, next));
+    let then = b.block(&then);
+    let cond = b.binop(FirBinOp::Eq, done, zero, FirType::Int32);
+    let iff = b.if_(cond, then, None);
+    let mut body = vec![iff];
+    for _ in 0..tail {
+        let fi = b.cast(FirType::Float32, i0);
+        body.push(b.store_var("fHeld", AccessType::Struct, fi));
+    }
+    let body = b.block(&body);
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let lp = b.simple_for_loop("i0", count, body, false);
+    let decl = b.declare_var("iDone0", FirType::Int32, AccessType::Stack, Some(zero));
+    let compute_body = b.block(&[decl, lp]);
+    let compute = b.declare_fun(
+        "compute",
+        compute_fun_type(),
+        &compute_fun_args(),
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let globals = b.block(&[]);
+    let statics = b.block(&[]);
+    let root = b.module(
+        0,
+        0,
+        "outlined",
+        dsp_struct,
+        globals,
+        functions,
+        statics,
+        &[],
+    );
+    (s, root)
+}
+
+fn outline_every_block() -> MojoOptions {
+    MojoOptions {
+        outline: Some(fir::outline::OutlinePolicy {
+            budget: 1,
+            min_block: 1,
+        }),
+        ..MojoOptions::default()
+    }
+}
+
+#[test]
+fn an_outlined_block_is_a_method_with_mut_references() {
+    let (store, root) = outlined_block_module(3, 0);
+    let text = generate_mojo_module(&store, root, &outline_every_block()).expect("emits");
+    // The `if` stays in `compute`, around the call; the reference is the
+    // caller's variable itself.
+    assert!(text.contains("            if (i_done0 == S32(0)):\n                dsp.compute_outline0(i0, i_done0)\n"), "{text}");
+    // No `@always_inline`: Mojo would merge the method back into `compute`.
+    assert!(
+        text.contains(
+            "\n\n    def compute_outline0(mut dsp, i0: S32, mut i_done0: S32) -> None:\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("        i_done0 = (i_done0 + S32(1))\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("        dsp.held = (F32(i0) + F32(2.0))\n"),
+        "{text}"
+    );
+    assert!(!text.contains("unsafe_offset = S32(0)]"), "{text}");
+}
+
+#[test]
+fn a_program_under_the_budget_is_emitted_unchanged() {
+    let (store, root) = outlined_block_module(3, 0);
+    let default = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    let whole = generate_mojo_module(
+        &store,
+        root,
+        &MojoOptions {
+            outline: None,
+            ..MojoOptions::default()
+        },
+    )
+    .expect("emits");
+    assert_eq!(default, whole);
+    assert!(!default.contains("def compute_outline"));
+}
+
+#[test]
+fn a_large_program_is_outlined_by_default() {
+    // The block, and as many statements again after it in the loop.
+    let n = fir::outline::DEFAULT_BUDGET / 2 + 10;
+    let (store, root) = outlined_block_module(n, n);
+    let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    assert!(text.contains("def compute_outline0(mut dsp, i0: S32, mut i_done0: S32)"));
+    // A block that is nearly all of its method is left whole: outlining it
+    // would not make the largest function smaller.
+    let (store, root) = outlined_block_module(fir::outline::DEFAULT_BUDGET + 10, 0);
+    let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    assert!(!text.contains("def compute_outline"));
+}
+
+/// A module with a struct table of `n` entries of type `elem`, values
+/// `values(k)`.
+fn table_module(
+    elem: FirType,
+    n: usize,
+    value: impl Fn(&mut FirBuilder<'_>, usize) -> fir::FirId,
+) -> (FirStore, fir::FirId) {
+    use crate::fixtures::{compute_fun_args, compute_fun_type};
+    let mut s = FirStore::new();
+    let mut b = FirBuilder::new(&mut s);
+    let values: Vec<_> = (0..n).map(|k| value(&mut b, k)).collect();
+    let table = b.declare_table("ftbl0", AccessType::Struct, elem, &values);
+    let dsp_struct = b.block(&[table]);
+    let body = b.block(&[]);
+    let compute = b.declare_fun(
+        "compute",
+        compute_fun_type(),
+        &compute_fun_args(),
+        Some(body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let globals = b.block(&[]);
+    let statics = b.block(&[]);
+    let root = b.module(0, 0, "tables", dsp_struct, globals, functions, statics, &[]);
+    (s, root)
+}
+
+#[test]
+fn a_large_struct_table_is_packed_as_bit_patterns() {
+    let n = super::PACKED_TABLE_MIN_ENTRIES;
+    let (store, root) = table_module(FirType::Float32, n, |b, k| match k {
+        0 => b.float32(-0.0),
+        1 => b.float64(0.1),
+        2 => b.int32(3),
+        _ => b.float32(k as f32 * 0.5),
+    });
+    let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    let hex = format!(
+        "{:08x}{:08x}{:08x}{:08x}",
+        0.0f32.to_bits(),
+        0.1f32.to_bits(),
+        3.0f32.to_bits(),
+        1.5f32.to_bits()
+    );
+    assert!(
+        text.contains(&format!("dsp.ftbl0 = faust_unpack32[f32, {n}](\"{hex}")),
+        "{text}"
+    );
+    assert_eq!(text.matches("def faust_unpack32[").count(), 1);
+    assert!(!text.contains("faust_unpack64"));
+
+    let literals = generate_mojo_module(
+        &store,
+        root,
+        &MojoOptions {
+            packed_tables: false,
+            ..MojoOptions::default()
+        },
+    )
+    .expect("emits");
+    assert!(literals.contains("dsp.ftbl0 = [F32(0.0), F32(0.1), F32(3.0), F32(1.5),"));
+    assert!(!literals.contains("faust_unpack"));
+}
+
+#[test]
+fn integer_and_double_tables_are_packed_and_short_tables_are_not() {
+    let n = super::PACKED_TABLE_MIN_ENTRIES;
+    let (store, root) = table_module(FirType::Int32, n, |b, k| {
+        b.int32(if k == 0 { -2 } else { 7 })
+    });
+    let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    assert!(
+        text.contains(&format!("faust_unpack32[s32, {n}](\"fffffffe00000007")),
+        "{text}"
+    );
+
+    let (store, root) = table_module(FirType::Float64, n, |b, _| b.float64(0.1));
+    let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    assert!(
+        text.contains(&format!(
+            "faust_unpack64[f64, {n}](\"{:016x}",
+            0.1f64.to_bits()
+        )),
+        "{text}"
+    );
+
+    let (store, root) = table_module(FirType::Float32, n - 1, |b, _| b.float32(0.5));
+    let text = generate_mojo_module(&store, root, &MojoOptions::default()).expect("emits");
+    assert!(!text.contains("faust_unpack"), "{text}");
+}

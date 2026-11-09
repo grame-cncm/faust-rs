@@ -50,6 +50,17 @@
 //! architecture's `help/math.mojo`), which differ from C on negative operands
 //! and on halves. The generated unit calls `std.math` only.
 //!
+//! # Large programs
+//! Mojo's compile time grows much faster than linearly with a function's
+//! size and with an array literal's length. A DSP method over a statement
+//! budget therefore has its largest `then`/`else` blocks moved into methods
+//! of their own (`fir::outline`, `MojoOptions::outline`, printed by
+//! `methods.rs`), and a struct table of at least 256 entries is initialised
+//! from the bit patterns of its entries (`MojoOptions::packed_tables`,
+//! decoded by a helper of `helpers.rs`). Upstream does neither; a program
+//! under the budget, with smaller tables, is emitted as before. Plan:
+//! `porting/mojo-large-program-outlining-plan-2026-11-09-en.md`.
+//!
 //! # Not supported
 //! Soundfiles (the C++ visitor panics on them), `-quad` and fixed point, and
 //! the C++-only `-gpu` path. Unsupported FIR nodes fail with
@@ -67,6 +78,8 @@ use crate::backends::module_view::{
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
+use helpers::{Helper, emit_helpers};
+use methods::{is_method, write_outlined_method};
 use names::Renamer;
 #[cfg(test)]
 use names::snake_case;
@@ -113,7 +126,24 @@ pub struct MojoOptions {
     /// `porting/batch-state-register-promotion-plan-2026-11-08-en.md`).
     /// `false` emits the arena accesses as they are, for A/B measurements.
     pub batch_registers: bool,
+    /// Outline the large blocks of the DSP methods into methods of their own
+    /// (`fir::outline`, run last on the module the emitter prints), so that
+    /// Mojo, whose compile time grows much faster than linearly with a
+    /// function's size, builds large programs in useful time (plan
+    /// `porting/mojo-large-program-outlining-plan-2026-11-09-en.md`). A
+    /// program whose methods are all under the budget is emitted unchanged.
+    /// `None` keeps every method whole.
+    pub outline: Option<fir::outline::OutlinePolicy>,
+    /// Initialise every struct table of at least
+    /// [`PACKED_TABLE_MIN_ENTRIES`] `Int32`, `Float32` or `Float64` entries
+    /// from a string of their bit patterns, decoded once in `__init__`, where
+    /// Mojo takes about a minute to compile a 12,000-entry array literal
+    /// (plan §6). `false` writes every table as a literal.
+    pub packed_tables: bool,
 }
+
+/// Entries from which a struct table is packed ([`MojoOptions::packed_tables`]).
+pub const PACKED_TABLE_MIN_ENTRIES: usize = 256;
 
 impl Default for MojoOptions {
     fn default() -> Self {
@@ -127,6 +157,8 @@ impl Default for MojoOptions {
             dsp_json: None,
             batch: false,
             batch_registers: true,
+            outline: Some(fir::outline::OutlinePolicy::default()),
+            packed_tables: true,
         }
     }
 }
@@ -253,6 +285,24 @@ fn generate_mojo_module_step(
     let (store, module) = batched
         .as_ref()
         .map_or((store, module), |(s, m, _)| (s, *m));
+    // Large methods split into methods of their own, last, so that no other
+    // pass or checker sees an outlined function.
+    let is_module = matches!(match_fir(store, module), FirMatch::Module { .. });
+    let outlined = match options.outline {
+        Some(policy) if is_module => Some(
+            fir::outline::outline_large_blocks(store, module, policy).map_err(|err| {
+                CodegenError::new(
+                    CodegenErrorCode::InvalidModuleSection,
+                    format!("outlining: {err}"),
+                )
+                .at_node(module)
+            })?,
+        ),
+        _ => None,
+    };
+    let (store, module) = outlined
+        .as_ref()
+        .map_or((store, module), |(s, m, _)| (s, *m));
     // Runtime-filled and folded tables are read through `dsp.` like every
     // other state: `collect_fields` declares the static section as struct
     // fields too, as upstream declares every global as a struct field.
@@ -269,8 +319,14 @@ fn generate_mojo_module_step(
     let has_sample_rate = fields.iter().any(|f| f.fir_name == "fSampleRate");
 
     let mut body = String::new();
+    let mut methods = Vec::new();
     for f in &functions {
         if crate::backends::is_lifecycle_function(&f.name) {
+            continue;
+        }
+        if is_method(f) {
+            emitter.declare_method(f)?;
+            methods.push(f.clone());
             continue;
         }
         emitter.emit_helper_function(&mut body, f)?;
@@ -352,6 +408,7 @@ fn generate_mojo_module_step(
             num_outputs: view.num_outputs,
             functions: &functions,
             fields: &fields,
+            methods: &methods,
         },
     )?;
 
@@ -379,75 +436,6 @@ struct Field {
     reset: Option<(FirType, FirId)>,
 }
 
-/// A C-semantics helper written at the top of the unit when used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Helper {
-    IDiv,
-    IRem,
-    FMod,
-    Round,
-}
-
-impl Helper {
-    fn name(self) -> &'static str {
-        match self {
-            Self::IDiv => "faust_idiv",
-            Self::IRem => "faust_irem",
-            Self::FMod => "faust_fmod",
-            Self::Round => "faust_round",
-        }
-    }
-
-    fn source(self) -> &'static str {
-        match self {
-            // C truncates the quotient toward zero; Mojo `//` floors.
-            Self::IDiv => {
-                "@always_inline\n\
-                 def faust_idiv[dt: DType](a: Scalar[dt], b: Scalar[dt]) -> Scalar[dt]:\n\
-                 \x20   var q = a // b\n\
-                 \x20   if (a % b != 0) and ((a < 0) != (b < 0)):\n\
-                 \x20       q += 1\n\
-                 \x20   return q\n"
-            }
-            // C gives the remainder the sign of the dividend; Mojo `%` gives
-            // it the sign of the divisor.
-            Self::IRem => {
-                "@always_inline\n\
-                 def faust_irem[dt: DType](a: Scalar[dt], b: Scalar[dt]) -> Scalar[dt]:\n\
-                 \x20   var r = a % b\n\
-                 \x20   if (r != 0) and ((r < 0) != (a < 0)):\n\
-                 \x20       r -= b\n\
-                 \x20   return r\n"
-            }
-            // C `fmod`: the sign of the dividend. Mojo `%` floors, which is
-            // C `fmod` on two non-negative operands, so only the sign is
-            // restored.
-            Self::FMod => {
-                "@always_inline\n\
-                 def faust_fmod[dt: DType](x: Scalar[dt], y: Scalar[dt]) -> Scalar[dt]:\n\
-                 \x20   return copysign(abs(x) % abs(y), x)\n"
-            }
-            // C `round`: halves away from zero; Mojo `round` goes to even.
-            // `x - trunc(x)` is exact, so the test on the half is exact.
-            Self::Round => {
-                "@always_inline\n\
-                 def faust_round[dt: DType](x: Scalar[dt]) -> Scalar[dt]:\n\
-                 \x20   var t = trunc(x)\n\
-                 \x20   if abs(x - t) >= 0.5:\n\
-                 \x20       t += copysign(Scalar[dt](1), x)\n\
-                 \x20   return t\n"
-            }
-        }
-    }
-}
-
-fn emit_helpers(out: &mut String, helpers: &BTreeSet<Helper>) {
-    for helper in helpers {
-        out.push_str(helper.source());
-        out.push('\n');
-    }
-}
-
 /// Context-dependent receiver of `AddMetaDeclare`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EmitMode {
@@ -462,6 +450,8 @@ struct ApiInput<'a> {
     num_outputs: usize,
     functions: &'a [FunctionDecl],
     fields: &'a [Field],
+    /// Module functions emitted as methods of the struct (outlined blocks).
+    methods: &'a [FunctionDecl],
 }
 
 /// Emission state for one module: the rename maps, the declared types used for
@@ -479,6 +469,11 @@ struct Emitter<'a> {
     helpers: BTreeSet<Helper>,
     /// The voice layout in batch mode (`MojoOptions::batch`).
     batch: Option<fir::batch::VoiceLayout>,
+    /// Module functions emitted as methods: Mojo name, and per parameter
+    /// after `dsp` whether it is a reference (`mut`).
+    methods: HashMap<String, (String, Vec<bool>)>,
+    /// Reference parameters of the method being emitted.
+    by_ref: BTreeSet<String>,
 }
 
 impl<'a> Emitter<'a> {
@@ -505,6 +500,8 @@ impl<'a> Emitter<'a> {
             scopes: Vec::new(),
             helpers: BTreeSet::new(),
             batch,
+            methods: HashMap::new(),
+            by_ref: BTreeSet::new(),
         }
     }
 
@@ -566,7 +563,10 @@ impl<'a> Emitter<'a> {
                         let typ = FirType::Array(Box::new(elem_type.clone()), values.len());
                         self.field_types.insert(name.clone(), typ.clone());
                         let type_text = self.emit_type(&typ)?;
-                        let init_text = self.table_literal(&elem_type, &values)?;
+                        let init_text = match self.packed_table(&elem_type, &values) {
+                            Some(text) => text,
+                            None => self.table_literal(&elem_type, &values)?,
+                        };
                         out.push(Field {
                             param: None,
                             fir_name: name,
@@ -604,6 +604,7 @@ impl<'a> Emitter<'a> {
             num_outputs,
             functions,
             fields,
+            methods,
         } = input;
         let sample_rate = self.fields.get("fSampleRate")?;
         let find = |name: &str| functions.iter().find(|f| f.name == name);
@@ -738,6 +739,11 @@ impl<'a> Emitter<'a> {
             ),
             &body,
         );
+        for m in methods {
+            let mut body = String::new();
+            let signature = self.emit_method(&mut body, m)?;
+            write_outlined_method(out, &signature, &body);
+        }
         // `write_method` ends every method with a blank line; the struct is last.
         out.truncate(out.trim_end_matches('\n').len() + 1);
         Ok(())
@@ -1010,6 +1016,10 @@ impl<'a> Emitter<'a> {
                 Ok(())
             }
             FirMatch::Drop(value) => {
+                if let Some(call) = self.method_call(value)? {
+                    let _ = writeln!(out, "{t}{call}");
+                    return Ok(());
+                }
                 let value = self.emit_value(value)?;
                 let _ = writeln!(out, "{t}_ = {value}");
                 Ok(())
@@ -1311,6 +1321,17 @@ impl<'a> Emitter<'a> {
         access: AccessType,
         index: FirId,
     ) -> Result<String, CodegenError> {
+        if access == AccessType::FunArgs && self.by_ref.contains(name) {
+            // A reference parameter is the caller's variable itself.
+            return match match_fir(self.store, index) {
+                FirMatch::Int32 { value: 0, .. } => self.locals.get(name),
+                _ => Err(unsupported_node(
+                    "reference at a non-zero index",
+                    index,
+                    self.store,
+                )),
+            };
+        }
         let base = self.var_ref(name, access)?;
         let index = self.emit_value(index)?;
         let is_pointer = match self.var_type(name, access) {
@@ -1443,7 +1464,16 @@ impl<'a> Emitter<'a> {
             }
             FirMatch::Float64 { value, .. } => Ok(self.real_literal(&FirType::Float64, value)),
             FirMatch::Bool { value, .. } => Ok(if value { "True" } else { "False" }.to_owned()),
-            FirMatch::LoadVar { name, access, .. } => self.var_ref(&name, access),
+            FirMatch::LoadVar { name, access, .. } => {
+                if access == AccessType::FunArgs && self.by_ref.contains(&name) {
+                    return Err(unsupported_node(
+                        "reference used as a value",
+                        value,
+                        self.store,
+                    ));
+                }
+                self.var_ref(&name, access)
+            }
             FirMatch::LoadVarAddress { name, access, .. } => {
                 Ok(format!("Ptr(to={})", self.var_ref(&name, access)?))
             }
@@ -1913,6 +1943,8 @@ fn wrap_compile_options(options: &str) -> String {
 }
 
 mod batch;
+mod helpers;
+mod methods;
 mod names;
 #[cfg(test)]
 mod tests;

@@ -177,6 +177,7 @@ const FBC_OPCODE_COUNT
 const INTERP_FILE_VERSION
 const MAX_OPT_LEVEL
 const MEMORY_LAYOUT_VERSION
+const PACKED_TABLE_MIN_ENTRIES
 const VERSION
 const fn
 enum AccessMetric
@@ -1541,6 +1542,8 @@ use strings
 ## fir
 const CONTROLS_TABLE
 const CRATE_NAME
+const DEFAULT_BUDGET
+const DEFAULT_MIN_BLOCK
 const DSP_API_FUNCTIONS
 const INSTANCE_FUNCTIONS
 const VOICES_FIELD
@@ -1565,6 +1568,8 @@ enum FirMathOp
 enum FirType
 enum FlattenError
 enum InitStatus
+enum OutlineError
+enum OutlineViolation
 enum PromoteError
 enum Severity
 enum SliderType
@@ -1648,6 +1653,7 @@ fn VoiceLayout::placement
 fn analyze_fir_inliner
 fn arena_name
 fn canonical_fir_fingerprint
+fn check_outlining
 fn check_promotion
 fn check_voice_layout
 fn clone_fir_hygienic
@@ -1663,6 +1669,7 @@ fn inline_fir_module_once
 fn is_obviously_side_effect_free_value
 fn layout_voices
 fn match_fir
+fn outline_large_blocks
 fn prepare_callee_body_for_inlining
 fn promote_state
 fn promote_static_tables_to_struct
@@ -1681,6 +1688,7 @@ mod check
 mod checker
 mod helpers
 mod inliner
+mod outline
 mod promote_check
 mod schedule
 mod subcontainer
@@ -1708,10 +1716,14 @@ struct FunctionSig
 struct LayoutViolation
 struct ModuleSymbols
 struct NamedType
+struct OutlinePolicy
+struct OutlineReport
+struct OutlinedFunction
 struct Placement
 struct PromotedElement
 struct PromotedState
 struct PromotionViolation
+struct RefusedBlock
 struct SliderRange
 struct VoiceLayout
 type FirId

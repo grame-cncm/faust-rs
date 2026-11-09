@@ -141,6 +141,12 @@ See the design write-up in
      to `build/mojo-gpu-modal-fad-bell/`, then times the same fit on the CPU
      (`archs/modalfadcpufile.cpp`, four modes per program from
      `../corpus/gpu_modal_fad_group_phase.dsp`, on `MODAL_THREADS` threads).
+   - `make mojo-outline` — the `make mojo` check with every `then`/`else`
+     block of every program outlined into a method of its own
+     (`fir::outline` with budget and minimum 1; by default only methods over
+     2,000 statements are split), through the compiler's `mojo_batch
+     --scalar` (plan
+     `porting/mojo-large-program-outlining-plan-2026-11-09-en.md`).
    - `make mojo-gpu-batch` / `make mojo-gpu-bench-batch` — the same lane and
      sweep with the batch contract (`MojoOptions::batch`: one struct for N
      voices, state as a structure of arrays across voices), emitted by the

@@ -5,7 +5,11 @@
 //! The batch mode is an emitter option only (decision D3): `faust-rs` has no
 //! command-line switch for it. This example is how the opt-in test lanes of
 //! `tests/impulse-tests` (`make mojo-gpu-batch`, `make mojo-gpu-bench-batch`)
-//! reach it.
+//! reach it, and the other emitter options with it: the outlining of large
+//! methods and the packed tables
+//! (`porting/mojo-large-program-outlining-plan-2026-11-09-en.md`), both on by
+//! default, and, with `--scalar`, the scalar contract under the same options
+//! (`make mojo-outline` forces every block out that way).
 //!
 //! ```text
 //! cargo run --release -p compiler --example mojo_batch -- dsp/osc.dsp -I dsp -o osc.mojo
@@ -39,10 +43,34 @@ struct Args {
     /// state promotion (`MojoOptions::batch_registers`), for A/B timings.
     #[arg(long = "no-registers")]
     no_registers: bool,
+    /// Emit the scalar contract (`-lang mojo`) with these emitter options
+    /// instead of the batch one.
+    #[arg(long)]
+    scalar: bool,
+    /// Keep every method whole (`MojoOptions::outline` off).
+    #[arg(long = "no-outline", conflicts_with_all = ["outline_budget", "outline_min_block"])]
+    no_outline: bool,
+    /// Statements above which a method is outlined (`OutlinePolicy::budget`).
+    #[arg(long = "outline-budget")]
+    outline_budget: Option<usize>,
+    /// Smallest block outlined (`OutlinePolicy::min_block`).
+    #[arg(long = "outline-min-block")]
+    outline_min_block: Option<usize>,
+    /// Write every table as an array literal (`MojoOptions::packed_tables`
+    /// off).
+    #[arg(long = "table-literals")]
+    table_literals: bool,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    let outline = (!args.no_outline).then(|| {
+        let default = fir::outline::OutlinePolicy::default();
+        fir::outline::OutlinePolicy {
+            budget: args.outline_budget.unwrap_or(default.budget),
+            min_block: args.outline_min_block.unwrap_or(default.min_block),
+        }
+    });
     let options = MojoOptions {
         class_name: Some(args.class_name),
         real_type: if args.double {
@@ -50,8 +78,10 @@ fn main() -> ExitCode {
         } else {
             MojoRealType::Float32
         },
-        batch: true,
+        batch: !args.scalar,
         batch_registers: !args.no_registers,
+        outline,
+        packed_tables: !args.table_literals,
         ..MojoOptions::default()
     };
     match Compiler::new().compile_file_to_mojo(&args.input, &args.include, &options) {

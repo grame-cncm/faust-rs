@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! FIR construction, matching, verification ([`checker`]), and FIR-to-FIR
-//! passes ([`inliner`], [`subcontainer`], [`schedule`], [`batch`]); [`helpers`] holds
+//! passes ([`inliner`], [`subcontainer`], [`schedule`], [`batch`], [`outline`]); [`helpers`] holds
 //! loop-construction helpers whose source lives in `crates/fir/helpers.rs`.
 //!
 //! # Source provenance (C++)
@@ -39,6 +39,7 @@ pub mod checker;
 #[path = "../helpers.rs"]
 pub mod helpers;
 pub mod inliner;
+pub mod outline;
 pub mod schedule;
 
 use std::collections::HashSet;

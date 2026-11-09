@@ -79,7 +79,7 @@ updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 and §2.4b updated the same day when pattern matchers became persistent, and
 §2.4b again for the size of its entries and the pinning of its stores; §2.24
 was added and §2.11 and §2.20 updated on 2026-10-16 too; §2.27 was added on
-2026-10-24; §2.30 on 2026-11-09.
+2026-10-24; §2.30 and §2.31 on 2026-11-09.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -2231,6 +2231,64 @@ Validation:
   owner; content, size and element type keep tables apart);
 - the base-vs-new codegen differential over `tests/` and `examples/`
   (scalar, `-vec`, `-double`).
+
+### 2.31 `fir`: candidate block contents of the outlining pass, and its rewrite tables
+
+Status: implemented 2026-11-09 (plan
+`porting/mojo-large-program-outlining-plan-2026-11-09-en.md`).
+
+Location: `crates/fir/src/outline/mod.rs`, `Pass::contents` (filled by
+`Pass::content_of`); the rewrite tables `Rewriter::memo` (same file) and, in
+the checker `crates/fir/src/outline/check.rs`, `Checker::inlined` and
+`Substitute::memo`.
+
+Cache:
+- `contents: HashMap<FirId, Content>`: for a candidate `then`/`else` block,
+  its free local variables with the kinds of access the block makes to each
+  (load, store, index-0 table access, anything else), or the reason it can
+  never be outlined (a `Return`, a declaration shadowing a free name, a call
+  to an outlined function, ...). What depends on the position — the types and
+  kinds of the visible variables — is resolved against the scope at each use
+  (`resolve`), outside the memo;
+- `Rewriter::memo`: one block's rewrite into its function's body (free
+  variables turned into parameter accesses), per block;
+- `Checker::inlined`: every node of the output with the calls to outlined
+  functions inlined back, for the whole check; `Substitute::memo`: one
+  inlined body with its parameters turned back into the caller's variables,
+  per call.
+
+Key (rule 6): a block's content depends on its subtree only, which its
+hash-consed id names, and on the names of the outlined functions. A name is
+fresh when created (never declared in the module), so a call to it exists only
+in blocks built after it, whose ids are new: an id cached earlier cannot hold
+one. The rewrite tables are keyed by the node being rewritten, under a fixed
+substitution for their lifetime.
+
+Lifetime: one pass invocation (`contents`), one block (`Rewriter::memo`), one
+check (`inlined`), one call (`Substitute::memo`). Nothing to invalidate.
+
+Cost of the key (rule 7): an id, and the clone of a small map at each hit
+(the free variables of a block: 15 to 110 on the coopiano voice).
+
+Measured (rule 5): on the coopiano voice (`fit/voice.dsp`, 51 blocks outlined
+from `compute`), 2,475 hits for 99 misses (96 %); the 99 misses cost 0.09 s
+together, so the walks the memo avoids would cost about 2.2 s, against a
+10 s compilation. The rewrite tables follow the rule of every FIR rewrite of
+the workspace (`promote_state`, `layout_voices`): a hash-consed DAG rewritten
+without them is walked as a tree.
+
+Rejected first: re-walking the method after each outlining (the pass as first
+written, largest candidate first, one at a time) cost 1 s on the voice; the
+candidates are now collected once per method with their sizes and selected in
+one pass, with the same selection (output identical on both coopiano voices).
+
+Validation:
+- `crates/fir/src/outline/tests.rs` (the pass, its refusals, its checker and
+  the seven rejecting mutations);
+- `crates/compiler/tests/fir_outline_corpus.rs` (every hermetic program of
+  `tests/corpus` and `tests/impulse-tests/dsp`, and inline `ondemand`
+  programs, with every block outlined; checker and FIR verifier);
+- the base-vs-new codegen differential over `tests/` and `examples/`.
 
 ## 3. Planned Additions
 
