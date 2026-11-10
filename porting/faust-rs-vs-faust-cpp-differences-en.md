@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-11-09 (Mojo large methods outlined, long straight-line blocks cut into runs, large tables packed: DIFF-BACK-010 extended); 2026-11-08 (Mojo batch `compute` state promoted to locals: DIFF-BACK-010 extension updated); 2026-11-07 (`-lang mojo` from grame-cncm/faust#1293: DIFF-BACK-010 recorded, then extended with the Rust-only batch contract `MojoOptions::batch`); 2026-11-02 (guidance for an evaluation cycle through a delay, an unresolved import and the operator a composition mismatch may have wanted: added to DIFF-BEH-005 and DIFF-BEH-018); 2026-11-01 (guidance for a section of `-`, a name of an imported file and a size beside a `waveform`: added to DIFF-BEH-005); 2026-10-31 (syntax errors in the tokens of the language: DIFF-CLI-016 recorded); 2026-10-30 (`--color` for human diagnostics, `faust-rs` and `faustprobe`: DIFF-CLI-015 recorded); 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-11-10 (generated tables shared across clock domains also when their generator has state: DIFF-BEH-029 corrected); 2026-11-09 (Mojo large methods outlined, long straight-line blocks cut into runs, large tables packed: DIFF-BACK-010 extended); 2026-11-08 (Mojo batch `compute` state promoted to locals: DIFF-BACK-010 extension updated); 2026-11-07 (`-lang mojo` from grame-cncm/faust#1293: DIFF-BACK-010 recorded, then extended with the Rust-only batch contract `MojoOptions::batch`); 2026-11-02 (guidance for an evaluation cycle through a delay, an unresolved import and the operator a composition mismatch may have wanted: added to DIFF-BEH-005 and DIFF-BEH-018); 2026-11-01 (guidance for a section of `-`, a name of an imported file and a size beside a `waveform`: added to DIFF-BEH-005); 2026-10-31 (syntax errors in the tokens of the language: DIFF-CLI-016 recorded); 2026-10-30 (`--color` for human diagnostics, `faust-rs` and `faustprobe`: DIFF-CLI-015 recorded); 2026-10-26 (C/C++ helpers guarded as in C++, `faust_wrap_*` under `FAUST_INT_WRAP` with the C++ ones as upstream's, C `faustmaxi`/`faustmini` under `FAUSTMAXI`: DIFF-BEH-028 recorded; one bargraph per bargraph signal: DIFF-BEH-027 recorded, the merged meters of `vumeter.dsp` an unrecorded difference closed; control characters of string literals: C++ `Symbol::get` turns every newline, tab and carriage return of a label, tooltip, `declare` value or foreign-function string into a space, and the parser now does the same, an unrecorded difference closed, test `crates/compiler/tests/string_literal_control_chars.rs`; `-uim` user-interface macros ported for C and C++: DIFF-CLI-014 recorded); 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified; the c, cpp, rust and cmajor banners copy upstream's `author`/`copyright`/`license`/`name`/`version` keys and the rust `metadata()` replays the compilation metadata, unrecorded differences closed); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1253,7 +1253,7 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
 ### DIFF-BEH-029 — one generated table read from several clock domains is generated once
 
 - Status: `adapted` (generated code; outputs unchanged), implemented
-  2026-11-09.
+  2026-11-09, extended to generators with state on 2026-11-10.
 - Propagation annotates the first element of a `waveform` written in a clock
   domain with that domain (C++ `boxWaveform`), and the stateful primitives of
   any table generator written there. The same `rdtable` read from two
@@ -1268,7 +1268,13 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   `ensure_readonly_table` in the scalar lowerer and in the checked vector
   lowerer). Both fill paths drop those annotations anyway (the sub-module is
   prepared with `drop_clock_annotations`, the `const` interpreter likewise),
-  so the content is the same. The table is filled once in `classInit` and read
+  so the content is the same. The generators are also compared modulo the
+  names of the recursion variables they bind: a generator with state (the
+  `ba.time` of the table of `os.osc`) is one recursion group per domain, each
+  with its own variable, and a generator is compiled from its payload alone.
+  As first implemented (2026-11-09) the comparison kept those names, so only
+  waveforms and stateless generators were shared: `os.osc` read in two
+  `ondemand` bodies still gave two tables. The table is filled once in `classInit` and read
   by every domain, each in its own fire time. The signal forest is not
   rewritten, so nothing else changes, and a writable table (`rwtable`), being
   per-instance state with its own write port, is never shared. The rule holds
@@ -1289,12 +1295,21 @@ to `FaustInstallPaths`. Evidence: `crates/compiler/tests/cli_architecture_paths.
   - Programs without such a duplicated table are byte-identical (base-vs-new
     codegen differential over `tests/` and `examples/`, scalar, `-vec`,
     `-double`).
+  - With stateful generators shared (2026-11-10), eight impulse programs that
+    read one `os.osc` table from several `ondemand` bodies
+    (`ondemand_05`, `07`, `08`, `10`, `15`, `16`, `17`, `18`) emit 1
+    sub-container where C++ and the first implementation emit 2 or 3; their
+    impulse responses still match the C++ reference on every lane run
+    (`interp`, `cpp`, `c`, `cranelift`, `rust`, `wasm`, and `-vec -lv 0` for
+    `interp` and `cpp`).
 - Evidence: `crates/compiler/tests/ondemand_table_sharing.rs` (one sub-module
   on the C++, C, Rust, Julia, Mojo and Cmajor backends, one wasm data segment,
   `-vec` and const modes, different contents and writable tables kept apart,
   per-domain reads checked sample by sample in the interpreter, scalar and
-  `-vec`, `opt_level` 0 and max), the unit tests of `table_content.rs`, and the
-  [journal entry](journal/2026-11-09.md).
+  `-vec`, `opt_level` 0 and max; the same for a generator with state read from
+  three domains), the unit tests of `table_content.rs`, and the journal entries
+  of [2026-11-09](journal/2026-11-09.md) and
+  [2026-11-10](journal/2026-11-10.md).
 
 ## 6. Additional backends and delivery forms
 

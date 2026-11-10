@@ -14,9 +14,14 @@
 //! it. Rust-only: the C++ reference keeps one table per domain (`DIFF-BEH-029`
 //! in `porting/faust-rs-vs-faust-cpp-differences-en.md`).
 //!
+//! A generator with state (`ba.time` in the table of `os.osc`) is one
+//! recursion group per domain, each with a variable of its own: the content is
+//! also compared modulo the names of the variables a generator binds, so that
+//! table is shared like a waveform.
+//!
 //! The structural tests pin the count on every text backend with tables and on
 //! the wasm data segments; the negative controls pin what must *not* merge
-//! (different content, writable tables); the execution test checks the shared
+//! (different content, writable tables); the execution tests check the shared
 //! table still gives each domain its own reads.
 
 use std::io::Cursor;
@@ -65,37 +70,42 @@ fn cpp(source: &str) -> String {
         .expect("C++ codegen")
 }
 
-#[test]
-fn one_table_read_from_two_domains_is_one_sub_module_on_every_text_backend() {
+/// `source` on the six text backends that have tables.
+fn text_backends(source: &str) -> [(&'static str, String); 6] {
     let c = Compiler::new();
-    let outputs = [
-        ("cpp", cpp(SHARED)),
+    [
+        ("cpp", cpp(source)),
         (
             "c",
-            c.compile_source_to_c("shared", SHARED, &COptions::default())
+            c.compile_source_to_c("shared", source, &COptions::default())
                 .expect("C codegen"),
         ),
         (
             "rust",
-            c.compile_source_to_rust("shared", SHARED, &RustOptions::default())
+            c.compile_source_to_rust("shared", source, &RustOptions::default())
                 .expect("Rust codegen"),
         ),
         (
             "julia",
-            c.compile_source_to_julia("shared", SHARED, &JuliaOptions::default())
+            c.compile_source_to_julia("shared", source, &JuliaOptions::default())
                 .expect("Julia codegen"),
         ),
         (
             "mojo",
-            c.compile_source_to_mojo("shared", SHARED, &MojoOptions::default())
+            c.compile_source_to_mojo("shared", source, &MojoOptions::default())
                 .expect("Mojo codegen"),
         ),
         (
             "cmajor",
-            c.compile_source_to_cmajor("shared", SHARED, &CmajorOptions::default())
+            c.compile_source_to_cmajor("shared", source, &CmajorOptions::default())
                 .expect("Cmajor codegen"),
         ),
-    ];
+    ]
+}
+
+#[test]
+fn one_table_read_from_two_domains_is_one_sub_module_on_every_text_backend() {
+    let outputs = text_backends(SHARED);
     for (lang, text) in &outputs {
         assert_eq!(
             sub_modules(text),
@@ -191,10 +201,14 @@ fn the_timed_program_shares_its_table() {
     assert_eq!(sub_modules(&cpp(TIMED)), 1);
 }
 
-/// Numeric only, so it holds with and without the sharing: the output is the
-/// same, only the number of copies of the table changes.
-#[test]
-fn each_domain_reads_the_shared_table_in_its_own_fire_time() {
+/// `frames` frames of each of the `outputs` outputs of `source` through the
+/// interpreter, in scalar and vector mode, unoptimized and fully optimized.
+fn for_each_interp_run(
+    source: &str,
+    outputs: usize,
+    frames: usize,
+    mut check: impl FnMut(&str, &[Vec<f32>]),
+) {
     let modes = [
         ComputeMode::Scalar,
         ComputeMode::Vector {
@@ -208,7 +222,7 @@ fn each_domain_reads_the_shared_table_in_its_own_fire_time() {
                 .with_compute_mode(mode)
                 .compile_source_to_interp(
                     "timed",
-                    TIMED,
+                    source,
                     &InterpOptions {
                         opt_level,
                         ..Default::default()
@@ -218,26 +232,107 @@ fn each_domain_reads_the_shared_table_in_its_own_fire_time() {
             let mut factory = read_fbc::<f32>(&mut Cursor::new(fbc)).expect("read FBC");
             let mut instance = FbcDspInstance::new(&mut factory);
             instance.init(44100);
-            let frames = 300;
-            let mut left = vec![f32::NAN; frames];
-            let mut right = vec![f32::NAN; frames];
+            let mut channels = vec![vec![f32::NAN; frames]; outputs];
+            let mut slices: Vec<&mut [f32]> = channels.iter_mut().map(Vec::as_mut_slice).collect();
             instance
                 .try_compute(
                     i32::try_from(frames).expect("frame count"),
                     &[],
-                    &mut [left.as_mut_slice(), right.as_mut_slice()],
+                    &mut slices,
                 )
                 .expect("compute");
-            for t in 0..frames {
-                let (l, r) = expected(t);
-                assert_eq!(
-                    (left[t].to_bits(), right[t].to_bits()),
-                    (l.to_bits(), r.to_bits()),
-                    "{mode:?} opt={opt_level} sample {t}: got ({}, {}), expected ({l}, {r})",
-                    left[t],
-                    right[t]
-                );
-            }
+            check(&format!("{mode:?} opt={opt_level}"), &channels);
         }
     }
+}
+
+/// Numeric only, so it holds with and without the sharing: the output is the
+/// same, only the number of copies of the table changes.
+#[test]
+fn each_domain_reads_the_shared_table_in_its_own_fire_time() {
+    for_each_interp_run(TIMED, 2, 300, |run, out| {
+        for (t, (left, right)) in out[0].iter().zip(&out[1]).enumerate() {
+            let (l, r) = expected(t);
+            assert_eq!(
+                (left.to_bits(), right.to_bits()),
+                (l.to_bits(), r.to_bits()),
+                "{run} sample {t}: got ({left}, {right}), expected ({l}, {r})"
+            );
+        }
+    });
+}
+
+/// A generator with state: `(+(3) ~ _) - 3` fills the table with 0, 3, 6, ...
+/// as `ba.time` drives the table of `os.osc`. Its recursion is one group per
+/// domain that reads the table, each with its own variable. Body 1 fires on
+/// even samples and reads `ramp[n % 7]`, body 2 every third sample and reads
+/// `ramp[n % 5 + 1]`, the top level reads `ramp[n % 8]` at every sample.
+const RECURSIVE: &str = "ramp = (+(3) ~ _) - 3;\n\
+rd(i) = rdtable(8, ramp, int(i));\n\
+n = (+(1) ~ _) - 1;\n\
+process = ((n % 2 == 0, n % 7) : ondemand(rd)), \
+((n % 3 == 0, n % 5) : ondemand(\\(v).(rd(v + 1)))), \
+rd(n % 8);\n";
+
+#[test]
+fn a_stateful_generator_read_from_three_domains_is_one_sub_module() {
+    for (lang, text) in &text_backends(RECURSIVE) {
+        assert_eq!(
+            sub_modules(text),
+            1,
+            "{lang}: the generator's recursion is one group per domain, the table one\n{text}"
+        );
+    }
+    // A real generator of the same shape, the one of `os.osc`.
+    let sine = "t = (+(1) ~ _) - 1;\n\
+osc(i) = rdtable(64, sin(2 * 3.14159265 * float(t) / 64), int(i) % 64);\n\
+n = (+(1) ~ _) - 1;\n\
+process = ((n % 2 == 0, n) : ondemand(osc)), ((n % 3 == 0, n) : ondemand(\\(v).(osc(v + 1)))), osc(n);\n";
+    assert_eq!(sub_modules(&cpp(sine)), 1);
+    for mode in [
+        ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 0,
+        },
+        ComputeMode::Scalar,
+    ] {
+        let text = Compiler::new()
+            .with_compute_mode(mode)
+            .with_table_init_mode(TableInitMode::Const)
+            .compile_source_to_cpp("shared", RECURSIVE, &CppOptions::default())
+            .expect("const C++ codegen");
+        assert_eq!(
+            text.matches("static int itbl").count(),
+            1,
+            "{mode:?}\n{text}"
+        );
+    }
+}
+
+#[test]
+fn stateful_generators_of_different_content_stay_distinct() {
+    let source = "by(k) = (+(k) ~ _) - k;\n\
+x = hslider(\"x\", 0, 0, 3, 1);\n\
+cx = x != x';\n\
+process = ((cx, x) : ondemand(\\(i).(rdtable(8, by(3), int(i))))) \
++ ((cx, x) : ondemand(\\(i).(rdtable(8, by(5), int(i)))));\n";
+    let text = cpp(source);
+    assert_eq!(sub_modules(&text), 2, "{text}");
+}
+
+/// Numeric only, as above: the samples are the same with one table or three.
+#[test]
+fn each_domain_reads_the_shared_stateful_table_in_its_own_fire_time() {
+    for_each_interp_run(RECURSIVE, 3, 300, |run, out| {
+        let samples = out[0].iter().zip(&out[1]).zip(&out[2]).enumerate();
+        for (t, ((&first, &second), &top)) in samples {
+            let even = t - t % 2;
+            let third = t - t % 3;
+            let want = [3 * (even % 7), 3 * (third % 5 + 1), 3 * (t % 8)];
+            let got = [first, second, top];
+            #[allow(clippy::cast_precision_loss)]
+            let want = want.map(|v| v as f32);
+            assert_eq!(got, want, "{run} sample {t}");
+        }
+    });
 }

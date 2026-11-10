@@ -79,7 +79,8 @@ updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 and §2.4b updated the same day when pattern matchers became persistent, and
 §2.4b again for the size of its entries and the pinning of its stores; §2.24
 was added and §2.11 and §2.20 updated on 2026-10-16 too; §2.27 was added on
-2026-10-24; §2.30 and §2.31 on 2026-11-09.
+2026-10-24; §2.30 and §2.31 on 2026-11-09; §2.30 was re-keyed on 2026-11-10
+(bound recursion variables).
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -2166,9 +2167,10 @@ Validation:
   factor;
 - the base-vs-new codegen differential over `tests/` and `examples/`.
 
-### 2.30 `transform`: read-only table declarations keyed by content modulo clock annotations
+### 2.30 `transform`: read-only table declarations keyed by content modulo clock annotations and bound recursion variables
 
-Status: implemented 2026-11-09 (`DIFF-BEH-029`).
+Status: implemented 2026-11-09 (`DIFF-BEH-029`); re-keyed 2026-11-10, when the
+key also forgot the names of the recursion variables a generator binds (below).
 
 Location: `crates/transform/src/signal_fir/table_content.rs`,
 `TableContentKeys`, held by the scalar lowerer
@@ -2177,14 +2179,19 @@ Location: `crates/transform/src/signal_fir/table_content.rs`,
 `vector/lower/signal.rs`, consulted by its `ensure_readonly_table`).
 
 Cache:
-- `owners: HashMap<(size, element kind, declocked generator), SigId>`: the
+- `owners: HashMap<(size, element kind, canonical generator), SigId>`: the
   first read-only table node declared with that content; the lowerers already
   memoize declarations per table node (`ui.waveform_tables`,
   `readonly_tables`), and a later node of the same content is registered under
   the owner's declaration;
 - `copies: HashMap<SigId, SigId>` with a private `TreeArena`: each generator
   node copied once, without its `Clocked(env, x)` wrappers. The private arena's
-  hash-consing decides equality exactly, with no fingerprint and no collision.
+  hash-consing decides equality exactly, with no fingerprint and no collision;
+- `binders: HashMap<SigId, bool>` (2026-11-10): whether a recursion binder
+  `SYMREC(var, body)` lies under a node of the private arena. A copy without
+  one is its own canonical form; one with binders is rebuilt with the
+  variables it binds renamed `rec#0`, `rec#1`, ... in order of first visit
+  (`canonical_recursions`, one memoized walk per generator).
 
 Key (rule 6): a table's content depends on its size, its element type and its
 generator without the clock annotations, which both fill paths drop before
@@ -2193,6 +2200,20 @@ computing it (the sub-module is prepared with `drop_clock_annotations`, the
 of those annotations, which the content does not depend on: that key was
 finer than its value and duplicated the table once per domain. Writable tables
 are not keyed: their write port is per-instance state.
+
+The key of 2026-11-09 was still finer than its value for a generator with
+state. The prepared forest is in symbolic form, where each recursion group has
+a variable of its own, and the domain copies of one generator are as many
+groups: `ba.time` in the table of `os.osc` is `SYMREC(W1, …)` in one `ondemand`
+body and `SYMREC(W2, …)` in the next, so the declocked copies differed by that
+name and the table of the most common generator was never shared (found on
+2026-11-10 by checking the commit against `os.osc` in two bodies: three
+`mydspSIG` classes). A generator is compiled from a clone of its payload alone,
+so the name of a variable bound inside it names nothing the content depends
+on, and the key now renames those variables. The renaming is injective and
+leaves alone a reference to a group bound outside the generator, whose name is
+the only thing that tells it from a reference to another group: two generators
+with one canonical form differ by the names of their own groups only.
 
 Lifetime: one compiled module (one lowerer); a nested generator sub-module has
 its own. Nothing to invalidate: the prepared arena is immutable during
@@ -2203,7 +2224,9 @@ copied once across tables. The domain copies of a waveform share every element
 but the annotated first one, so the coopiano voice copies the elements of its
 admittance tables once and re-interns one 12001-child node per domain (one
 hash of its child list, against one compiled sub-module before); programs
-without tables pay nothing.
+without tables pay nothing. The binder test is memoized across tables the same
+way (one lookup per child of that node); a generator with a recursion is
+walked twice more, once for its bound variables and once to rename them.
 
 Measured (rule 5): the faust-coopiano voice, `cp.voice(60, v, gate)`, has 4
 distinct tables behind 73 read-only table nodes (two 12001-point admittance
@@ -2212,6 +2235,14 @@ table once): 73 sub-modules became 4, the C++ 18.5 MB → 4.35 MB, the Mojo
 batch output 16.9 MB → 6.06 MB, compiler peak memory 2.8 GB → 2.0 GB,
 compile time 9.9 s → 7.9 s. The compile-budget baskets are unchanged within
 noise (±5 %, hand-timed: the gate cannot run on the development Mac).
+
+Measured for the re-keying of 2026-11-10: `os.osc` read in two `ondemand`
+bodies and at the top level went from 3 sub-modules and tables to 1. Eight
+programs of `tests/impulse-tests/dsp` read one oscillator table from several
+domains (`ondemand_05`, `07`, `08`, `10`, `15`, `16`, `17`, `18`): 2 or 3
+sub-modules each became 1, their C++ 4 to 18 % smaller. The ten compile-budget
+programs, scalar and `-vec`, best of nine against the build before: ratios
+0.98 to 1.04 (hand-timed, as above).
 
 Rejected first: dropping the annotations inside the generator payloads in
 `signal_prepare` (a step 2.1c), so hash-consing would merge the table nodes.
@@ -2231,6 +2262,19 @@ Validation:
   owner; content, size and element type keep tables apart);
 - the base-vs-new codegen differential over `tests/` and `examples/`
   (scalar, `-vec`, `-double`).
+- Re-keying of 2026-11-10: unit tests of `table_content.rs` (groups differing
+  by their variable and domain share an owner; different contents, two groups
+  in another order and references to two outer groups stay apart; a group
+  inside a group; a generator without recursion untouched), four of which fail
+  with the renaming off; in `ondemand_table_sharing.rs`, a stateful generator
+  read from three domains is one sub-module on six text backends and one table
+  under `--table-init const`, two stateful generators of different content stay
+  two, and the three domains' reads are checked sample by sample in the
+  interpreter; base-vs-new differential over the 646 `.dsp` (C++ scalar,
+  `-double`, `-vec`): the eight programs above differ, every other output is
+  identical; those eight against the C++ reference on the `interp`,
+  `interp-vec0`, `cpp`, `cpp-vec0`, `c`, `cranelift`, `rust` and `wasm` impulse
+  lanes: 8/8 on each.
 
 ### 2.31 `fir`: candidate block contents of the outlining pass, and its rewrite tables
 
