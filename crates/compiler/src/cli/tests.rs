@@ -25,7 +25,8 @@ use super::diagnostics::{
     format_diagnostics_json_with_verbosity,
 };
 use super::runner::{
-    emit_wasm_output, render_directory_info, render_version_text, render_wast_output, version_line,
+    emit_wasm_output, json_companion_path, render_directory_info, render_version_text,
+    render_wast_output, version_line,
 };
 use super::validate::validate_memory_manager_options;
 
@@ -421,6 +422,28 @@ fn cli_parse_accepts_json_with_lang() {
     let cli = CliArgs::parse_from(["faust-rs", "--json", "--lang", "cpp", "foo.dsp"]);
     assert!(cli.dump_json);
     assert!(matches!(cli.lang, Some(CliLang::Cpp)));
+}
+
+#[test]
+fn json_companion_path_follows_cpp_make_draw_path() {
+    // C++ `subst("$0.json", makeDrawPath())`: the input as given plus
+    // `.json`, or `<-O dir>/<name>.dsp.json`; `-o` plays no part.
+    let mut cli = CliArgs::parse_from(["faust-rs", "--json", "-o", "x.cpp", "foo.dsp"]);
+    let input = Path::new("dir").join("foo.dsp");
+    assert_eq!(
+        json_companion_path(&cli, &input),
+        Path::new("dir").join("foo.dsp.json")
+    );
+    cli.output_dir = Some(PathBuf::from("out"));
+    assert_eq!(
+        json_companion_path(&cli, &input),
+        Path::new("out").join("foo.dsp.json")
+    );
+    let odd = Path::new("dir").join("bar.lib");
+    assert_eq!(
+        json_companion_path(&cli, &odd),
+        Path::new("out").join("bar.dsp.json")
+    );
 }
 
 #[test]

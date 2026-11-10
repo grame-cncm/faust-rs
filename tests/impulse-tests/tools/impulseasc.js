@@ -170,7 +170,9 @@ function compileAsc(faustRs, input, importDirs, tmpDir, doublePrecision, compile
   const ascPath = path.join(tmpDir, `${path.basename(input, ".dsp")}.ts`);
   const timeout = process.env.FAUST_RS_TIMEOUT_SECONDS || "600";
   if (!/^[1-9]\d*$/.test(timeout)) throw new Error(`invalid FAUST_RS_TIMEOUT_SECONDS: ${timeout}`);
-  const args = ["-lang", "asc", doublePrecision ? "-double" : "-single", "--timeout", timeout, "--json", input, "-o", ascPath];
+  // `-O tmpDir` keeps the `--json` companion (`<name>.dsp.json`, as C++
+  // `-json`) out of the corpus directory; `-o` is relative to it.
+  const args = ["-lang", "asc", doublePrecision ? "-double" : "-single", "--timeout", timeout, "--json", input, "-O", tmpDir, "-o", path.basename(ascPath)];
   args.push(...compilerArgs);
   for (const dir of importDirs) args.push("-I", dir);
   const result = spawnSync(faustRs, args, { encoding: "utf8" });
@@ -178,7 +180,7 @@ function compileAsc(faustRs, input, importDirs, tmpDir, doublePrecision, compile
     const detail = (result.stderr || result.stdout || "").trim();
     throw new Error(detail || `failed to compile ${input} to AssemblyScript`);
   }
-  return { ascPath, jsonPath: ascPath.replace(/\.ts$/i, ".json") };
+  return { ascPath, jsonPath: path.join(tmpDir, `${path.basename(input, ".dsp")}.dsp.json`) };
 }
 
 function wrapperSource(source, json, doublePrecision) {

@@ -458,7 +458,8 @@ fn cli_honors_name_double_output_json_and_vector_rejection() {
     std::fs::create_dir_all(&root).expect("create Cmajor CLI options directory");
     let dsp = root.join("options.dsp");
     let output_path = root.join("custom.cmajor");
-    let json_path = output_path.with_extension("json");
+    // `--json` writes `<input>.json` next to the input, as C++ `-json`.
+    let json_path = root.join("options.dsp.json");
     std::fs::write(&dsp, "process = _ * 0.5;\n").expect("write Cmajor CLI options source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_faust-rs"))

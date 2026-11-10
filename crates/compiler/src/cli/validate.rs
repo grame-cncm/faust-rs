@@ -129,6 +129,11 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         }
     }
 
+    // In source mode `--json` is not a mode: as C++ `-json`, it adds the JSON
+    // companion to whatever backend runs (C++ by default). Only the Rust-only
+    // `--fir-fixture` mode, which has no DSP input to name a companion after,
+    // keeps a standalone JSON emission selected by `--json` alone.
+    let json_is_mode = cli.dump_json && cli.fir_fixture.is_some();
     let backend_mode_count = [
         cli.golden,
         cli.parse,
@@ -145,19 +150,19 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         cli.check,
         cli.dump_interp,
         cli.dump_cranelift,
-        cli.dump_json,
+        json_is_mode,
         cli.lang.is_some(),
     ]
     .into_iter()
     .filter(|v| *v)
     .count();
 
-    // `--json` and `-e` do not emit backend code: one writes a description,
-    // the other Faust source. Pairing either with `-lang` is what a caller
-    // does when `-lang` lives in a fixed flag set, and C++ accepts it — the
-    // backend it selects is simply unused. Two *emitters* still conflict, so
-    // `-e --dump-cpp` is rejected as before.
-    let lang_is_inert = (cli.dump_json || cli.export_dsp) && cli.lang.is_some();
+    // `-e` (and the fixture-mode standalone `--json`) do not emit backend
+    // code: one writes Faust source, the other a description. Pairing either
+    // with `-lang` is what a caller does when `-lang` lives in a fixed flag
+    // set, and C++ accepts it — the backend it selects is simply unused. Two
+    // *emitters* still conflict, so `-e --dump-cpp` is rejected as before.
+    let lang_is_inert = (json_is_mode || cli.export_dsp) && cli.lang.is_some();
     let mode_count = if lang_is_inert && backend_mode_count == 2 {
         1
     } else {
@@ -166,6 +171,26 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
 
     if mode_count > 1 {
         print_global_usage_and_exit();
+    }
+    // These Rust-only modes generate no backend code, so a `--json` companion
+    // would be silently dropped; they rejected `--json` as a second mode before
+    // it became a companion, and still do. `-e` keeps accepting it, as C++.
+    if cli.dump_json
+        && !json_is_mode
+        && (cli.golden
+            || cli.parse
+            || cli.dump_box
+            || cli.dump_sig
+            || cli.dump_sig_dag
+            || cli.dump_sig_dag_prepared
+            || cli.dump_cpp_from_fbc
+            || cli.dump_fir_verify
+            || cli.check)
+    {
+        eprintln!(
+            "--json writes a JSON companion of generated code; it is not valid with --golden/--parse/--dump-box/--dump-sig*/--dump-cpp-from-fbc/--dump-fir-verify/--check"
+        );
+        std::process::exit(2);
     }
 
     if mode_count == 0 && cli.input.is_none() && cli.fir_fixture.is_none() {
@@ -234,7 +259,7 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         std::process::exit(2);
     }
     if (cli.dump_fir
-        || cli.dump_json
+        || json_is_mode
         || cli.dump_fir_verify
         || cli.check
         || matches!(

@@ -498,11 +498,14 @@ faust-rs -lang wasm foo.dsp -o foo.wasm
 # Generate textual WAT/WAST from the same WASM backend
 faust-rs -lang wast foo.dsp -o foo.wat
 
-# Emit strict Faust JSON description
-faust-rs --json foo.dsp
+# Emit C++ plus the strict Faust JSON description in foo.dsp.json (as C++ -json)
+faust-rs -json foo.dsp -o foo.cpp
 
-# Emit a backend artifact plus companion JSON next to the output path
-faust-rs -lang cpp --json foo.dsp -o foo.cpp
+# Any backend, with an architecture file, or under an output directory
+# (-O out writes out/foo.cpp and out/foo.dsp.json)
+faust-rs -lang c -json foo.dsp -o foo.c
+faust-rs -json -a max-msp/max-msp64.cpp foo.dsp -o foo.cpp
+faust-rs -json foo.dsp -O out -o foo.cpp
 
 # Generate block-diagram SVG files
 faust-rs -svg foo.dsp

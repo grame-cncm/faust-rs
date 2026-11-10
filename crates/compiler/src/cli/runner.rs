@@ -62,7 +62,7 @@ pub fn print_global_usage_and_exit() -> ! {
         "  cargo run -p compiler -- --dump-fir <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
     );
     eprintln!(
-        "  cargo run -p compiler -- --json <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast]"
+        "  cargo run -p compiler -- [-lang <lang>] --json <input.dsp> [-o <file>] [-O <dir>] [-I <dir> ...]  (code as usual, JSON to <input>.json)"
     );
     eprintln!(
         "  cargo run -p compiler -- --dump-fir-verify <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast] [--fir-verify-strict]"
@@ -356,8 +356,9 @@ pub fn cli_backend_id(lang: CliLang) -> &'static str {
     }
 }
 
-/// Returns the `-o` output path, required when `--json` accompanies `-lang` so
-/// the companion JSON has a destination.
+/// Returns the `-o` output path, required when `--json` accompanies `-lang` in
+/// the Rust-only `--fir-fixture` mode, which has no DSP input to name the
+/// companion after.
 ///
 /// Exits with status 2 if no output path was given.
 pub fn require_companion_output_path(cli: &CliArgs) -> &PathBuf {
@@ -365,6 +366,48 @@ pub fn require_companion_output_path(cli: &CliArgs) -> &PathBuf {
         eprintln!("--json used with -lang requires -o <file> so the companion JSON has a path");
         std::process::exit(2);
     })
+}
+
+/// Applies `-O <dir>` to the parsed command line, as C++ does.
+///
+/// C++ `global::processCmdline` stores `realpath(dir)` and fails on an invalid
+/// path; `openOutfile` then writes the `-o` file at `<dir>/<file>`. The
+/// directory is canonicalized here and kept in `cli.output_dir` for
+/// [`json_companion_path`], and `cli.output` is rewritten under it, so every
+/// backend branch keeps reading a single output path.
+pub(crate) fn resolve_output_dir(cli: &mut CliArgs) -> Result<(), String> {
+    let Some(dir) = cli.output_dir.as_ref() else {
+        return Ok(());
+    };
+    let resolved = std::fs::canonicalize(dir)
+        .map_err(|_| format!("ERROR : invalid directory path {}", dir.display()))?;
+    cli.output = cli.output.take().map(|output| resolved.join(output));
+    cli.output_dir = Some(resolved);
+    Ok(())
+}
+
+/// Path of the `--json` companion of a source-mode compilation.
+///
+/// Mirrors C++ `subst("$0.json", gGlobal->makeDrawPath())`
+/// (`CodeContainer::generateJSONFile`, `compiler/global.cpp`): without `-O`
+/// the input path as given plus `.json` (`foo.dsp` -> `foo.dsp.json`), under
+/// `-O <dir>` the file `<dir>/<name>.dsp.json`, `<name>` being the input file
+/// name without its extension (`fxName`). The `-o` file plays no part, so the
+/// companion is found at the same place whatever the backend.
+pub(crate) fn json_companion_path(cli: &CliArgs, input_path: &Path) -> PathBuf {
+    let mut path = match cli.output_dir.as_ref() {
+        Some(dir) => {
+            let name = input_path
+                .file_stem()
+                .unwrap_or(std::ffi::OsStr::new("faustfx"));
+            let mut file = name.to_owned();
+            file.push(".dsp");
+            dir.join(file).into_os_string()
+        }
+        None => input_path.as_os_str().to_owned(),
+    };
+    path.push(".json");
+    PathBuf::from(path)
 }
 
 /// Wraps generated backend code in a user-supplied architecture file.
@@ -626,8 +669,8 @@ pub fn compile_fixture_to_json_text(
     Ok(json.render())
 }
 
-/// Compiles `input_path` to a JSON description and writes it as a companion file
-/// alongside a textual backend's output (when `--json` is combined with `-lang`).
+/// Compiles `input_path` to a JSON description and writes it as the `--json`
+/// companion of a backend's output, at [`json_companion_path`].
 ///
 /// Tags the JSON `compile_options` with `backend_lang`, picks the import-aware or
 /// default pipeline depending on `-I` flags, and exits with status 1 (after
@@ -658,7 +701,7 @@ pub fn emit_cli_json_companion_for_backend(
     );
 
     match result {
-        Ok(json) => emit_json_companion_output(&json, require_companion_output_path(cli)),
+        Ok(json) => emit_output(&json, Some(&json_companion_path(cli, input_path))),
         Err(err) => report_pipeline_failure("JSON companion pipeline failed", &err, cli),
     }
 }
@@ -803,6 +846,10 @@ pub fn run_main() {
     // search order: the last -I first, as the C++ compiler inserts each at the
     // front of gImportDirList (global::processCmdline)
     cli.import_dir.reverse();
+    if let Err(error) = resolve_output_dir(&mut cli) {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
 
     if handle_early_exit_modes(&cli) {
         return;

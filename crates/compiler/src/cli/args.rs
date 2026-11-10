@@ -151,7 +151,11 @@ pub struct CliArgs {
     /// Compile through the experimental Cranelift backend and print a backend report.
     #[arg(long = "dump-cranelift", action = ArgAction::SetTrue)]
     pub dump_cranelift: bool,
-    /// Emit strict C++-style JSON description.
+    /// Also write the strict C++-style JSON description of the DSP, as C++
+    /// `-json`: the backend output (C++ by default) is produced as usual and
+    /// the JSON goes to `<input>.json` (`foo.dsp` -> `foo.dsp.json`), or to
+    /// `<dir>/<name>.dsp.json` under `-O <dir>`. Only the Rust-only
+    /// `--fir-fixture` mode keeps a standalone JSON emission.
     #[arg(long = "json", action = ArgAction::SetTrue)]
     pub dump_json: bool,
     /// Select backend language (Faust-style), e.g. `-lang cpp`.
@@ -197,6 +201,12 @@ pub struct CliArgs {
     /// Optional output file. When omitted, generated text is written to stdout.
     #[arg(short = 'o', long = "output")]
     pub output: Option<PathBuf>,
+    /// Output directory (`-O <dir>`, `--output-dir <dir>`), as C++ `-O`: the
+    /// `-o` file and the `--json` companion are written under it. The
+    /// directory must exist; it is resolved to an absolute path before use
+    /// (C++ `global::processCmdline` applies `realpath`).
+    #[arg(short = 'O', long = "output-dir")]
+    pub output_dir: Option<PathBuf>,
     /// Specify the DSP class name used instead of `mydsp` (`-cn <name>`,
     /// `--class-name <name>`).
     #[arg(long = "class-name")]
