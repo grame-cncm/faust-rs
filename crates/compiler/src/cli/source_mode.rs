@@ -858,6 +858,7 @@ pub(crate) fn run_source_mode(
             ui_macros: cli.user_interface_macros,
             outline: cli.outline.then_some(fir::outline::OutlinePolicy {
                 pointer_params: true,
+                promote_references: true,
                 ..fir::outline::OutlinePolicy::default()
             }),
             ..CppOptions::default()

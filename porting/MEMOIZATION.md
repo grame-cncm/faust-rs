@@ -2340,6 +2340,51 @@ Validation:
   programs, with every block outlined; checker and FIR verifier);
 - the base-vs-new codegen differential over `tests/` and `examples/`.
 
+### 2.32 `fir`: the reference promotion after outlining — rewrite tables and declaration counts
+
+Status: implemented 2026-11-10 (plan
+`porting/fir-outline-reference-promotion-plan-2026-11-10-en.md`).
+
+Location: `crates/fir/src/outline/promote.rs`, `Rewrite::memo`, the
+`has_declaration` memo of `declaration_counts`; in the checker
+`crates/fir/src/outline/promote_check.rs`, `Demote::memo`.
+
+Cache:
+- `Rewrite::memo`: one function body's rewrite (promoted references turned
+  into field accesses, their address arguments dropped), per function;
+- `has_declaration`: whether a subtree declares anything, per node, for one
+  count of the module's declarations: a subtree reached a second time (shared
+  by hash-consing) is counted again only when it declares something;
+- `Demote::memo`: one output body turned back into its source (fields into
+  locals or reference parameters), per function, cleared each time a field
+  becomes a local of the body being demoted (the same node then demotes
+  differently).
+
+Key (rule 6): the node, under a substitution fixed for the table's lifetime
+(the promoted set and the function's removed references); `has_declaration`
+depends on the subtree only.
+
+Lifetime: one function (`Rewrite::memo`, `Demote::memo`), one count
+(`has_declaration`). Nothing to invalidate.
+
+Cost of the key (rule 7): an id.
+
+Measured (rule 5): the rewrite tables follow the rule of every FIR rewrite of
+the workspace (2.31). Rejected first, measured on the 36 × 36 gated-delay
+program (1,296 outlined `ondemand` blocks, 23,328 promoted locals): counting
+declarations with a map of names per node, memoized, took most of a
+120 s timeout — a FIR block is a list, so every cell held the declarations
+of the rest of `compute` (quadratic); and filtering the candidates with one
+walk of the method each was quadratic too. With one walk of the module for the
+counts and one walk of each method for the uses, the promotion and its check
+take 1.2 s on that program (0.27 s at 18 × 18, linear).
+
+Validation:
+- `crates/fir/src/outline/tests.rs` (promotion, refusal, the three rejecting
+  mutations);
+- `crates/compiler/tests/cpp_outline.rs` (C++ corpus with promotion on, the
+  48 changed impulse programs bit-identical to their plain build).
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.

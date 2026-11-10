@@ -221,6 +221,7 @@ fn small() -> OutlinePolicy {
         min_block: 2,
         split_budget: DEFAULT_SPLIT_BUDGET,
         pointer_params: false,
+        promote_references: false,
     }
 }
 
@@ -228,6 +229,7 @@ fn small() -> OutlinePolicy {
 fn small_with_pointers() -> OutlinePolicy {
     OutlinePolicy {
         pointer_params: true,
+        promote_references: false,
         ..small()
     }
 }
@@ -365,6 +367,7 @@ fn a_block_under_the_minimum_stays_inline() {
         min_block: 13,
         split_budget: DEFAULT_SPLIT_BUDGET,
         pointer_params: false,
+        promote_references: false,
     };
     let (_, _, report) = outline_large_blocks(&src, root, policy).expect("outlining");
     // The second block (12 statements) is under the minimum; the first and
@@ -600,6 +603,186 @@ fn the_unmutated_pointer_producer_is_accepted() {
     check_outlining(&src, root, &dst, droot).expect("accepted");
 }
 
+// ----------------------------------------- references promoted to fields
+// (`OutlinePolicy::promote_references`, plan
+// `porting/fir-outline-reference-promotion-plan-2026-11-10-en.md`).
+
+fn promoting() -> OutlinePolicy {
+    OutlinePolicy {
+        promote_references: true,
+        ..small()
+    }
+}
+
+fn struct_names(s: &FirStore, root: FirId) -> Vec<String> {
+    let FirMatch::Module { dsp_struct, .. } = match_fir(s, root) else {
+        panic!("not a module");
+    };
+    let FirMatch::Block(items) = match_fir(s, dsp_struct) else {
+        panic!("struct is not a block");
+    };
+    items
+        .into_iter()
+        .filter_map(|i| match match_fir(s, i) {
+            FirMatch::DeclareVar { name, .. } => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_local_only_passed_by_address_becomes_a_field() {
+    let (src, root) = module(Shape::default());
+    let (dst, droot, report) = outline_large_blocks(&src, root, promoting()).expect("outlining");
+    // `iDone0` is declared in `compute` and used only by the first block
+    // (and its nested block); `fHeld` is also read by `compute`.
+    assert_eq!(report.promoted, ["iDone0"]);
+    assert_eq!(report.outlined[0].by_reference, ["fHeld"]);
+    assert!(report.outlined[2].by_reference.is_empty());
+    assert!(struct_names(&dst, droot).contains(&"iDone0".to_owned()));
+    let funs = functions(&dst, droot);
+    for (name, args, _) in &funs {
+        assert!(
+            args.iter().all(|a| a.name != "iDone0"),
+            "{name} still takes iDone0"
+        );
+    }
+    let report = verify_fir_module(&dst, droot);
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == crate::checker::Severity::Error),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn without_the_policy_nothing_is_promoted() {
+    let (src, root) = module(Shape::default());
+    let (_, _, report) = outline_large_blocks(&src, root, small()).expect("outlining");
+    assert!(report.promoted.is_empty());
+    assert_eq!(report.outlined[0].by_reference, ["fHeld", "iDone0"]);
+}
+
+/// `compute` with two locals `fA`, `fB` declared at its top and stored only
+/// inside one block of the sample loop, which also writes a field from them.
+fn two_locals_module() -> (FirStore, FirId) {
+    let mut s = FirStore::new();
+    let mut b = FirBuilder::new(&mut s);
+    let fields = [
+        b.declare_var("fHslider0", F32, AccessType::Struct, None),
+        b.declare_var("fRec0", F32, AccessType::Struct, None),
+    ];
+    let dsp_struct = b.block(&fields);
+    let zero_f = b.float32(0.0);
+    let zero_i = b.int32(0);
+    let gate = b.load_var("fHslider0", AccessType::Struct, F32);
+    let fa = b.load_var("fA", AccessType::Stack, F32);
+    let fb = b.load_var("fB", AccessType::Stack, F32);
+    let mut block = Vec::new();
+    for k in 0..6 {
+        let kf = b.float32(k as f32);
+        let v = b.binop(FirBinOp::Add, fa, kf, F32);
+        block.push(b.store_var("fA", AccessType::Stack, v));
+        let w = b.binop(FirBinOp::Mul, fb, kf, F32);
+        block.push(b.store_var("fB", AccessType::Stack, w));
+    }
+    let sum = b.binop(FirBinOp::Sub, fa, fb, F32);
+    block.push(b.store_var("fRec0", AccessType::Struct, sum));
+    let block = b.block(&block);
+    let cond = b.binop(FirBinOp::Ne, gate, zero_f, I32);
+    let body = [b.if_(cond, block, None)];
+    let body = b.block(&body);
+    let count = b.load_var("count", AccessType::FunArgs, I32);
+    let lp = b.simple_for_loop("i0", count, body, false);
+    let compute_body = [
+        b.declare_var("fA", F32, AccessType::Stack, Some(zero_f)),
+        b.declare_var("fB", F32, AccessType::Stack, Some(zero_f)),
+        lp,
+    ];
+    let _ = zero_i;
+    let compute_body = b.block(&compute_body);
+    let streams = ptr(ptr(FirType::FaustFloat));
+    let args = [
+        arg("dsp", ptr(FirType::Obj)),
+        arg("count", I32),
+        arg("inputs", streams.clone()),
+        arg("outputs", streams),
+    ];
+    let typ = FirType::Fun {
+        args: args.iter().map(|a| a.typ.clone()).collect(),
+        ret: Box::new(FirType::Void),
+    };
+    let compute = b.declare_fun("compute", typ, &args, Some(compute_body), false);
+    let functions = b.block(&[compute]);
+    let globals = b.block(&[]);
+    let statics = b.block(&[]);
+    let root = b.module(0, 0, "two", dsp_struct, globals, functions, statics, &[]);
+    (s, root)
+}
+
+#[test]
+fn two_locals_are_promoted_and_the_call_takes_no_reference() {
+    let (src, root) = two_locals_module();
+    let (dst, droot, report) = outline_large_blocks(&src, root, promoting()).expect("outlining");
+    assert_eq!(report.promoted, ["fA", "fB"]);
+    let funs = functions(&dst, droot);
+    let (_, args, _) = &funs[1];
+    let names: Vec<_> = args.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["dsp"]);
+}
+
+fn rejected_promotion(
+    mutation: Mutation,
+    (src, root): (FirStore, FirId),
+) -> super::promote_check::PromotionViolation {
+    let (out, oroot, report) =
+        outline_with(&src, root, small(), Mutation::None).expect("the producer runs");
+    let (dst, droot, _) = super::promote::promote_references(&out, oroot, &report, mutation)
+        .expect("something is promoted");
+    super::promote_check::check_promotion(&out, oroot, &dst, droot)
+        .map(|()| panic!("{mutation:?} should be rejected"))
+        .unwrap_err()
+}
+
+#[test]
+fn a_kept_declaration_is_rejected_by_declarations() {
+    assert!(matches!(
+        rejected_promotion(Mutation::PromoteKeepDeclaration, two_locals_module()),
+        super::promote_check::PromotionViolation::Declarations { .. }
+    ));
+}
+
+#[test]
+fn a_dropped_reset_is_rejected_by_demotion() {
+    assert!(matches!(
+        rejected_promotion(Mutation::PromoteDropReset, two_locals_module()),
+        super::promote_check::PromotionViolation::Demotion(_)
+    ));
+}
+
+#[test]
+fn swapped_fields_are_rejected_by_demotion() {
+    assert!(matches!(
+        rejected_promotion(Mutation::PromoteSwapFields, two_locals_module()),
+        super::promote_check::PromotionViolation::Demotion(_)
+    ));
+}
+
+#[test]
+fn the_unmutated_promotion_is_accepted() {
+    for (src, root) in [two_locals_module(), module(Shape::default())] {
+        let (out, oroot, report) =
+            outline_with(&src, root, small(), Mutation::None).expect("the producer runs");
+        let (dst, droot, _) =
+            super::promote::promote_references(&out, oroot, &report, Mutation::None)
+                .expect("something is promoted");
+        super::promote_check::check_promotion(&out, oroot, &dst, droot).expect("accepted");
+    }
+}
+
 // ------------------------------------------------------------- phase 2
 // (plan §3.4): a long straight-line sample loop body cut into runs.
 
@@ -687,6 +870,7 @@ fn splitting() -> OutlinePolicy {
         min_block: 2,
         split_budget: 20,
         pointer_params: false,
+        promote_references: false,
     }
 }
 

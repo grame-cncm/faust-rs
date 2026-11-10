@@ -42,6 +42,8 @@
 mod tests;
 
 pub mod check;
+mod promote;
+pub mod promote_check;
 mod split;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -89,6 +91,13 @@ pub struct OutlinePolicy {
     /// leaves this off; the C++ backend turns it on (plan
     /// `porting/cpp-outlining-plan-2026-11-10-en.md`).
     pub pointer_params: bool,
+    /// After outlining, turn a local of a DSP method that the method only
+    /// declares and passes by address to its outlined functions into a
+    /// struct field (`promote.rs`, plan
+    /// `porting/fir-outline-reference-promotion-plan-2026-11-10-en.md`):
+    /// the C++ compiler no longer carries thousands of address-taken locals
+    /// across the sample loop. Off for Mojo; on for the C++ CLI.
+    pub promote_references: bool,
 }
 
 impl Default for OutlinePolicy {
@@ -98,6 +107,7 @@ impl Default for OutlinePolicy {
             min_block: DEFAULT_MIN_BLOCK,
             split_budget: DEFAULT_SPLIT_BUDGET,
             pointer_params: false,
+            promote_references: false,
         }
     }
 }
@@ -135,6 +145,10 @@ pub struct OutlineReport {
     pub outlined: Vec<OutlinedFunction>,
     /// The refused candidates, each once.
     pub refused: Vec<RefusedBlock>,
+    /// The locals promoted to struct fields
+    /// ([`OutlinePolicy::promote_references`]), in struct order. They no
+    /// longer appear in any `by_reference`.
+    pub promoted: Vec<String>,
 }
 
 /// Why [`outline_large_blocks`] refused a module.
@@ -143,7 +157,8 @@ pub enum OutlineError {
     /// The root is not a module.
     NotAModule,
     /// The output was rejected by the independent checker
-    /// ([`check::check_outlining`]); an internal error of the pass.
+    /// ([`check::check_outlining`] or [`promote_check::check_promotion`]);
+    /// an internal error of the pass.
     Rejected(String),
 }
 
@@ -175,7 +190,36 @@ pub fn outline_large_blocks(
         check::check_outlining(src, module, &store, root)
             .map_err(|v| OutlineError::Rejected(v.to_string()))?;
     }
+    if policy.promote_references {
+        return promote_checked(store, root, report, Mutation::None);
+    }
     Ok((store, root, report))
+}
+
+/// The promotion of `root` (an outlined module) and its checker, or the
+/// module unchanged when nothing is promoted.
+pub(crate) fn promote_checked(
+    store: FirStore,
+    root: FirId,
+    mut report: OutlineReport,
+    mutation: Mutation,
+) -> Result<(FirStore, FirId, OutlineReport), OutlineError> {
+    if report.outlined.is_empty() {
+        return Ok((store, root, report));
+    }
+    let Some((pstore, proot, promoted)) =
+        tlib::on_compile_stack(|| promote::promote_references(&store, root, &report, mutation))
+    else {
+        return Ok((store, root, report));
+    };
+    promote_check::check_promotion(&store, root, &pstore, proot)
+        .map_err(|v| OutlineError::Rejected(v.to_string()))?;
+    let gone: HashSet<&String> = promoted.iter().collect();
+    for f in &mut report.outlined {
+        f.by_reference.retain(|n| !gone.contains(n));
+    }
+    report.promoted = promoted;
+    Ok((pstore, proot, report))
 }
 
 /// Deliberate defects of the producer, one per rejecting test of the checker
@@ -209,6 +253,14 @@ pub(crate) enum Mutation {
     /// The first pointer parameter is stored into at the head of its
     /// function.
     PointerStore,
+    /// The first promoted local keeps its declaration: the field is never
+    /// set.
+    PromoteKeepDeclaration,
+    /// The first promoted local's declaration is dropped, with no store.
+    PromoteDropReset,
+    /// Two promoted fields are swapped in the first function that received
+    /// both.
+    PromoteSwapFields,
 }
 
 /// The producer without its checker.

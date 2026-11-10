@@ -1572,6 +1572,7 @@ enum InitStatus
 enum OutlineError
 enum OutlineViolation
 enum PromoteError
+enum PromotionViolation
 enum Severity
 enum SliderType
 enum SubModuleStatePolicy

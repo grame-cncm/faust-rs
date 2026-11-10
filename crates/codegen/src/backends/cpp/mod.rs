@@ -27,8 +27,9 @@
 //! where the block was, so that the C++ compiler, whose optimization time
 //! grows much faster than linearly with a function's size, sees many small
 //! functions instead of one huge `compute`. A local the block stores into is
-//! passed as `T* RESTRICT` (`&x` at the call, `x[0]` inside), a local it only
-//! reads by value, a channel pointer by value without `RESTRICT`, a spill
+//! passed as `T* RESTRICT` (`&x` at the call, `x[0]` inside), or becomes a
+//! member when the policy promotes it (a local its method only declares and
+//! passes to outlined methods), a local it only reads by value, a channel pointer by value without `RESTRICT`, a spill
 //! array (phase 2 of the pass) as an array; struct state is reached through
 //! `this` as in every method. C++ Faust has no counterpart; the option is off
 //! by default, and a program under the budget is emitted unchanged (plan
@@ -134,9 +135,11 @@ pub struct CppOptions {
     /// Outline the large blocks of the DSP methods into methods of their own
     /// (`fir::outline`, `--outline`), see the module documentation. C++
     /// prints a pointer parameter, so the CLI sets
-    /// [`fir::outline::OutlinePolicy::pointer_params`]: the `ondemand` blocks
-    /// of `compute` read and write the channel pointers. `None`, the default,
-    /// keeps every method whole, as C++ Faust does.
+    /// [`fir::outline::OutlinePolicy::pointer_params`] (the `ondemand` blocks
+    /// of `compute` read and write the channel pointers) and
+    /// [`fir::outline::OutlinePolicy::promote_references`] (a local only
+    /// passed by address to outlined methods becomes a member). `None`, the
+    /// default, keeps every method whole, as C++ Faust does.
     pub outline: Option<fir::outline::OutlinePolicy>,
 }
 

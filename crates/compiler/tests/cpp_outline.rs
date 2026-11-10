@@ -31,6 +31,7 @@ const EVERY_BLOCK: OutlinePolicy = OutlinePolicy {
     min_block: 1,
     split_budget: usize::MAX,
     pointer_params: true,
+    promote_references: true,
 };
 
 /// Phase 2 too: every block over 8 statements cut into runs of at most 8.
@@ -39,12 +40,15 @@ const EVERY_RUN: OutlinePolicy = OutlinePolicy {
     min_block: 1,
     split_budget: 8,
     pointer_params: true,
+    promote_references: true,
 };
 
-/// The C++ policy of the CLI (`--outline`).
+/// The C++ policy of the CLI (`--outline`): pointers by value, references
+/// promoted to fields.
 fn cli_policy() -> OutlinePolicy {
     OutlinePolicy {
         pointer_params: true,
+        promote_references: true,
         ..OutlinePolicy::default()
     }
 }
@@ -125,7 +129,11 @@ fn a_local_stored_into_is_passed_by_address_and_restricted() {
 f = hslider("f", 1000, 20, 20000, 1);
 c = cos(f * 0.0001) : sqrt : log;
 process = (gate, _) : ondemand(*(c) : + ~ *(0.5));"#;
-    let text = cpp("refs", source, "mydsp", Some(EVERY_BLOCK)).expect("C++");
+    let without_promotion = OutlinePolicy {
+        promote_references: false,
+        ..EVERY_BLOCK
+    };
+    let text = cpp("refs", source, "mydsp", Some(without_promotion)).expect("C++");
     let has_restricted = text
         .lines()
         .any(|l| l.trim_start().starts_with("void computeOutline") && l.contains("* RESTRICT "));
@@ -135,6 +143,34 @@ process = (gate, _) : ondemand(*(c) : + ~ *(0.5));"#;
     assert!(
         has_restricted && has_address,
         "no local passed by address:\n{text}"
+    );
+}
+
+#[test]
+fn a_local_only_passed_to_its_block_becomes_a_member() {
+    // As above, with references promoted (the CLI policy): the block-rate
+    // value and its flag are members reset at the head of `compute`, and the
+    // call passes no address.
+    let source = r#"gate = checkbox("gate");
+f = hslider("f", 1000, 20, 20000, 1);
+c = cos(f * 0.0001) : sqrt : log;
+process = (gate, _) : ondemand(*(c) : + ~ *(0.5));"#;
+    let text = cpp("refs", source, "mydsp", Some(EVERY_BLOCK)).expect("C++");
+    for member in ["    float fSlowOD0;", "    int iSlowODDone0;"] {
+        assert!(
+            text.lines().any(|l| l == member),
+            "no member `{member}`:\n{text}"
+        );
+    }
+    assert!(
+        text.lines().any(|l| l.trim() == "iSlowODDone0 = 0;"),
+        "the flag is reset in compute:\n{text}"
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|l| l.trim_start().starts_with("computeOutline") && l.contains('&')),
+        "an address is still passed:\n{text}"
     );
 }
 

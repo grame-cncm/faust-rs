@@ -29,6 +29,7 @@ const EVERY_BLOCK: OutlinePolicy = OutlinePolicy {
     min_block: 1,
     split_budget: usize::MAX,
     pointer_params: false,
+    promote_references: false,
 };
 
 /// Phase 2 as well (plan §3.4): every block over 8 statements cut into runs
@@ -38,6 +39,7 @@ const EVERY_RUN: OutlinePolicy = OutlinePolicy {
     min_block: 1,
     split_budget: 8,
     pointer_params: false,
+    promote_references: false,
 };
 
 /// Programs with many small `ondemand` blocks inside the sample loop, as
