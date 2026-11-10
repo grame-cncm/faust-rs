@@ -26,6 +26,10 @@ enum Extra {
     None,
     Return,
     Pointer,
+    /// Writes the output channel through its pointer local at `i0`.
+    PointerWrite,
+    /// Stores into the pointer local itself.
+    PointerStore,
     Address,
     Shadow,
 }
@@ -121,6 +125,14 @@ fn module(shape: Shape) -> (FirStore, FirId) {
             let v = b.cast(F32, out0);
             first.push(b.store_var("fRec1", AccessType::Struct, v));
         }
+        Extra::PointerWrite => {
+            let v = b.cast(ff.clone(), held);
+            first.push(b.store_table("output0", AccessType::Stack, i0, v));
+        }
+        Extra::PointerStore => {
+            let outputs = b.load_table("outputs", AccessType::FunArgs, zero_i, ptr(ff.clone()));
+            first.push(b.store_var("output0", AccessType::Stack, outputs));
+        }
         Extra::Address => {
             let addr = b.load_var_address("fHeld", AccessType::Stack, ptr(F32));
             first.push(b.drop_(addr));
@@ -208,6 +220,15 @@ fn small() -> OutlinePolicy {
         budget: 10,
         min_block: 2,
         split_budget: DEFAULT_SPLIT_BUDGET,
+        pointer_params: false,
+    }
+}
+
+/// [`small`] with pointers passed by value, as the C++ backend asks.
+fn small_with_pointers() -> OutlinePolicy {
+    OutlinePolicy {
+        pointer_params: true,
+        ..small()
     }
 }
 
@@ -343,6 +364,7 @@ fn a_block_under_the_minimum_stays_inline() {
         budget: 10,
         min_block: 13,
         split_budget: DEFAULT_SPLIT_BUDGET,
+        pointer_params: false,
     };
     let (_, _, report) = outline_large_blocks(&src, root, policy).expect("outlining");
     // The second block (12 statements) is under the minimum; the first and
@@ -470,6 +492,114 @@ fn the_unmutated_producer_is_accepted() {
     check_outlining(&src, root, &dst, droot).expect("accepted");
 }
 
+// ------------------------------------------- pointers passed by value
+// (`OutlinePolicy::pointer_params`, plan
+// `porting/cpp-outlining-plan-2026-11-10-en.md`).
+
+#[test]
+fn a_pointer_local_is_passed_by_value_when_the_policy_allows_it() {
+    for (extra, by_value) in [
+        (Extra::Pointer, &["fSlow0", "output0"][..]),
+        (Extra::PointerWrite, &["fSlow0", "i0", "output0"][..]),
+    ] {
+        let (src, root) = module(Shape {
+            extra,
+            ..Shape::default()
+        });
+        let (dst, droot, report) =
+            outline_large_blocks(&src, root, small_with_pointers()).expect("outlining");
+        let first = &report.outlined[0];
+        assert_eq!(first.by_value, by_value, "{extra:?}");
+        assert_eq!(first.by_reference, ["fHeld", "iDone0"], "{extra:?}");
+        let funs = functions(&dst, droot);
+        let (_, args, _) = &funs[1];
+        let output0 = args.iter().find(|a| a.name == "output0").expect("param");
+        assert_eq!(output0.typ, ptr(FirType::FaustFloat));
+        check_outlining(&src, root, &dst, droot).expect("checker");
+        let report = verify_fir_module(&dst, droot);
+        assert!(
+            !report
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == crate::checker::Severity::Error),
+            "{extra:?}: {:?}",
+            report.diagnostics
+        );
+    }
+}
+
+#[test]
+fn without_the_policy_a_pointer_local_keeps_its_block_inline() {
+    let (src, root) = module(Shape {
+        extra: Extra::PointerWrite,
+        ..Shape::default()
+    });
+    let (_, _, report) = outline_large_blocks(&src, root, small()).expect("outlining");
+    assert!(
+        report.refused.iter().any(|r| r.function == "compute"
+            && r.reason == "an address, indexed access, tee or shift of a free variable"),
+        "{:?}",
+        report.refused
+    );
+}
+
+#[test]
+fn a_pointer_stored_into_keeps_its_block_inline() {
+    let (src, root) = module(Shape {
+        extra: Extra::PointerStore,
+        ..Shape::default()
+    });
+    let (dst, droot, report) =
+        outline_large_blocks(&src, root, small_with_pointers()).expect("outlining");
+    assert!(
+        report.refused.iter().any(|r| r.function == "compute"
+            && r.reason == "a store, address, tee or shift of a free pointer"),
+        "{:?}",
+        report.refused
+    );
+    check_outlining(&src, root, &dst, droot).expect("checker");
+}
+
+fn rejected_pointer(mutation: Mutation) -> OutlineViolation {
+    let (src, root) = module(Shape {
+        extra: Extra::PointerWrite,
+        ..Shape::default()
+    });
+    let (dst, droot, _) =
+        outline_with(&src, root, small_with_pointers(), mutation).expect("the producer runs");
+    check_outlining(&src, root, &dst, droot)
+        .map(|()| panic!("{mutation:?} should be rejected"))
+        .unwrap_err()
+}
+
+#[test]
+fn a_pointer_passed_by_address_is_rejected_by_closed() {
+    // The parameter then reads as a reference, reached at `i0`, not at 0.
+    assert!(matches!(
+        rejected_pointer(Mutation::PointerAsReference),
+        OutlineViolation::Closed { .. }
+    ));
+}
+
+#[test]
+fn a_pointer_parameter_stored_into_is_rejected_by_closed() {
+    assert!(matches!(
+        rejected_pointer(Mutation::PointerStore),
+        OutlineViolation::Closed { .. }
+    ));
+}
+
+#[test]
+fn the_unmutated_pointer_producer_is_accepted() {
+    let (src, root) = module(Shape {
+        extra: Extra::PointerWrite,
+        ..Shape::default()
+    });
+    let (dst, droot, _) =
+        outline_with(&src, root, small_with_pointers(), Mutation::None).expect("the producer runs");
+    check_outlining(&src, root, &dst, droot).expect("accepted");
+}
+
 // ------------------------------------------------------------- phase 2
 // (plan §3.4): a long straight-line sample loop body cut into runs.
 
@@ -556,6 +686,7 @@ fn splitting() -> OutlinePolicy {
         budget: 10,
         min_block: 2,
         split_budget: 20,
+        pointer_params: false,
     }
 }
 

@@ -289,6 +289,9 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     if cli.user_interface_macros {
         parts.push("-uim".to_owned());
     }
+    if cli.outline {
+        parts.push("--outline".to_owned());
+    }
     if let Some(name) = cli.class_name.as_deref()
         && name != codegen::DEFAULT_CLASS_NAME
     {

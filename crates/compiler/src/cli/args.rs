@@ -220,6 +220,14 @@ pub struct CliArgs {
     /// class is then a `struct`. Ignored by the other backends, as in C++.
     #[arg(long = "user-interface-macros", action = ArgAction::SetTrue)]
     pub user_interface_macros: bool,
+    /// Rust-only, C++ output: move the large blocks of the DSP methods
+    /// (typically the `ondemand` blocks of the sample loop) into methods of
+    /// their own (`--outline`), so that the C++ compiler, whose optimization
+    /// time grows much faster than linearly with a function's size, builds
+    /// large programs in useful time. A method above 2,000 FIR statements is
+    /// outlined; a program under that budget is emitted unchanged.
+    #[arg(long = "outline", action = ArgAction::SetTrue)]
+    pub outline: bool,
     /// Override generated C++ class name for `--dump-cpp-from-fbc`.
     ///
     /// This applies only to `.fbc` -> native C++ emission, distinct from DSP generation

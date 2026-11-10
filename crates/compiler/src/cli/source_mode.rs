@@ -856,6 +856,10 @@ pub(crate) fn run_source_mode(
                 Some(cli_lang_name(CliLang::Cpp)),
             )),
             ui_macros: cli.user_interface_macros,
+            outline: cli.outline.then_some(fir::outline::OutlinePolicy {
+                pointer_params: true,
+                ..fir::outline::OutlinePolicy::default()
+            }),
             ..CppOptions::default()
         };
         let result = compiler.compile_file_to_cpp_with_lane(

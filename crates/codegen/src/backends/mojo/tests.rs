@@ -847,6 +847,7 @@ fn outline_every_block() -> MojoOptions {
             budget: 1,
             min_block: 1,
             split_budget: fir::outline::DEFAULT_SPLIT_BUDGET,
+            pointer_params: false,
         }),
         ..MojoOptions::default()
     }
@@ -1055,6 +1056,7 @@ fn a_split_run_receives_the_spill_array_as_a_mut_argument() {
             budget: 8,
             min_block: 2,
             split_budget: 16,
+            pointer_params: false,
         }),
         ..MojoOptions::default()
     };

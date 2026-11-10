@@ -74,6 +74,7 @@ fn main() -> ExitCode {
             budget: args.outline_budget.unwrap_or(default.budget),
             min_block: args.outline_min_block.unwrap_or(default.min_block),
             split_budget: args.outline_split_budget.unwrap_or(default.split_budget),
+            pointer_params: false,
         }
     });
     let options = MojoOptions {

@@ -6,8 +6,10 @@
 //! restates the conventions on its own: an added function is a method
 //! (`dsp: Ptr(Obj)` first) returning `Void`, called exactly once as a block
 //! statement `Drop(FunCall(..))`, whose other parameters are scalars passed
-//! by value or `Ptr` of a scalar passed by reference; the argument of a
-//! parameter names the caller's variable of the same name.
+//! by value or `Ptr` of a scalar passed by reference, or a pointer of the
+//! caller passed by value (`Ptr` of a scalar again, its argument a `LoadVar`
+//! instead of an address); the argument of a parameter names the caller's
+//! variable of the same name.
 //!
 //! The rules, in the order they are checked:
 //!
@@ -21,7 +23,8 @@
 //!    forms above, and reached from a source function;
 //! 4. **closed** — an added function's body redeclares no parameter, has no
 //!    other free local variable, never stores into a value parameter, and
-//!    reaches a reference parameter only at index 0 (or passes it on);
+//!    reaches a reference parameter only at index 0 (or passes it on), a
+//!    pointer parameter only by a load or a table access at any index;
 //! 5. **spills** — a spill array (phase 2, plan §3.4) is declared once in
 //!    its block, before the calls that receive it; each slot is stored once,
 //!    by a trailing statement of one run, and read only after that run;
@@ -98,6 +101,11 @@ pub fn check_outlining(
 enum Passing {
     Value(FirType),
     Reference(FirType),
+    /// A pointer of the caller, by value: `Ptr(T)` whose argument is
+    /// `LoadVar` of a pointer variable rather than an address. Rule 2 cannot
+    /// tell it from a reference (the same type); rule 3 tells them apart by
+    /// the argument.
+    Pointer(FirType),
     /// A spill array of `n` elements, by reference.
     Spill(FirType, usize),
 }
@@ -442,11 +450,55 @@ impl Checker {
                 }
             }
         }
+        self.pointer_parameters(&names);
         for name in &names {
             let call = self.calls[name][0].clone();
             self.check_arguments(name, &call)?;
         }
         Ok(())
+    }
+
+    /// The `Ptr(T)` parameters whose argument is `LoadVar` of a pointer of
+    /// the caller that is not one of its references become
+    /// [`Passing::Pointer`]; callers first, since a pointer parameter passed
+    /// on is told apart by its caller's passing.
+    fn pointer_parameters(&mut self, names: &[String]) {
+        let depth = |name: &str| {
+            let mut at = name.to_owned();
+            let mut d = 0;
+            while self.added.contains_key(&at) {
+                at = self.calls[&at][0].caller.clone();
+                d += 1;
+            }
+            d
+        };
+        let mut order: Vec<(usize, String)> = names.iter().map(|n| (depth(n), n.clone())).collect();
+        order.sort();
+        for (_, name) in order {
+            let call = self.calls[&name][0].clone();
+            let caller_refs: HashSet<String> =
+                self.added.get(&call.caller).map_or_else(HashSet::new, |a| {
+                    a.params
+                        .iter()
+                        .filter(|(_, p)| matches!(p, Passing::Reference(_)))
+                        .map(|(n, _)| n.clone())
+                        .collect()
+                });
+            let mut params = self.added[&name].params.clone();
+            for ((param, passing), &arg) in params.iter_mut().zip(&call.args) {
+                if let Passing::Reference(t) = passing
+                    && let FirMatch::LoadVar { name: var, typ, .. } = match_fir(&self.cs, arg)
+                    && var == *param
+                    && !caller_refs.contains(&var)
+                    && typ == FirType::Ptr(Box::new(t.clone()))
+                {
+                    *passing = Passing::Pointer(t.clone());
+                }
+            }
+            if let Some(a) = self.added.get_mut(&name) {
+                a.params = params;
+            }
+        }
     }
 
     /// Records the call statements of a block (as items), and refuses any
@@ -541,6 +593,12 @@ impl Checker {
             let ok = match (passing, match_fir(&self.cs, arg)) {
                 (Passing::Value(t), FirMatch::LoadVar { name, access, typ }) => {
                     name == *param && local(access) && typ == *t
+                }
+                (Passing::Pointer(t), FirMatch::LoadVar { name, access, typ }) => {
+                    name == *param
+                        && local(access)
+                        && !caller_refs.contains(name.as_str())
+                        && typ == FirType::Ptr(Box::new(t.clone()))
                 }
                 (Passing::Reference(t), FirMatch::LoadVarAddress { name, access, typ }) => {
                     name == *param && local(access) && typ == FirType::Ptr(Box::new(t.clone()))
@@ -836,6 +894,7 @@ impl Checker {
         for ((name, passing), &arg) in params.iter().zip(args) {
             let restore = match (passing, match_fir(&self.cs, arg)) {
                 (Passing::Value(_), FirMatch::LoadVar { access, .. }) => Restore::Value(access),
+                (Passing::Pointer(_), FirMatch::LoadVar { access, .. }) => Restore::Pointer(access),
                 (Passing::Reference(_), FirMatch::LoadVarAddress { access, .. }) => {
                     Restore::Reference(access)
                 }
@@ -859,6 +918,9 @@ enum Restore {
     Value(AccessType),
     /// Index-0 table accesses become `LoadVar`/`StoreVar(p, access)`.
     Reference(AccessType),
+    /// `LoadVar` and the table accesses of `p` at `FunArgs` become accesses
+    /// at `access`, the index kept.
+    Pointer(AccessType),
     /// A reference passed on: unchanged.
     Same,
 }
@@ -880,7 +942,7 @@ impl Substitute<'_> {
                 access: AccessType::FunArgs,
                 typ,
             } => match self.map.get(&name) {
-                Some(Restore::Value(access)) => {
+                Some(Restore::Value(access) | Restore::Pointer(access)) => {
                     FirBuilder::new(self.cs).load_var(name, *access, typ)
                 }
                 _ => id,
@@ -889,10 +951,15 @@ impl Substitute<'_> {
                 name,
                 access: AccessType::FunArgs,
                 typ,
-                ..
+                index,
             } => match self.map.get(&name) {
                 Some(Restore::Reference(access)) => {
                     FirBuilder::new(self.cs).load_var(name, *access, typ)
+                }
+                Some(Restore::Pointer(access)) => {
+                    let access = *access;
+                    let index = self.node(index);
+                    FirBuilder::new(self.cs).load_table(name, access, index, typ)
                 }
                 _ => self.children(id),
             },
@@ -900,12 +967,18 @@ impl Substitute<'_> {
                 name,
                 access: AccessType::FunArgs,
                 value,
-                ..
+                index,
             } => match self.map.get(&name) {
                 Some(Restore::Reference(access)) => {
                     let access = *access;
                     let value = self.node(value);
                     FirBuilder::new(self.cs).store_var(name, access, value)
+                }
+                Some(Restore::Pointer(access)) => {
+                    let access = *access;
+                    let index = self.node(index);
+                    let value = self.node(value);
+                    FirBuilder::new(self.cs).store_table(name, access, index, value)
                 }
                 _ => self.children(id),
             },
@@ -1124,6 +1197,15 @@ impl Closed<'_> {
                     }
                 } else if local(access)
                     && !self.bound(&name)
+                    && matches!(self.params.get(&name), Some(Passing::Pointer(_)))
+                {
+                    if access != AccessType::FunArgs {
+                        return Err(format!(
+                            "pointer `{name}` reached other than as a parameter"
+                        ));
+                    }
+                } else if local(access)
+                    && !self.bound(&name)
                     && matches!(self.params.get(&name), Some(Passing::Reference(_)))
                 {
                     let zero =
@@ -1167,8 +1249,13 @@ impl Closed<'_> {
             };
         }
         match self.params.get(name) {
-            Some(Passing::Value(_)) if access == AccessType::FunArgs && what == "a load" => Ok(()),
+            Some(Passing::Value(_) | Passing::Pointer(_))
+                if access == AccessType::FunArgs && what == "a load" =>
+            {
+                Ok(())
+            }
             Some(Passing::Value(_)) => Err(format!("{what} of value parameter `{name}`")),
+            Some(Passing::Pointer(_)) => Err(format!("{what} of pointer parameter `{name}`")),
             Some(Passing::Reference(_)) => Err(format!("{what} of reference `{name}`")),
             Some(Passing::Spill(..)) => Err(format!("{what} of spill `{name}`")),
             None => Err(format!("{what} of `{name}`, free in the body")),

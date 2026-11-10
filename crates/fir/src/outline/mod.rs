@@ -8,7 +8,7 @@
 //! (8,000 statements 19 s, 16,000 statements 491 s), and the `compute` of a
 //! large program — 51 `ondemand` blocks in the sample loop of the coopiano
 //! voice, 56,000 lines — does not build in hours. [`outline_large_blocks`]
-//! rewrites a flattened module so that no DSP method stays above a statement
+//! rewrites a module so that no DSP method stays above a statement
 //! budget when it can avoid it: while a method is too large, the largest
 //! `then` or `else` block of one of its `If` statements becomes a new
 //! function of the module, called from where the block was. The `If` stays in
@@ -82,6 +82,13 @@ pub struct OutlinePolicy {
     /// largest straight-line block cut into runs of at most `budget`
     /// statements, each moved into a function of its own (plan §3.4).
     pub split_budget: usize,
+    /// Pass a free local of pointer type (`Ptr` of a scalar: the channel
+    /// pointers `input0`, `output0` of `compute`) by value, so a block that
+    /// reads or writes through it can be outlined. Exact C semantics, but
+    /// Mojo cannot name the origin of a pointer parameter, so its backend
+    /// leaves this off; the C++ backend turns it on (plan
+    /// `porting/cpp-outlining-plan-2026-11-10-en.md`).
+    pub pointer_params: bool,
 }
 
 impl Default for OutlinePolicy {
@@ -90,6 +97,7 @@ impl Default for OutlinePolicy {
             budget: DEFAULT_BUDGET,
             min_block: DEFAULT_MIN_BLOCK,
             split_budget: DEFAULT_SPLIT_BUDGET,
+            pointer_params: false,
         }
     }
 }
@@ -134,8 +142,6 @@ pub struct OutlineReport {
 pub enum OutlineError {
     /// The root is not a module.
     NotAModule,
-    /// Table generators were not flattened first.
-    SubModules,
     /// The output was rejected by the independent checker
     /// ([`check::check_outlining`]); an internal error of the pass.
     Rejected(String),
@@ -145,7 +151,6 @@ impl fmt::Display for OutlineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotAModule => write!(f, "the root is not a FIR module"),
-            Self::SubModules => write!(f, "the module still has sub-modules"),
             Self::Rejected(why) => write!(f, "the outlining was rejected by its checker: {why}"),
         }
     }
@@ -158,8 +163,8 @@ impl std::error::Error for OutlineError {}
 /// was done.
 ///
 /// # Errors
-/// [`OutlineError::NotAModule`], [`OutlineError::SubModules`], or
-/// [`OutlineError::Rejected`] if the checker rejects the output.
+/// [`OutlineError::NotAModule`], or [`OutlineError::Rejected`] if the
+/// checker rejects the output.
 pub fn outline_large_blocks(
     src: &FirStore,
     module: FirId,
@@ -199,6 +204,11 @@ pub(crate) enum Mutation {
     SpillWrongSlot,
     /// The first two calls of a split block are swapped.
     SpillEarly,
+    /// The first pointer passed by value is passed by address instead.
+    PointerAsReference,
+    /// The first pointer parameter is stored into at the head of its
+    /// function.
+    PointerStore,
 }
 
 /// The producer without its checker.
@@ -311,6 +321,9 @@ impl Env {
 enum Mode {
     /// Read only: by value.
     Value,
+    /// A pointer local ([`OutlinePolicy::pointer_params`]): the pointer by
+    /// value, its pointee read and written through it at any index.
+    Pointer,
     /// Stored into: by reference, from the caller's variable's address.
     Ref,
     /// A reference of the caller, passed on.
@@ -333,7 +346,7 @@ struct Param {
 impl Param {
     fn fun_type(&self) -> FirType {
         match self.mode {
-            Mode::Value => self.typ.clone(),
+            Mode::Value | Mode::Pointer => self.typ.clone(),
             Mode::Ref | Mode::PassRef => FirType::Ptr(Box::new(self.typ.clone())),
             Mode::Spill(n) => FirType::Array(Box::new(self.typ.clone()), n),
         }
@@ -348,7 +361,9 @@ struct FreeUse {
     stores: bool,
     /// `LoadTable`/`StoreTable` at the literal index 0.
     at_zero: bool,
-    /// Any other access: an address, another index, a tee, a shift.
+    /// `LoadTable`/`StoreTable` at another index.
+    indexed: bool,
+    /// Any other access: an address, a tee, a shift.
     other: bool,
 }
 
@@ -372,6 +387,7 @@ enum Kind {
     Load,
     Store,
     AtZero,
+    Indexed,
     Other,
 }
 
@@ -403,6 +419,7 @@ impl Analysis<'_> {
             loads: false,
             stores: false,
             at_zero: false,
+            indexed: false,
             other: false,
         });
         if entry.access != access {
@@ -412,6 +429,7 @@ impl Analysis<'_> {
             Kind::Load => entry.loads = true,
             Kind::Store => entry.stores = true,
             Kind::AtZero => entry.at_zero = true,
+            Kind::Indexed => entry.indexed = true,
             Kind::Other => entry.other = true,
         }
         Ok(())
@@ -525,7 +543,7 @@ impl Analysis<'_> {
                     match_fir(self.store, index),
                     FirMatch::Int32 { value: 0, .. }
                 );
-                let kind = if at_zero { Kind::AtZero } else { Kind::Other };
+                let kind = if at_zero { Kind::AtZero } else { Kind::Indexed };
                 self.access(&name, access, kind)?;
             }
             FirMatch::LoadVarAddress { name, access, .. }
@@ -571,14 +589,25 @@ fn content_items(store: &FirStore, added: &HashSet<String>, items: &[FirId]) -> 
 }
 
 /// The parameters of a block of content `uses` at a position where `env` is
-/// visible, or why it cannot be outlined there.
-fn resolve(env: &Env, uses: &BTreeMap<String, FreeUse>) -> Result<Vec<Param>, &'static str> {
+/// visible, or why it cannot be outlined there. `pointers` is
+/// [`OutlinePolicy::pointer_params`].
+fn resolve(
+    env: &Env,
+    uses: &BTreeMap<String, FreeUse>,
+    pointers: bool,
+) -> Result<Vec<Param>, &'static str> {
     let mut params = Vec::with_capacity(uses.len());
     for (name, u) in uses {
         let (typ, mode) = match env.lookup(name) {
             None => return Err("an undeclared free variable"),
+            Some(Binding::Var(typ @ FirType::Ptr(inner))) if pointers && is_scalar(inner) => {
+                if u.stores || u.other {
+                    return Err("a store, address, tee or shift of a free pointer");
+                }
+                (typ.clone(), Mode::Pointer)
+            }
             Some(Binding::Var(typ)) => {
-                if u.at_zero || u.other {
+                if u.at_zero || u.indexed || u.other {
                     return Err("an address, indexed access, tee or shift of a free variable");
                 }
                 if !is_scalar(typ) {
@@ -587,7 +616,7 @@ fn resolve(env: &Env, uses: &BTreeMap<String, FreeUse>) -> Result<Vec<Param>, &'
                 (typ.clone(), if u.stores { Mode::Ref } else { Mode::Value })
             }
             Some(Binding::Ref(typ)) => {
-                if u.loads || u.stores || u.other {
+                if u.loads || u.stores || u.indexed || u.other {
                     return Err("a reference used other than at index 0");
                 }
                 (typ.clone(), Mode::PassRef)
@@ -742,7 +771,10 @@ impl Pass {
                     path.pop();
                     size += bsize;
                     if bsize >= self.policy.min_block.max(1) && !self.is_call_block(b) {
-                        let analysis = self.content_of(b).and_then(|uses| resolve(env, &uses));
+                        let pointers = self.policy.pointer_params;
+                        let analysis = self
+                            .content_of(b)
+                            .and_then(|uses| resolve(env, &uses, pointers));
                         out.push(Candidate {
                             ordinal,
                             size: bsize,
@@ -904,6 +936,15 @@ impl Pass {
             items.pop();
             out = FirBuilder::new(&mut self.store).block(&items);
         }
+        if let Some(p) = params.iter().find(|p| p.mode == Mode::Pointer)
+            && self.mutate(Mutation::PointerStore)
+        {
+            let mut b = FirBuilder::new(&mut self.store);
+            let same = b.load_var(&p.name, AccessType::FunArgs, p.typ.clone());
+            let store = b.store_var(&p.name, AccessType::FunArgs, same);
+            items.insert(0, store);
+            out = b.block(&items);
+        }
         if let Some(first) = params.first()
             && self.mutate(Mutation::ShadowParam)
         {
@@ -916,11 +957,18 @@ impl Pass {
     }
 
     fn call_stmt(&mut self, name: &str, params: &[Param]) -> FirId {
+        let by_address = params
+            .iter()
+            .position(|p| p.mode == Mode::Pointer)
+            .filter(|_| self.mutate(Mutation::PointerAsReference));
         let mut b = FirBuilder::new(&mut self.store);
         let mut args = vec![b.load_var(DSP_ARG, AccessType::FunArgs, dsp_type())];
-        for p in params {
+        for (i, p) in params.iter().enumerate() {
             args.push(match p.mode {
-                Mode::Value => b.load_var(&p.name, p.access, p.typ.clone()),
+                Mode::Pointer if by_address == Some(i) => {
+                    b.load_var_address(&p.name, p.access, p.typ.clone())
+                }
+                Mode::Value | Mode::Pointer => b.load_var(&p.name, p.access, p.typ.clone()),
                 Mode::Ref => b.load_var_address(&p.name, p.access, p.fun_type()),
                 Mode::PassRef => b.load_var(&p.name, AccessType::FunArgs, p.fun_type()),
                 Mode::Spill(_) => b.load_var(&p.name, AccessType::Stack, p.fun_type()),
@@ -1102,7 +1150,7 @@ impl Rewriter<'_> {
         }
         let out = match match_fir(self.store, id) {
             FirMatch::LoadVar { name, access, typ } => match self.mode(&name, access) {
-                Some(Mode::Value) => {
+                Some(Mode::Value | Mode::Pointer) => {
                     FirBuilder::new(self.store).load_var(name, AccessType::FunArgs, typ)
                 }
                 Some(Mode::Ref) => {
@@ -1129,6 +1177,26 @@ impl Rewriter<'_> {
                 }
                 _ => self.rebuild(id),
             },
+            // The pointee of a pointer passed by value, through the parameter.
+            FirMatch::LoadTable {
+                name,
+                access,
+                index,
+                typ,
+            } if self.mode(&name, access) == Some(Mode::Pointer) => {
+                let index = self.rewrite(index);
+                FirBuilder::new(self.store).load_table(name, AccessType::FunArgs, index, typ)
+            }
+            FirMatch::StoreTable {
+                name,
+                access,
+                index,
+                value,
+            } if self.mode(&name, access) == Some(Mode::Pointer) => {
+                let index = self.rewrite(index);
+                let value = self.rewrite(value);
+                FirBuilder::new(self.store).store_table(name, AccessType::FunArgs, index, value)
+            }
             _ => self.rebuild(id),
         };
         self.memo.insert(id, out);
@@ -1181,9 +1249,6 @@ fn outline_step(
     else {
         return Err(OutlineError::NotAModule);
     };
-    if !block_items(&store, sub_modules).is_empty() {
-        return Err(OutlineError::SubModules);
-    }
     let mut taken = HashSet::new();
     names_under(&store, root, &mut HashSet::new(), &mut taken);
     let mut pass = Pass {
@@ -1249,7 +1314,7 @@ fn outline_step(
         env.push();
         for p in &pass.added[k].params {
             let binding = match p.mode {
-                Mode::Value | Mode::Spill(_) => Binding::Var(p.fun_type()),
+                Mode::Value | Mode::Pointer | Mode::Spill(_) => Binding::Var(p.fun_type()),
                 Mode::Ref | Mode::PassRef => Binding::Ref(p.typ.clone()),
             };
             env.declare(p.name.clone(), binding);
@@ -1291,17 +1356,20 @@ fn outline_step(
             by_value: a
                 .params
                 .iter()
-                .filter(|p| p.mode == Mode::Value)
+                .filter(|p| matches!(p.mode, Mode::Value | Mode::Pointer))
                 .map(|p| p.name.clone())
                 .collect(),
             by_reference: a
                 .params
                 .iter()
-                .filter(|p| p.mode != Mode::Value)
+                .filter(|p| !matches!(p.mode, Mode::Value | Mode::Pointer))
                 .map(|p| p.name.clone())
                 .collect(),
         });
     }
+    // Sub-modules (the generated-table classes of the C and C++ backends)
+    // are kept as they are: the pass rewrites the root's functions only.
+    let sub_module_items = block_items(&pass.store, sub_modules);
     let mut b = FirBuilder::new(&mut pass.store);
     let functions = b.block(&new_items);
     let root = b.module(
@@ -1312,7 +1380,7 @@ fn outline_step(
         globals,
         functions,
         static_decls,
-        &[],
+        &sub_module_items,
     );
     Ok((pass.store, root, pass.report))
 }

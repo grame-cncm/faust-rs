@@ -20,9 +20,24 @@
 //! - Emits `compute(int count, FAUSTFLOAT** RESTRICT, FAUSTFLOAT** RESTRICT)`
 //!   with a per-sample loop and channel writes.
 //!
+//! # Outlined methods (`CppOptions::outline`, Rust-only)
+//! With `--outline`, `fir::outline` runs on the module first: the large
+//! `then`/`else` blocks of the DSP methods (typically the `ondemand` blocks of
+//! the sample loop) become methods `<method>Outline<k>` of the class, called
+//! where the block was, so that the C++ compiler, whose optimization time
+//! grows much faster than linearly with a function's size, sees many small
+//! functions instead of one huge `compute`. A local the block stores into is
+//! passed as `T* RESTRICT` (`&x` at the call, `x[0]` inside), a local it only
+//! reads by value, a channel pointer by value without `RESTRICT`, a spill
+//! array (phase 2 of the pass) as an array; struct state is reached through
+//! `this` as in every method. C++ Faust has no counterpart; the option is off
+//! by default, and a program under the budget is emitted unchanged (plan
+//! `porting/cpp-outlining-plan-2026-11-10-en.md`).
+//!
 //! # Limitations
 //! Unsupported FIR nodes currently fail fast with `FRS-CGEN-CPP-0003`.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
@@ -116,6 +131,13 @@ pub struct CppOptions {
     /// pipeline fills them from the interface the module shows; ignored
     /// unless [`Self::ui_macros`].
     pub ui_macro_widgets: Vec<UiMacroWidget>,
+    /// Outline the large blocks of the DSP methods into methods of their own
+    /// (`fir::outline`, `--outline`), see the module documentation. C++
+    /// prints a pointer parameter, so the CLI sets
+    /// [`fir::outline::OutlinePolicy::pointer_params`]: the `ondemand` blocks
+    /// of `compute` read and write the channel pointers. `None`, the default,
+    /// keeps every method whole, as C++ Faust does.
+    pub outline: Option<fir::outline::OutlinePolicy>,
 }
 
 impl Default for CppOptions {
@@ -138,6 +160,7 @@ impl Default for CppOptions {
             metadata_entries: Vec::new(),
             ui_macros: false,
             ui_macro_widgets: Vec::new(),
+            outline: None,
         }
     }
 }
@@ -199,6 +222,9 @@ struct DeclareFunView<'a> {
     /// `None` when this is a prototype-only declaration (no body).
     body: Option<FirId>,
     is_inline: bool,
+    /// For an outlined method, the parameters it receives by reference
+    /// ([`OutlinedRefs`]); `None` otherwise.
+    by_reference: Option<&'a HashSet<String>>,
 }
 
 /// Generates C++ code from a FIR module root.
@@ -221,13 +247,77 @@ pub fn generate_cpp_module(
     module: FirId,
     options: &CppOptions,
 ) -> Result<String, CodegenError> {
-    fir::on_compile_stack(|| generate_cpp_module_step(store, module, options))
+    fir::on_compile_stack(|| {
+        let outlined = outline_module(store, module, options)?;
+        let none = OutlinedRefs::new();
+        let (store, module, refs) = outlined
+            .as_ref()
+            .map_or((store, module, &none), |(s, m, r)| (s, *m, r));
+        generate_cpp_module_step(store, module, options, refs)
+    })
+}
+
+/// Runs `fir::outline` on `module` when [`CppOptions::outline`] asks for it.
+/// `None` when the option is off, the root is not a module (the step reports
+/// that), or no block was outlined.
+fn outline_module(
+    store: &FirStore,
+    module: FirId,
+    options: &CppOptions,
+) -> Result<Option<(FirStore, FirId, OutlinedRefs)>, CodegenError> {
+    let Some(policy) = options.outline else {
+        return Ok(None);
+    };
+    if !matches!(match_fir(store, module), FirMatch::Module { .. }) {
+        return Ok(None);
+    }
+    let (out_store, out_module, report) = fir::outline::outline_large_blocks(store, module, policy)
+        .map_err(|err| {
+            CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("outlining: {err}"),
+            )
+            .at_node(module)
+        })?;
+    let refs = report
+        .outlined
+        .into_iter()
+        .map(|f| (f.name, f.by_reference.into_iter().collect()))
+        .collect::<OutlinedRefs>();
+    Ok((!refs.is_empty()).then_some((out_store, out_module, refs)))
+}
+
+/// A function `fir::outline` created: a defined method whose first argument
+/// is the explicit receiver `dsp: Ptr(Obj)`, and which is neither a DSP
+/// lifecycle method nor a generated-table sub-module method.
+fn is_outlined_method(name: &str, typ: &FirType, named_args: &[NamedType]) -> bool {
+    !is_receiver_lifecycle_method(name)
+        && name != "staticInit"
+        && !is_sub_module_method(name)
+        && has_explicit_dsp_arg(typ, named_args)
+}
+
+/// The parameters each outlined method receives by reference (the address
+/// of a caller's local, or such a parameter passed on), from
+/// `OutlineReport::outlined`. The other `Ptr` parameters are pointers of the
+/// caller passed by value (`OutlinePolicy::pointer_params`).
+type OutlinedRefs = HashMap<String, HashSet<String>>;
+
+/// The first argument is the receiver `dsp: Ptr(Obj)`.
+fn has_explicit_dsp_arg(typ: &FirType, named_args: &[NamedType]) -> bool {
+    matches!(named_args.first(), Some(named) if named.name == "dsp")
+        && matches!(
+            typ,
+            FirType::Fun { args, .. }
+                if matches!(args.first(), Some(FirType::Ptr(inner)) if matches!(inner.as_ref(), FirType::Obj))
+        )
 }
 
 fn generate_cpp_module_step(
     store: &FirStore,
     module: FirId,
     options: &CppOptions,
+    outlined: &OutlinedRefs,
 ) -> Result<String, CodegenError> {
     let module_id = module;
     let module = decode_module(store, module_id)?;
@@ -377,6 +467,14 @@ fn generate_cpp_module_step(
         "functions",
         module.functions,
         true,
+    )?;
+    emit_outlined_methods(
+        store,
+        &mut out,
+        &effective_options,
+        module_name.as_str(),
+        module.functions,
+        outlined,
     )?;
     let _ = writeln!(out, "}};");
 
@@ -1168,6 +1266,16 @@ fn emit_section(
         {
             continue;
         }
+        // The outlined methods follow, from `emit_outlined_methods`.
+        if section_name == "functions"
+            && matches!(
+                match_fir(store, item),
+                FirMatch::DeclareFun { ref name, ref typ, ref args, .. }
+                    if is_outlined_method(name, typ, args)
+            )
+        {
+            continue;
+        }
         if options.memory_manager_mode.is_mem0()
             && !externalize_mem0_arrays
             && matches!(
@@ -1191,6 +1299,50 @@ fn emit_section(
         } else {
             emit_stmt(store, out, options, module_name, item, 1)?;
         }
+    }
+    Ok(())
+}
+
+/// Emits the methods `fir::outline` added to `functions` (left out by
+/// [`emit_section`]), in their section order: after the lifecycle methods,
+/// with the reference parameters of each from the pass's report.
+fn emit_outlined_methods(
+    store: &FirStore,
+    out: &mut String,
+    options: &CppOptions,
+    module_name: &str,
+    functions: FirId,
+    outlined: &OutlinedRefs,
+) -> Result<(), CodegenError> {
+    for item in section_items("functions", functions, store)? {
+        let FirMatch::DeclareFun {
+            name,
+            typ,
+            args,
+            body,
+            is_inline,
+        } = match_fir(store, item)
+        else {
+            continue;
+        };
+        if !is_outlined_method(&name, &typ, &args) {
+            continue;
+        }
+        emit_declare_fun(
+            store,
+            out,
+            options,
+            module_name,
+            DeclareFunView {
+                name: &name,
+                typ: &typ,
+                named_args: &args,
+                body,
+                is_inline,
+                by_reference: outlined.get(&name),
+            },
+            1,
+        )?;
     }
     Ok(())
 }
@@ -1279,6 +1431,24 @@ fn emit_stmt_with_mode(
         simple_loop_increment: cpp_simple_loop_increment,
         render_named_type: &|typ, name| emit_named_type(typ, name, options),
         render_void_call: &|name, args| {
+            // An outlined method (`fir::outline`) is called on `this`: the
+            // explicit receiver `dsp` is dropped, and a local passed by
+            // reference is passed by address.
+            if let Some((receiver, rest)) = args.split_first()
+                && matches!(match_fir(store, *receiver), FirMatch::LoadVar { ref name, .. } if name == "dsp")
+            {
+                let rendered: Vec<String> = rest
+                    .iter()
+                    .map(|arg| match match_fir(store, *arg) {
+                        FirMatch::LoadVarAddress { name, access, .. } => {
+                            Ok(format!("&{}", emit_var_ref(&name, access)))
+                        }
+                        _ => emit_value(store, options, *arg),
+                    })
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+                return Some(format!("{name}({})", rendered.join(", ")));
+            }
             // A sub-container entry point is a method: the first argument is
             // the receiver, and C++ spells the call `sig0->fill…(rest)`.
             if !is_sub_module_method(name) {
@@ -1324,6 +1494,7 @@ fn emit_stmt_with_mode(
                 named_args: &args,
                 body,
                 is_inline,
+                by_reference: None,
             },
             indent,
         ),
@@ -1540,14 +1711,10 @@ fn emit_declare_fun(
         .map_err(|msg| CodegenError::new(CodegenErrorCode::InvalidModuleSection, msg))?;
     let tab = "    ".repeat(indent);
     let mut params_override: Option<String> = None;
-    let strip_explicit_dsp_arg = (is_receiver_lifecycle_method(decl.name)
-        || is_sub_module_method(decl.name))
-        && matches!(decl.named_args.first(), Some(named) if named.name == "dsp")
-        && matches!(
-            decl.typ,
-            FirType::Fun { args, .. }
-                if matches!(args.first(), Some(FirType::Ptr(inner)) if matches!(inner.as_ref(), FirType::Obj))
-        );
+    let outlined = is_outlined_method(decl.name, decl.typ, decl.named_args);
+    let strip_explicit_dsp_arg =
+        (is_receiver_lifecycle_method(decl.name) || is_sub_module_method(decl.name) || outlined)
+            && has_explicit_dsp_arg(decl.typ, decl.named_args);
     let (ret, mut params) = match decl.typ {
         FirType::Fun {
             args: typed_args,
@@ -1563,6 +1730,17 @@ fn emit_declare_fun(
                     .named_args
                     .get(named_index)
                     .map_or_else(|| format!("arg{named_index}"), |named| named.name.clone());
+                // A local of the caller passed by address: distinct locals,
+                // so these pointers alias neither each other nor the struct
+                // state. A pointer passed by value (`input0`) gets no
+                // `RESTRICT`: a host may process in place.
+                if outlined
+                    && let FirType::Ptr(inner) = arg_type
+                    && decl.by_reference.is_some_and(|refs| refs.contains(&name))
+                {
+                    rendered.push(format!("{}* RESTRICT {name}", emit_type(inner, options)));
+                    continue;
+                }
                 rendered.push(emit_named_type(arg_type, &name, options));
             }
             (ret, rendered.join(", "))

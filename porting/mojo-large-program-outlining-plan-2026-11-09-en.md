@@ -66,7 +66,9 @@ entries); problem 2 remains for the two large ones.
 ## 3. The pass
 
 `fir::outline::outline_large_blocks(src, module, policy)` rewrites a copy
-of a flattened module (no sub-modules). It runs last, on the module the
+of a flattened module (no sub-modules; since 2026-11-10 a module's
+sub-modules are kept as they are, for the C++ backend,
+`porting/cpp-outlining-plan-2026-11-10-en.md`). It runs last, on the module the
 emitter will print: in the batch path after `promote_state` and
 `layout_voices`, so neither of them nor their checkers ever sees an outlined
 function.
@@ -137,7 +139,9 @@ already used by a function or declaration making the pass skip to the next
 A candidate block is left inline when it:
 
 - contains a `Return` (it would return from the new function only);
-- reads a free variable of pointer, array or vector type (Mojo cannot name
+- reads a free variable of pointer, array or vector type (unless
+  `OutlinePolicy::pointer_params`, added 2026-11-10 for the C++ backend,
+  passes a pointer of a scalar by value; Mojo leaves it off. Mojo cannot name
   the origin of a pointer parameter; arrays are not passed);
 - takes the address of a free variable, uses one in a `TeeVar`, shifts one,
   or accesses one through `LoadTable`/`StoreTable`;

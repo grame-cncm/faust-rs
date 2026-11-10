@@ -549,7 +549,7 @@ impl Pass {
             let c: Content = content_items(&self.store, &self.added_names, &[item]);
             barrier.push(match c {
                 Err(_) => true,
-                Ok(uses) => resolve(&env_i, &uses).is_err(),
+                Ok(uses) => resolve(&env_i, &uses, self.policy.pointer_params).is_err(),
             });
             declare_top(&self.store, &mut env_i, item);
         }
@@ -630,10 +630,13 @@ impl Pass {
                 .into_iter()
                 .partition(|(name, _)| escape_of.contains_key(name));
             let rest: BTreeMap<String, FreeUse> = rest.into_iter().collect();
-            if reads.iter().any(|(_, u)| u.stores || u.at_zero || u.other) {
+            if reads
+                .iter()
+                .any(|(_, u)| u.stores || u.at_zero || u.indexed || u.other)
+            {
                 continue;
             }
-            let Ok(params) = resolve(&env_s, &rest) else {
+            let Ok(params) = resolve(&env_s, &rest, self.policy.pointer_params) else {
                 continue;
             };
             let mut escapes = Vec::new();
