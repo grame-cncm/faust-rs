@@ -1,5 +1,5 @@
 # ==============================================================================
-# Code generated with Faust 0.9.5 (https://faust.grame.fr)
+# Code generated with Faust 0.9.6 (https://faust.grame.fr)
 # name: "rec"
 # Compilation options: 
 #   -lang mojo -single
@@ -60,7 +60,7 @@ struct mydsp(FaustDsp):
 
     @always_inline
     def get_json(imm dsp) -> String:
-        return "{\"name\": \"rec\",\"filename\": \"rec.dsp\",\"version\": \"0.9.5\",\"compile_options\": \"-lang mojo -single\",\"size\": 20,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"rec\",\"items\": []}]}"
+        return "{\"name\": \"rec\",\"filename\": \"rec.dsp\",\"version\": \"0.9.6\",\"compile_options\": \"-lang mojo -single\",\"size\": 20,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"rec\",\"items\": []}]}"
 
     @always_inline
     def metadata(imm dsp, mut meta: Some[FaustMeta]) -> None:
