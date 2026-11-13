@@ -1161,13 +1161,15 @@ pub(super) fn materialize_top_level(
                             .iter()
                             .all(|loop_id| loop_by_id[loop_id].exec.len() == width)
                         {
-                            let mut transposed = Vec::with_capacity(width * members.len());
-                            for index in 0..width {
-                                for loop_id in members {
-                                    transposed.push(loop_by_id[loop_id].exec[index]);
-                                }
-                            }
-                            transposed
+                            // Iteration-major transposition, as in `check.rs`.
+                            let loop_by_id = &loop_by_id;
+                            (0..width)
+                                .flat_map(|index| {
+                                    members
+                                        .iter()
+                                        .map(move |loop_id| loop_by_id[loop_id].exec[index])
+                                })
+                                .collect()
                         } else {
                             members
                                 .iter()

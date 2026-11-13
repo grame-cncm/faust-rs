@@ -526,10 +526,7 @@ fn word_boundaries(s: &str, pos: usize, len: usize) -> bool {
     } else {
         s[after_index..].chars().next()
     };
-    if after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return false;
-    }
-    true
+    !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Replaces all occurrences of `old` with `new` in `s`.

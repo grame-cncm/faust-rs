@@ -683,13 +683,17 @@ pub(super) fn verify_assembled_lockstep_bundles(
             {
                 return Err(reject());
             }
-            let mut expected_iterations = Vec::with_capacity(width * bundle.member_loop_ids.len());
-            for index in 0..width {
-                for loop_id in &bundle.member_loop_ids {
-                    expected_iterations.push(loop_by_id[loop_id].exec[index]);
-                }
-            }
-            expected_iterations
+            // Iteration-major transposition: iteration `index` of every member
+            // loop, in member order, then `index + 1`.
+            let loop_by_id = &loop_by_id;
+            (0..width)
+                .flat_map(|index| {
+                    bundle
+                        .member_loop_ids
+                        .iter()
+                        .map(move |loop_id| loop_by_id[loop_id].exec[index])
+                })
+                .collect::<Vec<_>>()
         };
         let physical_loops = top_level
             .iter()
