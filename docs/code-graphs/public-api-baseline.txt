@@ -1341,6 +1341,7 @@ struct Trait
 struct TraitCollector
 trait DrawDevice
 trait Schema
+use boxes::FloatSize
 use error::DrawError
 use schema
 use translate::FileNaming

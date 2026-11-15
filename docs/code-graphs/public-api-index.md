@@ -1369,16 +1369,17 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `mod` | `schema` | `crates/draw/src/lib.rs:46` |
 | `mod` | `schemas` | `crates/draw/src/lib.rs:47` |
 | `mod` | `translate` | `crates/draw/src/lib.rs:48` |
-| `use` | `error::DrawError` | `crates/draw/src/lib.rs:50` |
-| `use` | `schema` | `crates/draw/src/lib.rs:51` |
-| `use` | `translate::FileNaming` | `crates/draw/src/lib.rs:55` |
-| `const` | `CRATE_NAME` | `crates/draw/src/lib.rs:57` |
-| `fn` | `crate_id` | `crates/draw/src/lib.rs:61` |
-| `struct` | `DrawConfig` | `crates/draw/src/lib.rs:75` |
-| `struct` | `Diagram` | `crates/draw/src/lib.rs:145` |
-| `fn` | `draw_diagrams` | `crates/draw/src/lib.rs:168` |
-| `fn` | `draw_schema_to_memory` | `crates/draw/src/lib.rs:252` |
-| `fn` | `draw_schema` | `crates/draw/src/lib.rs:280` |
+| `use` | `boxes::FloatSize` | `crates/draw/src/lib.rs:51` |
+| `use` | `error::DrawError` | `crates/draw/src/lib.rs:52` |
+| `use` | `schema` | `crates/draw/src/lib.rs:53` |
+| `use` | `translate::FileNaming` | `crates/draw/src/lib.rs:57` |
+| `const` | `CRATE_NAME` | `crates/draw/src/lib.rs:59` |
+| `fn` | `crate_id` | `crates/draw/src/lib.rs:63` |
+| `struct` | `DrawConfig` | `crates/draw/src/lib.rs:77` |
+| `struct` | `Diagram` | `crates/draw/src/lib.rs:158` |
+| `fn` | `draw_diagrams` | `crates/draw/src/lib.rs:181` |
+| `fn` | `draw_schema_to_memory` | `crates/draw/src/lib.rs:265` |
+| `fn` | `draw_schema` | `crates/draw/src/lib.rs:293` |
 | `const` | `D_WIRE` | `crates/draw/src/schema.rs:24` |
 | `const` | `D_LETTER` | `crates/draw/src/schema.rs:29` |
 | `const` | `D_HORZ` | `crates/draw/src/schema.rs:34` |
@@ -1459,7 +1460,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `generate_schema` | `crates/draw/src/translate.rs:218` |
 | `fn` | `generate_folded_inside` | `crates/draw/src/translate.rs:227` |
 | `fn` | `legal_file_name` | `crates/draw/src/translate.rs:774` |
-| `fn` | `make_top_schema` | `crates/draw/src/translate.rs:898` |
+| `fn` | `make_top_schema` | `crates/draw/src/translate.rs:936` |
 
 ## `eval`
 

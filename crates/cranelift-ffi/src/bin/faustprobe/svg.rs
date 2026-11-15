@@ -67,6 +67,10 @@ fn options(args: &Args) -> DiagramOptions {
     draw.scaled_svg = args.scaled_svg;
     draw.shadow_blur = args.shadow_blur;
     draw.draw_route_frame = args.draw_route_frame;
+    // the precision of the render names the foreign functions, as `faust-rs -svg` does
+    if args.compile.double {
+        draw.float_size = ::draw::FloatSize::Double;
+    }
     options.simplify = args.simplify_diagrams;
     options
 }

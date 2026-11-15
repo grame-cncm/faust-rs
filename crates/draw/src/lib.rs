@@ -47,6 +47,8 @@ pub mod schema;
 pub mod schemas;
 pub mod translate;
 
+/// The precision of [`DrawConfig::float_size`].
+pub use boxes::FloatSize;
 pub use error::DrawError;
 pub use schema::{
     COLOR_INV, COLOR_LINK, COLOR_NORMAL, COLOR_NUM, COLOR_SLOT, COLOR_UI, D_HORZ, D_LETTER, D_VERT,
@@ -122,6 +124,16 @@ pub struct DrawConfig {
     /// How the files are named: by box identity, as C++ does (the default),
     /// or by definition name, stable from one run to the next.
     pub file_naming: FileNaming,
+
+    /// The precision the program is compiled in. It chooses the name a
+    /// foreign function is drawn under among those its declaration gives
+    /// (`ffunction(float tanhf|tanh|tanhl (float), ...)` is `tanhf` in single
+    /// precision and `tanh` in double), and the suffix of the numbers in the
+    /// name of a folded expression.
+    ///
+    /// C++ global: `gFloatSize` (default single). CLI: `-single` / `-double` /
+    /// `-quad`.
+    pub float_size: FloatSize,
 }
 
 impl Default for DrawConfig {
@@ -134,6 +146,7 @@ impl Default for DrawConfig {
             fold_threshold: 25,
             fold_complexity: 2,
             file_naming: FileNaming::BoxIdentity,
+            float_size: FloatSize::Single,
         }
     }
 }
@@ -484,5 +497,101 @@ mod tests {
         let files = draw_schema_to_memory(&arena, root, "process", &config, &def_names).unwrap();
         assert_eq!(files[0].0, "process.svg");
         assert!(files[1].0.starts_with("voice-") && files[1].0.len() == "voice-".len() + 12);
+    }
+
+    /// `ffunction(float copysignf|copysign|copysignl (float, float), <math.h>, "")`
+    /// as the parser encodes it: the signature `(return type, names, argument
+    /// types...)`, the four name slots filled by repeating the last name.
+    fn copysign(arena: &mut TreeArena) -> BoxId {
+        let nil = arena.nil();
+        let float = arena.int(1);
+        let names = ["copysignf", "copysign", "copysignl", "copysignl"];
+        let mut slots = nil;
+        for name in names.iter().rev() {
+            let name = arena.symbol(*name);
+            slots = arena.cons(name, slots);
+        }
+        let arguments = arena.cons(float, nil);
+        let arguments = arena.cons(float, arguments);
+        let payload = arena.cons(slots, arguments);
+        let signature = arena.cons(float, payload);
+        let incfile = arena.symbol("<math.h>");
+        let libfile = arena.symbol("\"\"");
+        let mut b = BoxBuilder::new(arena);
+        let descriptor = b.ffunction(signature, incfile, libfile);
+        b.ffun(descriptor)
+    }
+
+    fn drawing(arena: &TreeArena, root: BoxId, float_size: FloatSize) -> String {
+        let config = DrawConfig {
+            float_size,
+            ..DrawConfig::default()
+        };
+        let diagrams =
+            draw_diagrams(arena, root, "process", "process", &config, &HashMap::new()).unwrap();
+        svg(&diagrams[0])
+    }
+
+    #[test]
+    fn a_foreign_function_is_drawn_under_the_name_of_the_precision() {
+        // it used to be drawn as `?` with one input, whatever its declaration
+        // (C++ `ffname`: `nth(names, gFloatSize - 1)`)
+        let mut arena = TreeArena::new();
+        let root = copysign(&mut arena);
+        let single = drawing(&arena, root, FloatSize::Single);
+        assert!(single.contains(">copysignf<"), "{single}");
+        let double = drawing(&arena, root, FloatSize::Double);
+        assert!(double.contains(">copysign<"), "{double}");
+        let quad = drawing(&arena, root, FloatSize::Quad);
+        assert!(quad.contains(">copysignl<"), "{quad}");
+        assert!(!single.contains(">?<") && !double.contains(">?<") && !quad.contains(">?<"));
+    }
+
+    #[test]
+    fn a_foreign_function_has_one_input_per_argument() {
+        // C++ `ffarity`: `len(signature) - 2`
+        let mut arena = TreeArena::new();
+        let root = copysign(&mut arena);
+        let schema = translate::generate_schema(&arena, root, &DrawConfig::default());
+        assert_eq!((schema.inputs(), schema.outputs()), (2, 1));
+    }
+
+    #[test]
+    fn a_malformed_foreign_descriptor_is_drawn_as_a_placeholder() {
+        // a descriptor whose signature is not a list: `?`, one input, no panic
+        let mut arena = TreeArena::new();
+        let not_a_list = arena.int(7);
+        let file = arena.symbol("<math.h>");
+        let mut b = BoxBuilder::new(&mut arena);
+        let descriptor = b.ffunction(not_a_list, file, file);
+        let root = b.ffun(descriptor);
+        let schema = translate::generate_schema(&arena, root, &DrawConfig::default());
+        assert_eq!((schema.inputs(), schema.outputs()), (1, 1));
+        assert!(drawing(&arena, root, FloatSize::Single).contains(">?<"));
+    }
+
+    #[test]
+    fn a_folded_expression_is_named_in_the_precision_compiled_in() {
+        // `s = 0.5, 2 : +` twice, named by nothing: its name is its text, whose
+        // numbers carry the suffix of the precision (`0.5f` in single only)
+        let mut arena = TreeArena::new();
+        let mut b = BoxBuilder::new(&mut arena);
+        let (half, two) = (b.real(0.5), b.int(2));
+        let pair = b.par(half, two);
+        let add = b.add();
+        let s = b.seq(pair, add);
+        let root = b.par(s, s);
+        let none = HashMap::new();
+        let name = |float_size| {
+            let config = DrawConfig {
+                float_size,
+                ..folding(FileNaming::DefinitionName)
+            };
+            let diagrams =
+                draw_diagrams(&arena, root, "process", "process", &config, &none).unwrap();
+            diagrams[1].name.clone()
+        };
+        assert_eq!(name(FloatSize::Single), "0.5f,2 : +");
+        assert_eq!(name(FloatSize::Double), "0.5,2 : +");
     }
 }

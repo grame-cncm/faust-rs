@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use boxes::{BoxComplexity, BoxId, BoxMatch, FloatSize, box_pp_bounded, match_box};
-use tlib::{NodeKind, TreeArena, tree_to_str};
+use tlib::{NodeKind, TreeArena, list_to_vec, tree_to_str};
 
 use crate::DrawConfig;
 use crate::schema::{COLOR_LINK, COLOR_NORMAL, COLOR_NUM, COLOR_SLOT, COLOR_UI, Schema};
@@ -260,7 +260,7 @@ fn generate_diagram_schema(
                     .memo
                     .synthesized
                     .entry(b)
-                    .or_insert_with(|| expression_name(arena, b))
+                    .or_insert_with(|| expression_name(arena, b, config.float_size))
                     .clone();
                 (name, state.files.assign_expression(b))
             }
@@ -304,8 +304,8 @@ fn generate_diagram_schema(
 
 /// The name of a folded shared node without a definition name: its own
 /// expression, printed within a budget (C++ `mBoxName`).
-fn expression_name(arena: &TreeArena, b: BoxId) -> String {
-    box_pp_bounded(arena, b, 0, FloatSize::Single, SHARED_NAME_PRINT_BUDGET)
+fn expression_name(arena: &TreeArena, b: BoxId, float_size: FloatSize) -> String {
+    box_pp_bounded(arena, b, 0, float_size, SHARED_NAME_PRINT_BUDGET)
         .unwrap_or_else(|_| "diagram".to_owned())
 }
 
@@ -662,13 +662,13 @@ fn generate_inside(arena: &TreeArena, b: BoxId, config: &DrawConfig) -> Box<dyn 
         }
 
         // ── FFI / foreign items ───────────────────────────────────────
-        BoxMatch::FFun(ff) => {
-            let name = tn(extract_name(arena, ff));
-            make_block(1, 1, name, COLOR_NORMAL, "")
+        BoxMatch::FFun(descriptor) => {
+            let (arity, name) = foreign_function(arena, descriptor, config.float_size);
+            make_block(arity, 1, tn(name), COLOR_NORMAL, "")
         }
-        BoxMatch::Ffunction(ff, _typ, _file) => {
-            let name = tn(extract_name(arena, ff));
-            make_block(1, 1, name, COLOR_NORMAL, "")
+        BoxMatch::Ffunction(..) => {
+            let (arity, name) = foreign_function(arena, b, config.float_size);
+            make_block(arity, 1, tn(name), COLOR_NORMAL, "")
         }
         BoxMatch::FConst(_typ, name, _file) => {
             let s = tn(extract_name(arena, name));
@@ -858,6 +858,44 @@ fn flatten_int_tree_inner(arena: &TreeArena, b: BoxId, out: &mut Vec<usize>) {
         }
         _ => {}
     }
+}
+
+/// The number of arguments of a foreign function and the name it is drawn
+/// under, from its `ffunction(signature, incfile, libfile)` descriptor.
+///
+/// The signature is the list `(return type, names, argument types...)`, and
+/// `names` holds one name per precision (single, double, quad, fixed point),
+/// the parser repeating the last one written. The block has one input per
+/// argument and carries the name of the precision compiled in.
+///
+/// A descriptor that is not of that shape is drawn as `?` with one input.
+///
+/// C++ reference: `compiler/signals/prim2.cpp` — `ffarity` (`len(signature) -
+/// 2`) and `ffname` (`nth(names, gFloatSize - 1)`), used by `drawschema.cpp`
+/// (`isBoxFFun`).
+fn foreign_function(
+    arena: &TreeArena,
+    descriptor: BoxId,
+    float_size: FloatSize,
+) -> (usize, String) {
+    let malformed = || (1, "?".to_owned());
+    let BoxMatch::Ffunction(signature, _incfile, _libfile) = match_box(arena, descriptor) else {
+        return malformed();
+    };
+    let Some(signature) = list_to_vec(arena, signature) else {
+        return malformed();
+    };
+    let Some(names) = signature
+        .get(1)
+        .and_then(|names| list_to_vec(arena, *names))
+    else {
+        return malformed();
+    };
+    // `foreign_name_count` is C++ `gFloatSize`: 1, 2 or 3
+    let Some(name) = names.get(float_size.foreign_name_count() - 1) else {
+        return malformed();
+    };
+    (signature.len() - 2, extract_name(arena, *name))
 }
 
 /// Extract a display name from a label / identifier node.

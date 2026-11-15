@@ -193,6 +193,11 @@ pub(crate) fn run_source_mode(
                     fold_threshold: cli.fold,
                     fold_complexity: cli.fold_complexity,
                     file_naming: draw::FileNaming::BoxIdentity,
+                    float_size: if cli.compile.double {
+                        draw::FloatSize::Double
+                    } else {
+                        draw::FloatSize::Single
+                    },
                 };
                 if let Err(e) = draw::draw_schema(
                     &out.parse.state.arena,
