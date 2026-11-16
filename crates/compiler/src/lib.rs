@@ -133,7 +133,10 @@ pub use diagnostics::{
 };
 use diagnostics::{
     ToDiagnostic,
-    codes::{COMP_TABLE_INIT_SAMPLE_RATE, COMP_TYPE_FAILED, EVAL_MODULATION_NO_MATCH},
+    codes::{
+        COMP_TABLE_INIT_SAMPLE_RATE, COMP_TYPE_FAILED, EVAL_MODULATION_NO_MATCH,
+        EVAL_SLIDER_SCALE_NOT_FOLLOWED,
+    },
 };
 use fir::{
     FirId, FirStore,
@@ -1884,6 +1887,61 @@ impl Compiler {
     }
 }
 
+/// The warning of a slider that cannot follow its `[scale:...]` metadata
+/// ([`eval::EvalWarning::SliderScaleNotFollowed`]), worded as the C++
+/// `SignalChecker::checkScale` warnings (`compiler/transform/sigPromotion.cpp`).
+fn slider_scale_diagnostic(
+    kind: &str,
+    label: &str,
+    scale: &str,
+    issue: eval::ScaleIssue,
+    min: f64,
+    max: f64,
+) -> Diagnostic {
+    let widget = format!("{kind}(\"{label}\")");
+    let (message, cause, help) = match issue {
+        eval::ScaleIssue::LogZeroMinimum => (
+            format!("[scale:log] with min = 0 in `{widget}`: log(0) is not defined"),
+            "cause: a logarithmic scale needs a range of positive values",
+            "the C++ architectures use a floor 60 dB under max, so that 0 is reached; give a positive min to choose the floor",
+        ),
+        eval::ScaleIssue::LogNotPositive => (
+            format!(
+                "[scale:log] needs positive values, but the range is [{min}, {max}] in `{widget}`"
+            ),
+            "cause: the logarithm of a value <= 0 is not defined, the scale has no meaning here",
+            "the C++ architectures use a linear scale; a range in dB, for instance, is already logarithmic: remove [scale:log]",
+        ),
+        eval::ScaleIssue::ExpTooWide => (
+            format!(
+                "[scale:exp] over a range of width {} in `{widget}`: the lower half of the range takes less than 0.1% of the travel of the slider",
+                max - min
+            ),
+            "cause: exp(value) is linear in the position of the slider, so the lower half of the range takes 1/(1+exp((max-min)/2)) of its travel",
+            "use [scale:exp] over a range of a few units, or [scale:log] for a range of positive values",
+        ),
+        eval::ScaleIssue::Unknown => (
+            format!("unknown [scale:{scale}] in `{widget}`: lin, log or exp expected"),
+            "cause: the architectures know the scales lin, log and exp, and treat any other one as linear",
+            "write [scale:lin], [scale:log] or [scale:exp]",
+        ),
+    };
+    Diagnostic::new(
+        Severity::Warning,
+        Stage::Eval,
+        EVAL_SLIDER_SCALE_NOT_FOLLOWED,
+        message,
+    )
+    .with_category(DiagnosticCategory::UserCode)
+    .with_note(cause)
+    .with_note(format!("computed: scale `{scale}`, range [{min}, {max}]"))
+    .with_note("the widget is kept as it is")
+    .with_fact("widget_scale", scale)
+    .with_fact("widget_min", min.to_string())
+    .with_fact("widget_max", max.to_string())
+    .with_help(help)
+}
+
 /// Warns when a literal table embeds `ma.SR` instead of observing the host's
 /// initialization sample rate. The actual folding is performed by transform;
 /// keeping the advisory here gives every backend the same diagnostic channel.
@@ -1901,10 +1959,8 @@ fn eval_warning_diagnostics(
 ) -> DiagnosticBundle {
     let mut bundle = DiagnosticBundle::new();
     for warning in warnings {
-        let eval::EvalWarning::ModulationNoMatch { node, target } = warning;
-        let owner =
-            reachable_owner_definition_name_for_node(arena, defs_root, *node, entrypoint_name);
-        let diagnostic = Diagnostic::new(
+        let (node, diagnostic) = match warning {
+            eval::EvalWarning::ModulationNoMatch { node, target } => (*node, Diagnostic::new(
             Severity::Warning,
             Stage::Eval,
             EVAL_MODULATION_NO_MATCH,
@@ -1914,7 +1970,27 @@ fn eval_warning_diagnostics(
         .with_note(format!("computed: target `{target}`, matching widgets = 0"))
         .with_note("the expression is kept as it is; a two-input modulator still adds its extra input, unconnected, as the reference compiler does")
         .with_fact("modulation_target", target.as_str())
-        .with_help("check the label as the interface shows it (`--json`, `faustprobe --list-params`), or name one of its groups, `group/label`");
+        .with_help("check the label as the interface shows it (`--json`, `faustprobe --list-params`), or name one of its groups, `group/label`")),
+            eval::EvalWarning::SliderScaleNotFollowed {
+                node,
+                kind,
+                label,
+                scale,
+                issue,
+                min_bits,
+                max_bits,
+            } => (*node, slider_scale_diagnostic(
+                kind,
+                label,
+                scale,
+                *issue,
+                f64::from_bits(*min_bits),
+                f64::from_bits(*max_bits),
+            )),
+        };
+        let node = &node;
+        let owner =
+            reachable_owner_definition_name_for_node(arena, defs_root, *node, entrypoint_name);
         let diagnostic = enrich_diagnostic_with_node(
             diagnostic,
             arena,

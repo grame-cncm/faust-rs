@@ -193,7 +193,8 @@ use ui_widgets::*;
 
 pub use environment::Environment;
 pub use error::{
-    DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalError, EvalStats, EvalWarning,
+    DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EXP_SCALE_MAX_WIDTH, EvalError,
+    EvalStats, EvalWarning, ScaleIssue,
 };
 pub use loop_detector::LoopDetector;
 use loop_detector::{UndefinedCollection, on_deep_stack};
@@ -1083,6 +1084,7 @@ fn eval_value_uncached(
         )?)),
         BoxMatch::VSlider(label, cur, min, max, step) => Ok(EvalValue::Box(eval_vslider(
             arena,
+            expr,
             label,
             [cur, min, max, step],
             env,
@@ -1090,6 +1092,7 @@ fn eval_value_uncached(
         )?)),
         BoxMatch::HSlider(label, cur, min, max, step) => Ok(EvalValue::Box(eval_hslider(
             arena,
+            expr,
             label,
             [cur, min, max, step],
             env,
@@ -1097,6 +1100,7 @@ fn eval_value_uncached(
         )?)),
         BoxMatch::NumEntry(label, cur, min, max, step) => Ok(EvalValue::Box(eval_num_entry(
             arena,
+            expr,
             label,
             [cur, min, max, step],
             env,

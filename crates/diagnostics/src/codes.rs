@@ -95,6 +95,15 @@ pub const EVAL_CASE_ARGUMENT_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-
 /// `compiler/evaluate/loopDetector.cpp`, "endless evaluation cycle of `<k>`
 /// steps".
 pub const EVAL_EVALUATION_CYCLE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0013");
+/// A `[scale:...]` metadata that a slider or a nentry cannot follow over its
+/// range: `[scale:log]` with min = 0 or over a range that is not positive,
+/// `[scale:exp]` over a range wider than 13.8, or an unknown scale. A
+/// warning, reported with the semantic warnings; the widget is kept as it is.
+///
+/// C++ equivalent: the `WARNING : [scale:...] ...` messages of
+/// `SignalChecker::checkScale` (`compiler/transform/sigPromotion.cpp`, Faust
+/// `master-dev` `0fc389b66`), printed under `-wall`.
+pub const EVAL_SLIDER_SCALE_NOT_FOLLOWED: DiagnosticCode = DiagnosticCode("FRS-EVAL-0014");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
 
@@ -226,6 +235,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         EVAL_WIDGET_PARAMETER_NOT_CONSTANT,
         EVAL_CASE_ARGUMENT_NOT_CONSTANT,
         EVAL_EVALUATION_CYCLE,
+        EVAL_SLIDER_SCALE_NOT_FOLLOWED,
         EVAL_GENERIC_FAILURE,
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,

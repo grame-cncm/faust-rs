@@ -27,6 +27,76 @@ pub enum EvalWarning {
         /// The evaluated target, as the program wrote it (interpolated).
         target: String,
     },
+    /// A `[scale:...]` metadata that a slider or a nentry cannot follow over
+    /// its range. The widget is kept as it is.
+    ///
+    /// C++ equivalent: the `WARNING : [scale:...] ...` messages pushed on
+    /// `gWarningMessages` by `SignalChecker::checkScale`
+    /// (`compiler/transform/sigPromotion.cpp`, Faust `master-dev` `0fc389b66`,
+    /// not in the pinned reference), printed under `-wall`. C++ checks the
+    /// widgets of the signals that reach the outputs; the evaluator checks
+    /// every widget it builds, once per label, scale and range.
+    SliderScaleNotFollowed {
+        /// The source widget node.
+        node: TreeId,
+        /// `hslider`, `vslider` or `nentry`.
+        kind: &'static str,
+        /// The widget label, metadata included, as evaluated.
+        label: String,
+        /// The value of the `scale` metadata.
+        scale: String,
+        /// Why the scale cannot be followed.
+        issue: ScaleIssue,
+        /// `f64::to_bits` of the minimum.
+        min_bits: u64,
+        /// `f64::to_bits` of the maximum.
+        max_bits: u64,
+    },
+}
+
+/// Why a slider cannot follow its `[scale:...]` metadata, for
+/// [`EvalWarning::SliderScaleNotFollowed`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScaleIssue {
+    /// `[scale:log]` with min = 0 and max > 0: log(0) is not defined. The C++
+    /// architectures (`ValueConverter.h`) use a floor 60 dB under max.
+    LogZeroMinimum,
+    /// `[scale:log]` over a range that is not positive (min < 0, or both
+    /// bounds 0): the scale has no meaning, and the C++ architectures use a
+    /// linear scale.
+    LogNotPositive,
+    /// `[scale:exp]` over a range wider than [`EXP_SCALE_MAX_WIDTH`]: the lower
+    /// half of the range takes less than 0.1% of the travel of the slider.
+    ExpTooWide,
+    /// A scale other than `lin`, `log` and `exp`, which the architectures
+    /// treat as linear.
+    Unknown,
+}
+
+/// The widest range, max - min, over which a `[scale:exp]` slider is not
+/// reported: `exp(value)` is linear in the position of the slider, so the
+/// lower half of the range takes `1/(1+exp((max-min)/2))` of its travel, which
+/// is 0.1% for a width of `2*ln(999)`, about 13.8.
+pub const EXP_SCALE_MAX_WIDTH: f64 = 13.813_509_557_297_108;
+
+impl ScaleIssue {
+    /// The issue of a slider with this `scale` over `[min, max]`, `min <= max`,
+    /// or `None` when the scale can be followed.
+    ///
+    /// Source provenance (C++): `SignalChecker::checkScale` in
+    /// `compiler/transform/sigPromotion.cpp`.
+    #[must_use]
+    pub fn of(scale: &str, min: f64, max: f64) -> Option<Self> {
+        match scale {
+            "lin" => None,
+            "log" if min > 0.0 => None,
+            "log" if min == 0.0 && max > 0.0 => Some(Self::LogZeroMinimum),
+            "log" => Some(Self::LogNotPositive),
+            "exp" if max - min <= EXP_SCALE_MAX_WIDTH => None,
+            "exp" => Some(Self::ExpTooWide),
+            _ => Some(Self::Unknown),
+        }
+    }
 }
 
 /// Side results of an evaluation, returned by [`eval`](crate::eval) alongside

@@ -51,6 +51,7 @@ pub(crate) fn eval_checkbox(
 /// Evaluates one `vslider` widget node, simplifying label and numeric params.
 pub(crate) fn eval_vslider(
     arena: &mut TreeArena,
+    node: TreeId,
     label: TreeId,
     params: [TreeId; 4],
     env: &Environment,
@@ -58,6 +59,7 @@ pub(crate) fn eval_vslider(
 ) -> Result<TreeId, EvalError> {
     eval_slider_like(
         arena,
+        node,
         SliderKind::VSlider,
         label,
         params,
@@ -69,6 +71,7 @@ pub(crate) fn eval_vslider(
 /// Evaluates one `hslider` widget node, simplifying label and numeric params.
 pub(crate) fn eval_hslider(
     arena: &mut TreeArena,
+    node: TreeId,
     label: TreeId,
     params: [TreeId; 4],
     env: &Environment,
@@ -76,6 +79,7 @@ pub(crate) fn eval_hslider(
 ) -> Result<TreeId, EvalError> {
     eval_slider_like(
         arena,
+        node,
         SliderKind::HSlider,
         label,
         params,
@@ -87,6 +91,7 @@ pub(crate) fn eval_hslider(
 /// Evaluates one `nentry` (numeric entry) widget node, simplifying label and numeric params.
 pub(crate) fn eval_num_entry(
     arena: &mut TreeArena,
+    node: TreeId,
     label: TreeId,
     params: [TreeId; 4],
     env: &Environment,
@@ -94,6 +99,7 @@ pub(crate) fn eval_num_entry(
 ) -> Result<TreeId, EvalError> {
     eval_slider_like(
         arena,
+        node,
         SliderKind::NumEntry,
         label,
         params,
@@ -117,6 +123,7 @@ enum SliderKind {
 /// `eval.cpp`.
 fn eval_slider_like(
     arena: &mut TreeArena,
+    node: TreeId,
     kind: SliderKind,
     label: TreeId,
     params: [TreeId; 4],
@@ -162,6 +169,17 @@ fn eval_slider_like(
             max_bits: max_val.to_bits(),
         });
     }
+    if let (Some(min_val), Some(max_val)) = (as_f64(min), as_f64(max)) {
+        check_slider_scale(
+            arena,
+            node,
+            kind_name,
+            label,
+            min_val,
+            max_val,
+            loop_detector,
+        );
+    }
 
     let mut b = BoxBuilder::new(arena);
     Ok(match kind {
@@ -169,6 +187,56 @@ fn eval_slider_like(
         SliderKind::HSlider => b.hslider(label, cur, min, max, step),
         SliderKind::NumEntry => b.num_entry(label, cur, min, max, step),
     })
+}
+
+/// Records an [`EvalWarning::SliderScaleNotFollowed`] for each `[scale:...]`
+/// metadata of a slider label that the slider cannot follow over
+/// `[min, max]` (see [`ScaleIssue::of`]). A widget evaluated several times is
+/// reported once.
+///
+/// Source provenance (C++): `SignalChecker::checkScale` in
+/// `compiler/transform/sigPromotion.cpp`, called after the range check, as
+/// here, so that `min <= max`.
+fn check_slider_scale(
+    arena: &TreeArena,
+    node: TreeId,
+    kind: &'static str,
+    label: TreeId,
+    min: f64,
+    max: f64,
+    loop_detector: &mut LoopDetector,
+) {
+    let Some(text) = label_node_text(arena, label) else {
+        return;
+    };
+    let (_, metadata) = ui::split_label_metadata(text);
+    for (key, scale) in metadata {
+        if key != "scale" {
+            continue;
+        }
+        let Some(issue) = ScaleIssue::of(&scale, min, max) else {
+            continue;
+        };
+        let reported = loop_detector.warnings.iter().any(|warning| {
+            matches!(warning, EvalWarning::SliderScaleNotFollowed {
+                kind: k, label: l, scale: s, min_bits, max_bits, ..
+            } if *k == kind && l == text && *s == scale
+                && *min_bits == min.to_bits() && *max_bits == max.to_bits())
+        });
+        if !reported {
+            loop_detector
+                .warnings
+                .push(EvalWarning::SliderScaleNotFollowed {
+                    node,
+                    kind,
+                    label: text.to_owned(),
+                    scale,
+                    issue,
+                    min_bits: min.to_bits(),
+                    max_bits: max.to_bits(),
+                });
+        }
+    }
 }
 
 /// The widget parameter [`simplify_slider_param`] evaluates, for its error.
